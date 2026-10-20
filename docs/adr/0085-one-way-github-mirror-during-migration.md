@@ -154,3 +154,8 @@ cloned it and no fork exists, so its history can still be replaced.
   hashes are not published anywhere.
 - Bad: until then, GitHub `main` has no history to read: one commit per merge
   becomes one commit in all. The full history stays upstream.
+
+*Switched back on 2026-10-20:* the job runs in `append` mode as the repository goes
+public. Its public history starts from the last squashed commit, and every sync
+after it adds one commit without force. Because the commit title is published
+again, gitleaks now scans it too, not only the denylist (CWE-200).
