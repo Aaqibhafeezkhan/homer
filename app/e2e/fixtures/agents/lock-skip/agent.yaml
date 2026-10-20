@@ -1,0 +1,9 @@
+name: lock-skip
+description: Second concurrent run is skipped (SKIP_CURRENT)
+lockStrategy:
+  key: e2e-lock-skip
+  onCollision: SKIP_CURRENT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 3

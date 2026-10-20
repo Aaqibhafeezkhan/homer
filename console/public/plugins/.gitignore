@@ -1,0 +1,3 @@
+# Operator-dropped plugin modules (CONSOLE_PLUGINS). Not part of the console.
+*
+!.gitignore

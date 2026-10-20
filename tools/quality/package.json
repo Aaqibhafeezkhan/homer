@@ -1,0 +1,14 @@
+{
+  "name": "homer-quality-reports",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jscpd": "5.4.1"
+  }
+}

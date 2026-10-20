@@ -1,0 +1,42 @@
+name: when-example
+description: |
+  Demonstrates the `when:` predicate. Each command runs only if its predicate
+  evaluates to true. Predicates use bash test syntax; exit 0 = true, 1 = false,
+  ≥2 = eval error (fails the agent). Per-expression timeout is 5 s.
+queryParams:
+  - paramName: region
+    required: false
+  - paramName: env
+    required: false
+commands:
+  - !<script>
+    label: always-runs
+    content: |
+      echo "region=${region:-unset} env=${env:-unset}"
+
+  # String shorthand → equivalent to { all: ["[ -n \"$region\" ]"] }
+  - !<script>
+    label: string-shorthand
+    when: '[ -n "$region" ]'
+    content: |
+      echo "region was set: $region"
+
+  # all: AND of expressions, short-circuits on first false
+  - !<script>
+    label: all-of
+    when:
+      all:
+        - '[ -n "$region" ]'
+        - '[[ "$region" == eu-* ]]'
+    content: |
+      echo "deploying to EU region $region"
+
+  # any: OR of expressions, short-circuits on first true
+  - !<script>
+    label: any-of
+    when:
+      any:
+        - '[ "$env" = "dev" ]'
+        - '[ "$env" = "staging" ]'
+    content: |
+      echo "non-prod env $env"

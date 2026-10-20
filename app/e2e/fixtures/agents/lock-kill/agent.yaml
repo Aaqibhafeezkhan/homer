@@ -1,0 +1,9 @@
+name: lock-kill
+description: New run kills the current lock holder (KILL_OLD_RUN_CURRENT)
+lockStrategy:
+  key: e2e-lock-kill
+  onCollision: KILL_OLD_RUN_CURRENT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 6

@@ -1,0 +1,140 @@
+# Black-box E2E stack: production backend image + test-runner container.
+# Runbook: app/e2e/README.md. Topology: DOCKER.md § E2E test stack.
+#
+# Distinct project name — never collides with the dev compose stack.
+name: homer-e2e
+
+services:
+  # Copies fixture agents into a writable named volume: agent CRUD tests
+  # write to /app/agents, so a :ro bind would 500 and a :rw bind would
+  # dirty the checkout. UID/GID 1000 = the image's `homer` user.
+  fixtures-init:
+    image: alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+    volumes:
+      - ./app/e2e/fixtures/agents:/fixtures:ro
+      - e2e-agents:/agents
+    command: sh -c "rm -rf /agents/* && cp -a /fixtures/. /agents/ && chown -R 1000:1000 /agents"
+
+  homer-backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: runner
+      # Optional, read from the environment: present on CI, absent locally.
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    container_name: homer-e2e-backend
+    depends_on:
+      fixtures-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./app/e2e/fixtures/config:/app/config:ro
+      - e2e-agents:/app/agents
+      # Fresh DB / runs / app.log per `docker compose down -v`.
+      - e2e-workspace:/app/workspace
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m
+      - CONFIG_PATH=config/config.json
+    ports:
+      # 18080 on loopback: no clash with a dev server on 8080.
+      - "127.0.0.1:${E2E_BACKEND_PORT:-18080}:8080"
+    healthcheck:
+      # livez is unauthenticated by design — safe as a probe.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/v1/livez"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  # Pull-mode runner instances for ExternalRunnerTest (ADR-0066). They share the
+  # backend's network namespace so http://127.0.0.1:8080 is loopback — homer-runner
+  # refuses plain http to any other host, and the e2e stack has no TLS.
+  homer-runner:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: homer-runner
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    network_mode: "service:homer-backend"
+    depends_on:
+      homer-backend:
+        condition: service_healthy
+    environment:
+      - HOMER_RUNNER_URL=http://127.0.0.1:8080
+      - HOMER_RUNNER_TOKEN=e2e-external-domain-token-0123456789
+      - HOMER_RUNNER_TAGS=e2e-external
+      - HOMER_RUNNER_CONCURRENCY=2
+      - HOMER_RUNNER_NAME=e2e-runner
+
+  # Killed by the external-crash fixture agent; init: true because the kernel does not
+  # deliver SIGKILL from inside a PID namespace to its PID 1 (the image execs java).
+  homer-runner-crash:
+    # Spelled out, not a YAML alias: ArtifactorySecretExposureTest reads each build block's secrets.
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: homer-runner
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    init: true
+    restart: "no"
+    network_mode: "service:homer-backend"
+    depends_on:
+      homer-backend:
+        condition: service_healthy
+    environment:
+      - HOMER_RUNNER_URL=http://127.0.0.1:8080
+      - HOMER_RUNNER_TOKEN=e2e-external-domain-token-0123456789
+      - HOMER_RUNNER_TAGS=e2e-crash
+      - HOMER_RUNNER_CONCURRENCY=1
+      - HOMER_RUNNER_NAME=e2e-crash-runner
+
+  # Started via `docker compose run --name homer-e2e-runner e2e-runner`
+  # (see DOCKER.md § E2E test stack) — `run` propagates the exit code;
+  # one-off containers ignore container_name, hence --name on the command.
+  e2e-runner:
+    build:
+      context: .
+      dockerfile: app/e2e/Dockerfile
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    depends_on:
+      homer-backend:
+        condition: service_healthy
+      homer-runner:
+        condition: service_started
+      homer-runner-crash:
+        condition: service_started
+    environment:
+      - E2E_BASE_URL=http://homer-backend:8080
+      - E2E_TOKEN=e2e-token
+      # Must match the repository set the image was built with: the ENTRYPOINT
+      # runs Gradle again, and a mismatch re-resolves everything against Maven
+      # Central. Pass-through, so unset stays unset. See DOCKER.md.
+      - ARTIFACTORY_URL
+      - ARTIFACTORY_USER
+      - ARTIFACTORY_TOKEN
+
+# Artifactory origin and credentials for the Gradle runs inside every image build -- build
+# secrets, never build args; see DOCKER.md and root CLAUDE.md §12 rule 7. Unset
+# variables fall back to Maven Central.
+secrets:
+  artifactory_url:
+    environment: ARTIFACTORY_URL
+  artifactory_user:
+    environment: ARTIFACTORY_USER
+  artifactory_token:
+    environment: ARTIFACTORY_TOKEN
+
+volumes:
+  e2e-agents:
+  e2e-workspace:

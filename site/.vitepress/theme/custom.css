@@ -1,0 +1,17 @@
+/* The reference pages are table-heavy: on a wide screen, give the text column more room than the
+   default 688px. The layout's max width grows with it, so the sidebar and the outline keep theirs. */
+:root {
+  --vp-layout-max-width: 1680px;
+}
+
+@media (min-width: 1440px) {
+  .VPContent .VPDoc.has-aside .content .content-container {
+    max-width: 860px;
+  }
+}
+
+/* A long code name in a table cell may break, so it does not hold its column wider than the
+   prose beside it (prose columns get a minimum width at build time, table-widths.mjs). */
+.vp-doc td code {
+  overflow-wrap: anywhere;
+}

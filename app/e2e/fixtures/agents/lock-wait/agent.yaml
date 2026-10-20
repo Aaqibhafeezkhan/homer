@@ -1,0 +1,9 @@
+name: lock-wait
+description: Serializes concurrent runs on a shared lock (WAIT)
+lockStrategy:
+  key: e2e-lock-wait
+  onCollision: WAIT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 2

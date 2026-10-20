@@ -1,0 +1,8 @@
+name: external-probe
+description: Reports whether the external-sleeper process still runs on the runner host
+runnerTags: [e2e-external]
+commands:
+  - !<script>
+    label: probe
+    content: |
+      if pgrep -f "sleep 3131" >/dev/null; then echo "sleeper=alive"; else echo "sleeper=gone"; fi

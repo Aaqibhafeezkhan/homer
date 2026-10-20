@@ -1,0 +1,8 @@
+name: json-emitter
+description: Dispatch-enabled sub whose JSON stdout feeds a continuation's result extraction
+dispatch:
+  enabled: true
+commands:
+  - !<script>
+    label: emit
+    content: 'echo "{\"answer\": \"forty-two\"}"'

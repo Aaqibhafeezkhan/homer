@@ -1,0 +1,5 @@
+name: file-links
+description: Carries a contained and an escaping symlink, so the files listing's symlink filter can be exercised end to end
+commands:
+  - !<cmd>
+    cmd: [echo, file-links-ran]

@@ -1,0 +1,21 @@
+name: tagged-secret
+description: >-
+  Tags from a public `mr` input while holding a secret `token` input, so the
+  read-time secret screen on `?tag=` filtering can be exercised end to end
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"mr: $MR token: $SECRET_TOKEN\"'"
+inputs:
+  - paramName: mr
+    envName: MR
+    src: query
+    type: ANY
+    required: true
+  - paramName: token
+    envName: SECRET_TOKEN
+    src: query
+    type: ANY
+    required: false
+    secret: true
+tags:
+  fromInputs: [mr]

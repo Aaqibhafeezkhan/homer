@@ -1,0 +1,7 @@
+# Opt-in JDWP overlay: binds container loopback, publishes nothing (a published
+# port re-exposes the agent to homer-network). See ADR-0076 and DOCKER.md.
+# CWE-489 (active debug code).
+services:
+  backend:
+    environment:
+      - JAVA_OPTS=-Xmx512m -Xms256m -DHOMER_LOG_LEVEL=DEBUG -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005

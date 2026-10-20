@@ -1,0 +1,6 @@
+# Ignore workspace runtime data
+workspace/
+
+# Keep config and agents
+!config/
+!agents/

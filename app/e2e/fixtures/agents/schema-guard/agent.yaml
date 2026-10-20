@@ -1,0 +1,18 @@
+name: schema-guard
+description: inputSchema gates the JSON payload shape with 422
+commands:
+  - !<cmd>
+    cmd: [echo, ok]
+inputs:
+  - paramName: service
+    envName: SERVICE
+    src: body
+    type: STRING
+    required: false
+inputSchema:
+  type: object
+  required: [service]
+  properties:
+    service:
+      type: string
+  additionalProperties: false

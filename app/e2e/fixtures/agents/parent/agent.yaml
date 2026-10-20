@@ -1,0 +1,11 @@
+name: parent
+description: Invokes the `echo` agent as a child run, forwarding an env value as its input
+env:
+  CHILD_MESSAGE: from-parent
+commands:
+  - !<agent>
+    label: run-child
+    agentName: echo
+    queryParams:
+      - paramName: message
+        envName: CHILD_MESSAGE

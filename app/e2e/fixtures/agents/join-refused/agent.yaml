@@ -1,0 +1,12 @@
+name: join-refused
+description: Joins two runs of `join-cooldown-sub`; the second is refused by its cooldown, so the join fails and must kill the first sub
+commands:
+  - !<script>
+    label: join
+    content: |
+      cat > join.json <<'JSON'
+      { "subs": [ { "agent": "join-cooldown-sub", "interruptId": "int-a" },
+                  { "agent": "join-cooldown-sub", "interruptId": "int-b" } ],
+        "continueAgent": "continued" }
+      JSON
+      if homer-join < join.json; then echo "join=accepted"; else echo "join=refused"; fi

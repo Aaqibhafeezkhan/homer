@@ -1,0 +1,45 @@
+# detekt (ADR-0082 check `detekt`, required); builds on detekt's defaults, so only the differences are listed.
+
+comments:
+  active: false
+complexity:
+  active: false
+empty-blocks:
+  active: false
+naming:
+  active: false
+performance:
+  active: false
+style:
+  active: false
+
+coroutines:
+  GlobalCoroutineUsage:
+    active: true
+  # Off: Dispatchers.IO for blocking I/O is the project convention, and no test needs it swapped.
+  InjectDispatcher:
+    active: false
+  SuspendFunInFinallySection:
+    active: true
+  SuspendFunSwallowedCancellation:
+    active: true
+
+exceptions:
+  # Off: most catch-alls are deliberate boundaries (background loops and sweeps that must survive,
+  # best-effort telemetry and cleanup, tool and route boundaries mapping to an error result, catches
+  # that record and rethrow); SuspendFunSwallowedCancellation covers their one coroutine hazard.
+  TooGenericExceptionCaught:
+    active: false
+
+potential-bugs:
+  DontDowncastCollectionTypes:
+    active: true
+  ExitOutsideMain:
+    active: true
+  MissingSuperCall:
+    active: true
+  # Off: ownership transfers, not leaks; see the ADR-0082 detekt amendment.
+  MissingUseCall:
+    active: false
+  UnconditionalJumpStatementInLoop:
+    active: true

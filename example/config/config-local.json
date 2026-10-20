@@ -1,0 +1,21 @@
+{
+  "server": {
+    "port": 8080,
+    "apiAuth": {
+      "type": "unsecured"
+    },
+    "corsAllowedOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+  },
+  "agentsSearchPath": "/app/agents",
+  "workspaceRootPath": "/app/workspace/runs",
+  "databasePath": "/app/workspace/homer.db",
+  "langfuse": {
+    "serverUrl": "https://cloud.langfuse.com",
+    "publicKey": "pk-lf-xxx-your-key-here",
+    "secretKey": "sk-lf-xxx-your-secret-here"
+  },
+  "globalEnv": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin"
+  },
+  "openTelemetryExport": "LOG"
+}

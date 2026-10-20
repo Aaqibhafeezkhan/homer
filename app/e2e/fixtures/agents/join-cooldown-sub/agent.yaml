@@ -1,0 +1,10 @@
+name: join-cooldown-sub
+description: Dispatch-enabled long sleeper with a cooldown, so a second start inside the window is refused with 429
+dispatch:
+  enabled: true
+cooldown:
+  minInterval: 10m
+commands:
+  - !<cmd>
+    cmd: "sleep 120"
+    timeout: 180

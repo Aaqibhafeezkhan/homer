@@ -1,0 +1,14 @@
+name: artifact-name-template
+description: Custom artifactNameTemplate renders per-command artifact stems (step_N) instead of the default cmd_N
+artifactNameTemplate: "step_{{HMR_CMD_INDEX}}"
+commands:
+  - !<script>
+    label: first
+    content: |
+      echo "first stdout"
+      echo "first stderr" >&2
+  - !<script>
+    label: second
+    content: |
+      echo "second stdout"
+      echo "second stderr" >&2

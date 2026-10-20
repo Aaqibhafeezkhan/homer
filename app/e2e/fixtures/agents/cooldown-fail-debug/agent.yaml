@@ -1,0 +1,11 @@
+name: cooldown-fail-debug
+description: Always fails with exit code 7 after a short delay; cooldown fixture with only afterFailure set, for the debug admission test
+cooldown:
+  afterFailure: 1h
+commands:
+  - !<script>
+    label: fail-loudly
+    content: |
+      sleep 1
+      echo "deliberate cooldown-fail-debug failure" >&2
+      exit 7

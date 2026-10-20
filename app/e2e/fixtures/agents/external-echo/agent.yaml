@@ -1,0 +1,12 @@
+name: external-echo
+description: Runs on the e2e homer-runner instance; proves output, artifacts and the domain's extraUploads come back
+runnerTags: [e2e-external]
+commands:
+  - !<script>
+    label: remote-echo
+    content: |
+      echo "ran on $(hostname) via homer-runner"
+      echo "extra: $(cat "$E2E_EXTRA_DIR/marker.txt")"
+      if [ -x "$(command -v homer-ask)" ]; then echo "helper: executable"; else echo "helper: NOT executable"; fi
+      mkdir -p "$HMR_ARTIFACTS_DIR/nested"
+      echo "remote artifact" > "$HMR_ARTIFACTS_DIR/nested/remote.txt"

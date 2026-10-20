@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "homer_langgraph"
+version = "0.0.1"
+description = "Homer durable LangGraph human-in-the-loop runtime"
+license = { text = "Apache-2.0" }
+readme = "homer_langgraph/README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph",
+    "langgraph-checkpoint-sqlite",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+homer_langgraph = "homer_langgraph.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["homer_langgraph*"]

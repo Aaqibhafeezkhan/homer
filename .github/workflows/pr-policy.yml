@@ -1,0 +1,70 @@
+# Fails a pull request that links no accepted issue of this repository (CONTRIBUTING.md
+# § Submitting changes), which tools/pr-policy/check.sh decides, or that adds a dependency with a
+# known high or critical advisory. The ruleset on main makes it a required
+# check. Dependabot's pull requests are exempt: they link no issue, and a skipped job counts as
+# passed. The exemption compares the login with `dependabot[bot]`, the App's account: GitHub
+# reserves the `[bot]` suffix for Apps, so no user account can hold that login. Labelling an
+# issue fires no pull request event, so the check is not re-run then; re-run it by hand.
+# Decision record: docs/adr/0090-accepted-issue-pull-request-gate.md.
+name: PR policy
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  pr-policy-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tools/pr-policy/check-test.sh
+
+  # Free on public repositories only. A known-bad package fails here, before any review reads
+  # the pull request.
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  accepted-issue:
+    needs: pr-policy-tests
+    # Runs whatever pr-policy-tests concluded: a skipped required check counts as passed, so a
+    # pull request that breaks the tests must not skip the gate with them (CWE-285, ADR-0090).
+    if: ${{ !cancelled() && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The base branch's copy of the check, never the pull request's: a pull request must not
+      # be able to rewrite the rule it is checked against.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - name: Accepted issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+        run: |
+          # shellcheck disable=SC2016 # $owner, $name and $pr are GraphQL variables
+          gh api graphql -F owner="$OWNER" -F name="$NAME" -F pr="$PR" -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  closingIssuesReferences(first: 20) {
+                    nodes { number repository { nameWithOwner } labels(first: 50) { nodes { name } } }
+                  }
+                }
+              }
+            }' >closing-issues.json
+          tools/pr-policy/check.sh "$REPO" <closing-issues.json

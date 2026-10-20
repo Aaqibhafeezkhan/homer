@@ -1,0 +1,9 @@
+name: langgraph-too-big
+description: LangGraph fixture whose topology (201 nodes) exceeds Homer's node limit; only inspected, never run
+dispatch:
+  enabled: true
+env:
+  PYTHONPATH: /app/agents/langgraph-too-big
+commands:
+  - !<langgraph>
+    module: e2e_too_big_graph

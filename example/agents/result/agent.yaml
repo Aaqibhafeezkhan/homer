@@ -1,0 +1,30 @@
+name: result
+commands:
+  
+  - !<script>
+    content: 'echo "{\"a\": [1,2,3,4,5,6]}" ; false'
+    continueIfFail: true
+    resultEnvParam:
+      - src: STD_OUT
+        envName: VALUE_JSON
+        transformer:
+          !<jsonPath>
+          path: $.a[3]
+      - src: RESULT_CODE
+        envName: RESULT_CODEX
+      
+  - !<script>
+    content: echo $VALUE_JSON
+  
+  - !<cmd>
+    cmd: echo TEST123
+    resultEnvParam:
+      - src: STD_OUT
+        envName: VALUE_X
+  
+  - !<script>
+    content: echo $RESULT_CODEX
+  
+  - !<script>
+    content: echo $VALUE_X
+

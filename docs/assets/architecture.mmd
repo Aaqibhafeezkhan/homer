@@ -1,0 +1,8 @@
+flowchart LR
+  callers["HTTP API · cron · MCP"] --> homer["Homer<br/>queue · locks · spend caps · questions"]
+  console["Web console"] <--> homer
+  homer --> local["local"]
+  homer --> ssh["ssh hosts"]
+  homer --> k8s["Kubernetes pods"]
+  homer --> pull["homer-runner<br/>(pull mode)"]
+  homer -. traces .-> otel["OpenTelemetry · Langfuse"]

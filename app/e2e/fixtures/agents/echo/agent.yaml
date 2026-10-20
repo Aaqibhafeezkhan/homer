@@ -1,0 +1,15 @@
+name: echo
+description: Happy-path fixture; echoes a query input and doubles as a dispatch target and MCP tool
+dispatch:
+  enabled: true
+mcp:
+  enabled: true
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"got: $MESSAGE\"'"
+inputs:
+  - paramName: message
+    envName: MESSAGE
+    src: query
+    type: ANY
+    required: true

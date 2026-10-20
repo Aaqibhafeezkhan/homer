@@ -1,0 +1,16 @@
+name: conditional
+description: A when-predicate skips the second command unless `region` is supplied
+inputs:
+  - paramName: region
+    envName: REGION
+    src: query
+    type: ANY
+    required: false
+commands:
+  - !<script>
+    label: always-runs
+    content: echo "always"
+  - !<script>
+    label: needs-region
+    when: '[ -n "$REGION" ]'
+    content: echo "region=$REGION"

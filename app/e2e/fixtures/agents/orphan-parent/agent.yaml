@@ -1,0 +1,11 @@
+name: orphan-parent
+description: Same as `parent` (invokes `echo`) but absent from `server.agentGrants`, so its hop is unauthorized for a caller with no direct grant on `echo`
+env:
+  CHILD_MESSAGE: from-orphan-parent
+commands:
+  - !<agent>
+    label: run-child
+    agentName: echo
+    queryParams:
+      - paramName: message
+        envName: CHILD_MESSAGE

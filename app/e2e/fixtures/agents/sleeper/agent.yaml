@@ -1,0 +1,8 @@
+name: sleeper
+description: Sleeps long enough to be observed WORKING, killed, or retried
+commands:
+  - !<script>
+    label: nap
+    content: |
+      sleep 4
+      echo "woke up"

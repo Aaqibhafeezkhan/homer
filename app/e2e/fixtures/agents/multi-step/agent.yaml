@@ -1,0 +1,17 @@
+name: multi-step
+description: continueIfFail plus resultEnvParam chaining (STD_OUT jsonPath and RESULT_CODE)
+commands:
+  - !<script>
+    label: emit-json
+    content: 'echo "{\"a\": [1,2,3,4,5,6]}" ; false'
+    continueIfFail: true
+    resultEnvParam:
+      - src: STD_OUT
+        envName: VALUE_JSON
+        transformer: !<jsonPath>
+          path: $.a[3]
+      - src: RESULT_CODE
+        envName: PREV_CODE
+  - !<script>
+    label: echo-captured
+    content: echo "value=$VALUE_JSON code=$PREV_CODE"

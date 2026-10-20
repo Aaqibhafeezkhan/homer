@@ -1,0 +1,7 @@
+name: when-timeout
+description: A when-predicate that sleeps past the 5 s per-expression timeout — the step records a timeout eval error
+commands:
+  - !<script>
+    label: never-runs
+    when: 'sleep 30'
+    content: echo "unreachable"

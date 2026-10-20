@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: mcp-greet
+description: Demonstrates exposing an agent as an MCP tool on /mcp
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo Hello $GREET_NAME'"
+inputs:
+  - paramName: name
+    envName: GREET_NAME
+    src: query
+    type: STRING
+    required: true
+mcp:
+  enabled: true

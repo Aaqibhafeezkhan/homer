@@ -1,0 +1,87 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      # The Dockerfile's last stage is homer-runner (the external runner image);
+      # without a target, compose would build that instead of the backend.
+      target: runner
+      args:
+        HOMER_VERSION: ${APP_VERSION:-dev}
+        HOMER_DEBUG: ${HOMER_DEBUG:-0}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+    container_name: homer-backend
+    # Bound to loopback: the default config runs arbitrary shell/Claude, so it must
+    # not be reachable off-host. Expose it via a reverse proxy for remote access.
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - ./example/config:/app/config:ro
+      - ./example/agents:/app/agents:ro
+      - ./example/workspace:/app/workspace
+    environment:
+      - JAVA_OPTS=${JAVA_OPTS:--Xmx512m -Xms256m}
+      - CONFIG_PATH=${CONFIG_PATH:-config/config.json}
+      # Resolved into the admin bearer token by @SYSENV in example/config/config.json.
+      # No default: startup fails if it is unset, so no working credential ever ships.
+      - HOMER_ADMIN_TOKEN=${HOMER_ADMIN_TOKEN:?set HOMER_ADMIN_TOKEN in .env before starting}
+    networks:
+      - homer-network
+    # no-new-privileges is safe with the entrypoint's root->homer su-exec drop
+    # (dropping privileges needs no new ones). cap_drop:[ALL] is NOT set here: the
+    # entrypoint starts as root to chown the workspace and su-exec (needs CHOWN,
+    # SETUID, SETGID); dropping all caps would break that startup path.
+    security_opt:
+      - "no-new-privileges:true"
+    healthcheck:
+      # livez is unauthenticated by design — safe as a probe, and carries no token.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/api/v1/livez"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+      args:
+        CONSOLE_VERSION: ${APP_VERSION:-dev}
+    container_name: homer-console
+    # Loopback by default (matches the backend); serve remotely via a reverse proxy.
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - CONSOLE_HOMER_API_URL=${CONSOLE_HOMER_API_URL:-http://localhost:8080}
+      - CONSOLE_AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - CONSOLE_PLUGINS=${CONSOLE_PLUGINS:-}
+      - CONSOLE_THEMES=${CONSOLE_THEMES:-}
+      - CONSOLE_THEME_MODES=${CONSOLE_THEME_MODES:-}
+      - PORT=3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - homer-network
+    # The console runs as the non-root `nextjs` user from the start and needs no
+    # Linux capabilities, so drop them all and block privilege escalation. Its root
+    # filesystem is read-only; the only writable paths are the two tmpfs mounts the
+    # Next.js standalone server may write (scratch + its server data/fetch cache in
+    # .next/cache; images are unoptimized, so no image cache lands there).
+    # (The backend is intentionally NOT read_only: it runs arbitrary agents/Claude
+    # that write to $HOME, caches, and /tmp on unpredictable paths — a read-only
+    # root would break the core function; the workspace bind mount is its writable surface.)
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache
+    restart: unless-stopped
+
+networks:
+  homer-network:
+    driver: bridge

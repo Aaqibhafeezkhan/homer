@@ -1,0 +1,9 @@
+name: langgraph-inspect
+description: LangGraph topology fixture; only inspected (GET /agents/{name}/langgraph), never run
+dispatch:
+  enabled: true
+env:
+  PYTHONPATH: /app/agents/langgraph-inspect
+commands:
+  - !<langgraph>
+    module: e2e_review_graph

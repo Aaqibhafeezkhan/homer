@@ -1,0 +1,22 @@
+projectplan.md
+.worktrees/
+**/.idea
+.DS_Store
+
+# Docker
+.env
+docker-compose.override.yml
+
+# Server runtime data
+example/workspace/
+
+# Keep config and agents
+!example/config/
+!example/agents/
+
+.claude/
+docs/superpowers/
+
+# Quality report outputs (tools/quality, ADR-0082)
+/reports/
+/gl-code-quality.json

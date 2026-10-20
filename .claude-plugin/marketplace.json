@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "homer",
+  "description": "Authoring tools for Homer agents/workflows",
+  "owner": {
+    "name": "Homer",
+    "url": "https://github.com/livesport/homer"
+  },
+  "plugins": [
+    {
+      "name": "homer-authoring",
+      "source": "./plugins/homer-authoring",
+      "description": "Skill + JSON schema for authoring Homer agent definitions (agent.yaml / agent.json)"
+    }
+  ]
+}

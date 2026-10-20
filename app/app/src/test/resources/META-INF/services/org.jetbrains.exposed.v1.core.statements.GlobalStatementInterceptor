@@ -1,0 +1,2 @@
+homer.app.fixtures.SqlStatementRecorder
+homer.app.fixtures.QueryPlanCapture

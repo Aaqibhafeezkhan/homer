@@ -1,0 +1,295 @@
+# Per-commit checks on GitHub-hosted runners: the GitHub counterpart of the
+# every-pipeline jobs of the upstream pipeline, but on pull requests and main only (a
+# push trigger on every branch would run each PR twice). Fork pull requests run
+# it too, so no job here may need a secret: Gradle resolves from Maven Central
+# and caches through setup-gradle (ADR-0084).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # release.yml runs the full suite before it publishes images.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  homer-app-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      # buildSrc is a separate Gradle build; its own check runs ThirdPartyNoticesTest which `./gradlew check` skips.
+      - run: ./gradlew -p buildSrc check
+      # queryPlanReport writes the plans of the SQL :app:test ran (checks `query-plans`, `query-repeats`).
+      # The log feeds the kotlin-warnings report, so it must hold every compile task's output (ADR-0082).
+      - run: |
+          mkdir -p build
+          ./gradlew check koverVerify crapReport :app:queryPlanReport --console=plain 2>&1 | tee build/gradle-check.log
+      # One tarball per job: upload-artifact strips the paths' common prefix, and
+      # quality-gate needs every report back at its repository path.
+      - name: Pack reports
+        if: always()
+        working-directory: .
+        run: |
+          tar -czf reports.tgz --ignore-failed-read \
+            app/app/build/reports/tests/ app/app/build/reports/ktlint/ app/app/build/reports/kover/ \
+            app/*/build/reports/kover/report.xml app/*/build/reports/crap/ \
+            app/architecture/build/test-results/test/ app/architecture/build/test-results/architectureReportOnly/ \
+            app/app/build/reports/dto-contract/ app/app/build/reports/query-plans/ \
+            app/build/gradle-check.log app/buildSrc/build/reports/tests/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-app-tests
+          path: reports.tgz
+          retention-days: 7
+
+  homer-app-detekt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      # The Analysis API runs in the Gradle daemon and needs more metaspace than the default 384m.
+      - run: cd app && ./gradlew detektMain --console=plain -Dorg.gradle.jvmargs="-Xmx1g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+      - name: Pack reports
+        if: always()
+        run: tar -czf reports.tgz --ignore-failed-read app/*/build/reports/detekt/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-app-detekt
+          path: reports.tgz
+          retention-days: 7
+
+  homer-console-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      # THIRD-PARTY-LICENSES.md drift gate. See ADR-0056.
+      - run: npm run licenses:check
+      # Production dependencies only: dev-only advisories never ship in the bundle.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm run test:coverage
+      - run: npm run crap
+      - run: npm run quality:report
+      - run: npm run build
+      - name: Pack reports
+        if: always()
+        working-directory: .
+        run: |
+          tar -czf reports.tgz --ignore-failed-read \
+            console/coverage/crap/ console/coverage/coverage-final.json \
+            console/reports/quality/ console/reports/dto-contract/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-console-tests
+          path: reports.tgz
+          retention-days: 7
+
+  # The documentation site (ADR-0087): the generator's tests and a full build, which fails on a
+  # link to a file the repository does not hold and on a dead link between pages.
+  docs-site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run docs:build
+
+  # Stryker on the console lines a pull request changes (check `mutation-console`, ADR-0082).
+  homer-console-mutation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # quality-gate waits for this job; the bound keeps one large PR from holding it for hours.
+    timeout-minutes: 20
+    # Report-only and still unproven on CI runners: a Stryker failure warns, it does not block.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: console/reports/quality/mutation-console/stryker-incremental.json
+          key: console-mutation-incremental-v1-${{ github.run_id }}
+          restore-keys: console-mutation-incremental-v1-
+      # The checkout is the PR merge commit, so its first parent is the base it is measured against.
+      - run: |
+          MUTATE_BASE="$(git rev-parse HEAD^1)"
+          export MUTATE_BASE
+          cd console
+          npm ci
+          npm run mutation:changed
+      - name: Pack reports
+        if: always()
+        run: tar -czf reports.tgz --ignore-failed-read console/reports/quality/mutation-console/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-console-mutation
+          path: reports.tgz
+          retention-days: 7
+
+  homer-python-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: clients/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[test]'
+      - run: python -m pytest --junitxml=report.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-python-tests
+          path: clients/python/report.xml
+          retention-days: 7
+
+  # Every quality report in one table (ADR-0082). A warn-mode check with findings
+  # makes gate.mjs exit 3, which passes with a warning annotation; exit 1 fails.
+  quality-gate:
+    needs: [homer-app-tests, homer-app-detekt, homer-console-tests, homer-console-mutation]
+    # homer-console-mutation is skipped outside pull requests; the gate still runs.
+    if: >-
+      !cancelled()
+      && needs.homer-app-tests.result == 'success'
+      && needs.homer-app-detekt.result == 'success'
+      && needs.homer-console-tests.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/quality/package-lock.json
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: reports-homer-*
+          path: ${{ runner.temp }}/reports
+      - run: for f in "$RUNNER_TEMP"/reports/*/reports.tgz; do tar -xzf "$f"; done
+      - run: cd tools/quality && npm ci --no-audit --no-fund
+      - run: node tools/quality/kotlin-warnings.mjs app/build/gradle-check.log
+      - run: node tools/quality/architecture-backend.mjs
+      - run: node tools/quality/duplication.mjs
+      - run: node tools/quality/dto-contract.mjs
+      - run: node tools/quality/detekt.mjs
+      - run: node tools/quality/query-plans.mjs
+      - run: node tools/quality/query-repeats.mjs
+      # The base is the merge commit's first parent; without one (push to main) the check reports itself skipped.
+      - name: Diff coverage
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            node tools/quality/diff-coverage.mjs "$(git rev-parse HEAD^1)"
+          else
+            node tools/quality/diff-coverage.mjs
+          fi
+      - name: Gate
+        shell: bash
+        run: |
+          set +e
+          node tools/quality/gate.mjs code-quality.json
+          status=$?
+          if [ "$status" -eq 3 ]; then
+            echo "::warning title=Quality gate::Warn-mode checks have findings; see the gate output above."
+            exit 0
+          fi
+          exit "$status"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: quality-gate
+          path: |
+            reports/quality/
+            code-quality.json
+          retention-days: 7
+
+  # Black-box E2E suite against the production backend image; doubles as the
+  # "does app/Dockerfile still build" gate. Runbook: app/e2e/README.md.
+  homer-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      COMPOSE_FILE: docker-compose.e2e.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker compose build
+      # `run` returns the test JVM's exit code directly; `up --exit-code-from`
+      # does not reliably abort with the one-shot fixtures-init in the stack.
+      - run: docker compose run --name homer-e2e-runner e2e-runner
+      - name: Collect results and logs
+        if: always()
+        run: |
+          mkdir -p e2e-results e2e-logs
+          docker cp homer-e2e-runner:/e2e/e2e/build/test-results/test/. e2e-results/ || true
+          docker cp homer-e2e-runner:/e2e/e2e/build/reports/tests/test/. e2e-logs/html/ || true
+          # Backend stdout goes to the workspace volume (entrypoint.sh); `docker logs` is empty.
+          docker cp homer-e2e-backend:/app/workspace/app.log e2e-logs/ || true
+          docker cp homer-e2e-backend:/app/workspace/api.log e2e-logs/ || true
+          docker compose logs --no-color homer-runner homer-runner-crash > e2e-logs/homer-runner.log 2>&1 || true
+          docker compose down -v || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e
+          path: |
+            e2e-results/
+            e2e-logs/
+          retention-days: 7

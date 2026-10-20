@@ -1,0 +1,10 @@
+name: dispatcher
+description: Registers an ask-and-dispatch that starts `echo` once the operator answers
+commands:
+  - !<script>
+    label: register-dispatch
+    content: |
+      homer-ask ask-and-dispatch "Which message should echo print?" \
+        --agent echo \
+        --option ping --option pong \
+        --answer-param message

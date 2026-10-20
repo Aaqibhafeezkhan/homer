@@ -1,0 +1,18 @@
+[
+  { "line": "Copyright Eemeli Aro <eemeli@gmail.com>", "fromNotice": false, "keep": true },
+  { "line": "Copyright [2018] [Ohad Shai]", "fromNotice": false, "keep": true },
+  { "line": "Copyright (c) 2001 Year One Ltd", "fromNotice": false, "keep": true },
+  { "line": "Copyright 2002-2026 The Apache Software Foundation", "fromNotice": false, "keep": true },
+  { "line": "Portions Copyright (c) 1999 Example Corp", "fromNotice": false, "keep": true },
+  { "line": "Copyright (C) 1989, 1991 Free Software Foundation, Inc.", "fromNotice": false, "keep": false },
+  { "line": "Copyright (C) 1989, 1991 Free Software Foundation, Inc.", "fromNotice": true, "keep": true },
+  { "line": "Copyright (C) year name of author", "fromNotice": true, "keep": false },
+  { "line": "Copyright (C) YEAR NAME OF AUTHOR", "fromNotice": true, "keep": false },
+  { "line": "Copyright (C) Year Name Of Author", "fromNotice": true, "keep": false },
+  { "line": "Copyright [yyyy] [name of copyright owner]", "fromNotice": true, "keep": false },
+  { "line": "Copyright {yyyy} Foo", "fromNotice": true, "keep": false },
+  { "line": "Copyright (c) <year> <copyright holders>", "fromNotice": true, "keep": false },
+  { "line": "Copyright (C)", "fromNotice": true, "keep": false },
+  { "line": "COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM", "fromNotice": true, "keep": false },
+  { "line": "2. Grant of Copyright License.", "fromNotice": true, "keep": false }
+]

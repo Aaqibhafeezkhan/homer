@@ -1,0 +1,62 @@
+name: inputs
+description: Header, body (jsonPath), NUMBER, secret, and typed inputs all land in the env
+# `apiKey` is a typed secret with default/values (legacy types reject constraints);
+# its default and values must never be served by the API (ADR-0071).
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"trace=$TRACE_ID svc=$SVC_ID n=$NUM token=$SECRET_TOKEN env=$ENV_NAME count=$COUNT flag=$FLAG\"'"
+inputs:
+  - paramName: X-Trace-Id
+    envName: TRACE_ID
+    src: header
+    type: ANY
+    required: false
+  - paramName: service
+    envName: SVC_ID
+    src: body
+    type: ANY
+    required: false
+    transformer: !<jsonPath>
+      path: $.id
+  - paramName: n
+    envName: NUM
+    src: query
+    type: NUMBER
+    required: true
+  - paramName: token
+    envName: SECRET_TOKEN
+    src: query
+    type: ANY
+    required: false
+    secret: true
+  - paramName: apiKey
+    envName: SECRET_API_KEY
+    src: query
+    type: string
+    required: false
+    secret: true
+    default: abc
+    values: [abc, def]
+  - paramName: pin
+    envName: SECRET_PIN
+    src: query
+    type: integer
+    max: 9999
+    required: false
+    secret: true
+  - paramName: environment
+    envName: ENV_NAME
+    type: string
+    values: [dev, staging, prod]
+    required: false
+  - paramName: count
+    envName: COUNT
+    type: integer
+    min: 1
+    max: 100
+    default: 10
+    required: false
+  - paramName: flag
+    envName: FLAG
+    type: boolean
+    required: false

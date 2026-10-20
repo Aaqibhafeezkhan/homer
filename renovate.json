@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "Keep Docker base images pinned to a tag + digest and open PRs when the digest (security patches) or tag changes. See the 2026-07-12 security review (L6).",
+      "matchDatasources": ["docker"],
+      "pinDigests": true
+    }
+  ]
+}

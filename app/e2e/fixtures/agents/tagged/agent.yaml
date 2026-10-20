@@ -1,0 +1,13 @@
+name: tagged
+description: Carries a subject tag resolved from its input, so `?tag=` filtering can be exercised end to end
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"mr: $MR\"'"
+inputs:
+  - paramName: mr
+    envName: MR
+    src: query
+    type: ANY
+    required: true
+tags:
+  fromInputs: [mr]

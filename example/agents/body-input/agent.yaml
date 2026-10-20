@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: body-input
+description: Demonstrates inputs sourced from JSON request body
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo user=$USER_NAME service=$SERVICE_ID'"
+inputs:
+  - paramName: user
+    envName: USER_NAME
+    src: body
+    type: STRING
+    required: true
+  - paramName: service
+    envName: SERVICE_ID
+    src: body
+    type: ANY
+    required: false
+    transformer: !<jsonPath>
+      path: "$.id"

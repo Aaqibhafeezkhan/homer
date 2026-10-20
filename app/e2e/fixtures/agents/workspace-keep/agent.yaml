@@ -1,0 +1,11 @@
+name: workspace-keep
+description: Fixed workspace path + cleanAfterFinish false — a marker survives to the next run
+workspace:
+  path: e2e-workspace-keep
+  cleanAfterFinish: false
+commands:
+  - !<script>
+    label: probe-marker
+    content: |
+      if [ -f "$HMR_WORK_DIR/marker" ]; then echo "marker=present"; else echo "marker=absent"; fi
+      echo x > "$HMR_WORK_DIR/marker"

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: header-input
+description: Demonstrates inputs sourced from request headers
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo trace=$TRACE_ID req=$REQ_ID'"
+inputs:
+  - paramName: X-Trace-Id
+    envName: TRACE_ID
+    src: header
+    type: ANY
+    required: true
+  - paramName: X-Request-Id
+    envName: REQ_ID
+    src: header
+    type: ANY
+    required: false

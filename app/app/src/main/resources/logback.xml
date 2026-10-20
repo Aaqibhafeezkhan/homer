@@ -1,0 +1,61 @@
+<configuration>
+    <!-- Console mirrors the previous slf4j-simple format; stdout carries the
+         full application log (docker logs / kubectl logs in a container). -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- The same application log as a rolling file, so it is bounded on disk.
+         Same directory and rotation policy as api.log below. -->
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${HOMER_LOG_DIR:-.}/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${HOMER_LOG_DIR:-.}/app.%i.log</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>3</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- API access log. Lands beside app.log; HOMER_LOG_DIR is set to the
+         workspace dir in the container, defaulting to the working dir locally. -->
+    <appender name="API_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${HOMER_LOG_DIR:-.}/api.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${HOMER_LOG_DIR:-.}/api.%i.log</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>3</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>10MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Access lines go to api.log only (additivity=false keeps them out of the
+         console/app.log root). CallLogging is wired to this logger name. -->
+    <logger name="homer.access" level="INFO" additivity="false">
+        <appender-ref ref="API_FILE"/>
+    </logger>
+
+    <logger name="homer.app" level="DEBUG"/>
+    <logger name="io.ktor" level="INFO"/>
+    <logger name="io.netty" level="INFO"/>
+    <logger name="io.opentelemetry" level="INFO"/>
+
+    <!-- HOMER_LOG_LEVEL raises the root level (e.g. DEBUG in dev compose);
+         defaults to INFO. Replaces the old slf4j-simple defaultLogLevel prop. -->
+    <root level="${HOMER_LOG_LEVEL:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="APP_FILE"/>
+    </root>
+</configuration>

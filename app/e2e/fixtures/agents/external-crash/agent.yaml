@@ -1,0 +1,9 @@
+name: external-crash
+description: Kills its own homer-runner JVM mid-run; the run must fail at the heartbeat TTL
+runnerTags: [e2e-crash]
+commands:
+  - !<script>
+    label: crash-runner
+    content: |
+      pkill -9 -f homer-runner.jar
+      sleep 120

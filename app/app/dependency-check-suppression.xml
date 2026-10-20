@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <suppress>
+        <notes><![CDATA[
+        False positive: the MCP Kotlin SDK is matched to the Kotlin compiler's CPE by its name. These
+        CVEs concern the Kotlin compiler's build cache (CVE-2026-53914) and http artifact resolution
+        in 2019-era Kotlin, Ktor and IntelliJ project templates, not a library. Homer's own compiler
+        is Kotlin 2.4.21, past the fix.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/io\.modelcontextprotocol/kotlin-sdk-.*$</packageUrl>
+        <cve>CVE-2026-53914</cve>
+        <cve>CVE-2019-10101</cve>
+        <cve>CVE-2019-10102</cve>
+        <cve>CVE-2019-10103</cve>
+    </suppress>
+</suppressions>

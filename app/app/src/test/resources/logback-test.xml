@@ -1,0 +1,15 @@
+<configuration>
+    <!-- Tests must not create api.log files; console-only. Access-log routing is
+         exercised by attaching a ListAppender to the "homer.access" logger in-test. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="homer.app" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

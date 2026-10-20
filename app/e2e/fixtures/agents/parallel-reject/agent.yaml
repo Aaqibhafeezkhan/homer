@@ -1,0 +1,8 @@
+name: parallel-reject
+description: Single execution slot; a second concurrent run is rejected
+maxParallelRuns: 1
+onMaxParallelRuns: REJECT
+commands:
+  - !<script>
+    label: occupy-slot
+    content: sleep 3

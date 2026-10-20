@@ -1,0 +1,92 @@
+# Publishes the documentation site to GitHub Pages (ADR-0087): the docs of recent releases, each
+# kept as the homer-docs.tar.gz asset of its GitHub release, plus next from the default branch.
+# Runs on every push to main, and release.yml starts it after attaching a release's docs. Pages
+# needs a public repository on the organization's plan, so the job is skipped while the repository
+# is private. Only the default branch deploys, a manual run included: a dispatch from another
+# branch must not publish under the organization's site (ReleaseWorkflowGateTest).
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ !github.event.repository.private && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      REPO: ${{ github.repository }}
+      SITE_ROOT: /${{ github.event.repository.name }}/
+    steps:
+      # No token in .git/config: everything under the workspace may end up in the published site.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build next
+        working-directory: site
+        env:
+          DOCS_BASE: ${{ env.SITE_ROOT }}next/
+          DOCS_VERSION: next
+          DOCS_REF: ${{ github.event.repository.default_branch }}
+        run: |
+          npm ci
+          npm run docs:build
+      # Only the versions the site keeps are fetched (assemble.mjs --kept). A release from before
+      # the site has no docs archive and is skipped; any other failure to fetch an archive fails
+      # the deploy rather than dropping that version from the site.
+      # Anyone with write access can replace a release asset, so an archive is published only when
+      # its attestation proves release.yml built it from that release's tag on a GitHub-hosted
+      # runner, and only when check-archive.mjs accepts it as plain ustar holding nothing but
+      # regular files and directories with relative paths: an extension header, a link or a `..`
+      # path could carry a name that writes outside its directory or pulls a runner file into the
+      # published site.
+      - name: Fetch release docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          mkdir releases
+          gh release list --repo "$REPO" --limit 1000 --exclude-drafts --json tagName --jq '.[].tagName' |
+            node site/scripts/assemble.mjs --kept >tags
+          while IFS= read -r tag; do
+            assets=$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')
+            printf '%s\n' "$assets" | grep -qx homer-docs.tar.gz || continue
+            gh release download "$tag" --repo "$REPO" --pattern homer-docs.tar.gz --output archive.tar.gz --clobber
+            gh attestation verify archive.tar.gz --repo "$REPO" \
+              --signer-workflow "$REPO/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$tag" --deny-self-hosted-runners >/dev/null
+            node site/scripts/check-archive.mjs archive.tar.gz
+            mkdir "releases/$tag"
+            tar -xzf archive.tar.gz --no-same-owner --no-same-permissions -C "releases/$tag"
+            unexpected=$(find "releases/$tag" ! -type f ! -type d)
+            [ -z "$unexpected" ] || { echo "The $tag docs archive holds more than files and directories:"; echo "$unexpected"; exit 1; }
+          done <tags
+      - name: Assemble
+        run: node site/scripts/assemble.mjs releases site/.vitepress/dist public "$SITE_ROOT"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: public
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

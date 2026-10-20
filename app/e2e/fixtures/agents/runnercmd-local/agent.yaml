@@ -1,0 +1,16 @@
+name: runnercmd-local
+description: runnerCmd fixture targeting the built-in local runner; checks pass, script sees the input env
+commands:
+  - !<runnerCmd>
+    runner: local
+    check:
+      - "true"
+      - "test -n \"$MESSAGE\""
+    execute: |
+      echo "runnercmd got: $MESSAGE"
+inputs:
+  - paramName: message
+    envName: MESSAGE
+    src: query
+    type: ANY
+    required: true

@@ -1,0 +1,12 @@
+{
+  "name": "hello",
+  "description": "A sample greeting agent that demonstrates commands and query parameters",
+  "commands": [
+    { "type": "cmd", "cmd": "ping google.com -c 1" },
+    { "type": "script", "content": "echo $project_id" },
+    { "type": "claude",  "prompt":  {"type": "prompt","prompt": "Say a short, friendly one-line hello to project {{project_id}}."}, "options": {"model":  "haiku", "dangerouslySkipPermissions": true}}
+  ],
+  "queryParams": [
+    {"paramName": "project_id"}
+  ]
+}

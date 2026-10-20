@@ -1,0 +1,13 @@
+name: cooldown-debug
+description: Echo fixture for the debug endpoint; cooldown.minInterval only, so a debug start inside the window gets 429
+cooldown:
+  minInterval: 10m
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"debug got: $MESSAGE\"'"
+inputs:
+  - paramName: message
+    envName: MESSAGE
+    src: query
+    type: ANY
+    required: true

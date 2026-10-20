@@ -1,0 +1,6 @@
+name: nested-parent
+description: Holds a nested child agent in its own directory — nesting is layout only (ADR-0068)
+commands:
+  - !<script>
+    label: report-self
+    content: echo "nested-parent-ran"

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: langgraph_demo_check
+description: Check sub-agent the langgraph_demo graph fans out to; always reports ok
+dispatch:
+  enabled: true
+inputs:
+  - paramName: check
+    envName: CHECK
+    type: string
+    # A bare name only: the script embeds it in JSON unescaped (CWE-116).
+    pattern: '^[a-z_]+$'
+    required: true
+commands:
+  - !<script>
+    content: 'echo "{\"check\": \"$CHECK\", \"ok\": true}"'

@@ -1,0 +1,9 @@
+name: asker
+description: Asks the operator a question and blocks until answered
+commands:
+  - !<script>
+    label: ask-operator
+    timeout: 120
+    content: |
+      ANSWER=$(homer-ask ask-and-wait "Pick one" --option A --option B)
+      echo "answer=$ANSWER"

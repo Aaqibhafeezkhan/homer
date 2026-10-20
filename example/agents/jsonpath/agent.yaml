@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: jsonpath
+commands:
+  - !<script>
+    content: echo $VALUE
+queryParams:
+  - paramName: json
+    envName: VALUE
+    type: NUMBER
+    required: true
+    transformer:
+      !<jsonPath>
+      path: $[1]
+lockStrategy:
+  key: AAAA
+  onCollision: KILL_OLD_RUN_CURRENT

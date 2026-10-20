@@ -1,0 +1,32 @@
+{
+  "$comment": "Quality checks read by gate.mjs (ADR-0082). crap.threshold is read by both CRAP reports; it reached its target of 8 step by step (ADR-0081). mode \"warn\": findings make quality-gate pass with warnings; \"required\": they fail the pipeline. Flip a check to required once its findings are fixed. optional: the summary comes from a job not in every pipeline.",
+  "checks": [
+    {
+      "name": "crap",
+      "title": "CRAP score over threshold",
+      "mode": "required",
+      "threshold": 8,
+      "dirs": [
+        "app/app/build/reports/crap",
+        "app/agentdebug/build/reports/crap",
+        "app/homer-runner/build/reports/crap",
+        "app/e2e/build/reports/crap",
+        "app/architecture/build/reports/crap",
+        "console/coverage/crap"
+      ]
+    },
+    { "name": "kotlin-warnings", "title": "Kotlin compiler warnings", "mode": "required", "dirs": ["reports/quality/kotlin-warnings"] },
+    { "name": "architecture-backend", "title": "Backend architecture rules", "mode": "required", "dirs": ["reports/quality/architecture-backend"] },
+    { "name": "eslint-warnings", "title": "ESLint warnings", "mode": "required", "dirs": ["console/reports/quality/eslint-warnings"] },
+    { "name": "architecture-console", "title": "Console dependency rules", "mode": "required", "dirs": ["console/reports/quality/architecture-console"] },
+    { "name": "unused-console", "title": "Unused console code", "mode": "required", "dirs": ["console/reports/quality/unused-console"] },
+    { "name": "duplication", "title": "Duplicated code", "mode": "required", "dirs": ["reports/quality/duplication"] },
+    { "name": "diff-coverage", "title": "Diff coverage < 80%", "mode": "required", "dirs": ["reports/quality/diff-coverage"] },
+    { "name": "size-console", "title": "Console files > 600 / functions > 60 lines", "mode": "required", "dirs": ["console/reports/quality/size-console"] },
+    { "name": "dto-contract", "title": "Console DTO mirror drift", "mode": "required", "dirs": ["reports/quality/dto-contract"] },
+    { "name": "detekt", "title": "detekt findings", "mode": "required", "dirs": ["reports/quality/detekt"] },
+    { "name": "query-plans", "title": "Full scans of growing tables", "mode": "required", "dirs": ["reports/quality/query-plans"] },
+    { "name": "query-repeats", "title": "Statements repeated per row in one transaction", "mode": "required", "dirs": ["reports/quality/query-repeats"] },
+    { "name": "mutation-console", "title": "Surviving console mutants", "mode": "warn", "optional": true, "dirs": ["console/reports/quality/mutation-console"] }
+  ]
+}

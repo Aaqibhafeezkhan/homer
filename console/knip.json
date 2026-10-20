@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "ignoreDependencies": [
+    // Spawned by scripts/architecture.mjs, not named in a package.json script.
+    "dependency-cruiser",
+    // Imported by Next's compiled output, not by our source (the server trace includes the root copy).
+    "@swc/helpers",
+    // vitest-axe's rules engine, whose types its matchers re-export; declared to raise its floor.
+    "axe-core"
+  ],
+  // stryker.config.mjs runs Vitest through the second one.
+  "vitest": { "config": ["vitest.config.ts", "vitest.stryker.config.ts"] },
+  // types/homer.ts mirrors whole backend DTO trees: a nested type is exported with its parent.
+  "ignoreExportsUsedInFile": { "interface": true, "type": true },
+  // shadcn CLI output (console/CLAUDE.md § Gotchas): its export surface is not edited by hand.
+  "ignoreIssues": {
+    "components/ui/**": ["exports", "types"]
+  }
+}

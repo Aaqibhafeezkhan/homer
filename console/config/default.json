@@ -1,0 +1,32 @@
+{
+  "api": {
+    "baseUrl": "http://localhost:8080",
+    "timeout": 30000,
+    "allowedOrigins": []
+  },
+  "auth": {
+    "enabled": false,
+    "mode": "cookie",
+    "allowBearer": false,
+    "tokenKey": "homer_auth_token"
+  },
+  "polling": {
+    "processListInterval": 5000,
+    "processDetailActiveInterval": 2000,
+    "processDetailInactiveInterval": 10000,
+    "agentsCacheTime": 300000
+  },
+  "pagination": {
+    "defaultLimit": 50,
+    "maxLimit": 100
+  },
+  "ui": {
+    "defaultTheme": "dark"
+  },
+  "plugins": {
+    "entries": []
+  },
+  "themes": {
+    "entries": []
+  }
+}

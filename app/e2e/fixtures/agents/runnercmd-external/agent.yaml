@@ -1,0 +1,9 @@
+name: runnercmd-external
+description: runnerCmd fixture targeting the e2e-ext domain; its check needs the domain's extraUploads, so they must land before checks
+commands:
+  - !<runnerCmd>
+    runner: e2e-ext
+    check:
+      - "test -f \"$E2E_EXTRA_DIR/marker.txt\""
+    execute: |
+      echo "runnercmd extra: $(cat "$E2E_EXTRA_DIR/marker.txt")"

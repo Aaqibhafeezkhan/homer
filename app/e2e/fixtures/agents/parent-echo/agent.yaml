@@ -1,0 +1,5 @@
+name: parent-echo
+description: Prints the run's HMR_PARENT_PROCESS_ID and HMR_ROOT_PROCESS_ID (or `none`) so run linkage can be asserted from inside the run
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"parent=${HMR_PARENT_PROCESS_ID:-none} root=${HMR_ROOT_PROCESS_ID:-none}\"'"

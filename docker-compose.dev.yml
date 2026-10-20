@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      args:
+        # A build argument, not a runtime env var: it bundles agentdebug into the image.
+        HOMER_DEBUG: "1"
+    volumes:
+      - ./example/config:/app/config        # Read-write in dev
+      - ./example/agents:/app/agents        # Read-write in dev
+      - ./example/workspace:/app/workspace  # Local workspace
+    environment:
+      # No JDWP agent: a plain dev `up` must start no debug listener (it is RCE).
+      # Opt in with the docker-compose.debug.yml overlay. See ADR-0076, DOCKER.md.
+      - JAVA_OPTS=-Xmx512m -Xms256m -DHOMER_LOG_LEVEL=DEBUG
+
+  frontend:
+    command: sh -c "npm install && npm run dev"
+    # The base compose hardens the console with a read-only root FS; npm and
+    # the Next.js dev server need to write, so dev lifts it. npm's cache goes
+    # to tmpfs /tmp — the nextjs user's home is not writable in the image.
+    read_only: false
+    volumes:
+      - ./console:/app
+      - node_modules:/app/node_modules
+      - next_cache:/app/.next
+    environment:
+      - NODE_ENV=development
+      - CONSOLE_HOMER_API_URL=http://localhost:8080
+      - npm_config_cache=/tmp/.npm
+
+volumes:
+  node_modules:
+  next_cache:

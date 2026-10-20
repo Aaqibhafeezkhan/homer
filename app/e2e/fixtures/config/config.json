@@ -1,0 +1,41 @@
+{
+  "server": {
+    "port": 8080,
+    "apiAuth": {
+      "type": "bearer",
+      "tokens": {
+        "e2e": { "token": "e2e-token", "role": "admin" },
+        "echoScoped": { "token": "echo-scoped-token", "grants": [{ "agents": ["echo"], "actions": ["run", "read"] }] },
+        "nested": { "token": "nested-token", "grants": [{ "agents": ["parent", "orphan-parent"], "actions": ["run", "read"] }] },
+        "taggedScoped": { "token": "tagged-scoped-token", "grants": [{ "agents": ["tagged-secret"], "actions": ["run", "read"] }] }
+      }
+    },
+    "agentGrants": {
+      "parent": [{ "agents": ["echo"], "actions": ["run"] }]
+    },
+    "maxRequestBodyBytes": 262144,
+    "maxArtifactBytes": 65536,
+    "shutdownDrainSec": 5,
+    "rateLimit": { "limit": 100000, "refillPeriod": 60 },
+    "perCallerRateLimit": { "limit": 100000, "refillPeriod": 60 },
+    "mcp": { "enabled": true },
+    "localRunner": { "tags": ["e2e-local"] }
+  },
+  "runners": {
+    "e2e-ext": {
+      "type": "external",
+      "token": "e2e-external-domain-token-0123456789",
+      "homerApiUrl": "http://127.0.0.1:8080",
+      "heartbeatTimeoutSec": 35,
+      "extraUploads": [{ "local": "/app/config/extra-upload", "remote": ".homer/extra", "env": "E2E_EXTRA_DIR" }]
+    }
+  },
+  "agentsSearchPath": "/app/agents",
+  "workspaceRootPath": "/app/workspace/runs",
+  "databasePath": "/app/workspace/homer.db",
+  "costTrackedTagKeys": ["mr"],
+  "globalEnv": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin"
+  },
+  "openTelemetryExport": "LOG"
+}

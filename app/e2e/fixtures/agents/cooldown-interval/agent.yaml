@@ -1,0 +1,13 @@
+name: cooldown-interval
+description: Echo fixture with only cooldown.minInterval set, so a second start inside the window gets 429
+cooldown:
+  minInterval: 10m
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"got: $MESSAGE\"'"
+inputs:
+  - paramName: message
+    envName: MESSAGE
+    src: query
+    type: ANY
+    required: true

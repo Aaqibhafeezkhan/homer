@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: langgraph_demo
+description: Demonstrates the !<langgraph> command launching the Python homer_langgraph runtime
+dispatch:
+  enabled: true
+env:
+  # Makes approval_flow.py (next to this file) importable, for runs and for
+  # the console's graph introspection alike. /app/agents is the compose mount
+  # of example/agents (docker-compose.yml); change the path if you move the agent.
+  PYTHONPATH: /app/agents/langgraph_demo
+commands:
+  - !<langgraph>
+    module: approval_flow
+    python: python3
+    inputEnv: HMR_LG_INPUT
+    timeout: 120

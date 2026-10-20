@@ -1,0 +1,12 @@
+name: artifact-writer
+description: Writes plain, nested, and oversized (128 KiB > 64 KiB cap) artifacts
+workspace:
+  cleanAfterFinish: false
+commands:
+  - !<script>
+    label: write-artifacts
+    content: |
+      echo "hello artifact" > "$HMR_ARTIFACTS_DIR/hello.txt"
+      mkdir -p "$HMR_ARTIFACTS_DIR/nested/dir"
+      echo "nested content" > "$HMR_ARTIFACTS_DIR/nested/dir/deep.txt"
+      head -c 131072 /dev/zero | tr '\0' 'x' > "$HMR_ARTIFACTS_DIR/big.txt"

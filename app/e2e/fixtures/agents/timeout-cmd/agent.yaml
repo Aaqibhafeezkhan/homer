@@ -1,0 +1,7 @@
+name: timeout-cmd
+description: A 2 s command timeout aborts a 10 s sleep — the run fails fast
+commands:
+  - !<script>
+    label: overslept
+    timeout: 2
+    content: sleep 10

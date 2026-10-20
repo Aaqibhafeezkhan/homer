@@ -1,0 +1,1016 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://livesport.github.io/homer/schemas/latest/homer-config.schema.json",
+  "title": "Homer AppConfig",
+  "description": "Top-level Homer server configuration (JSON or YAML).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["server", "agentsSearchPath", "workspaceRootPath", "databasePath"],
+  "properties": {
+    "server": { "$ref": "#/$defs/Server" },
+    "agentsSearchPath": {
+      "type": "string",
+      "description": "Directory containing agent definitions (agent.json or agent.yaml)."
+    },
+    "workspaceRootPath": {
+      "type": "string",
+      "description": "Root path for per-process workspaces. Supports {{HMR_*}} template vars."
+    },
+    "databasePath": {
+      "type": "string",
+      "description": "Filesystem path to the SQLite database for durable process + question state. Created if absent; must live on a persisted volume in containers. Supports @SYSENV:VAR_NAME."
+    },
+    "langfuse": { "$ref": "#/$defs/LangfuseConfig" },
+    "globalEnv": {
+      "type": "object",
+      "description": "Environment variables made available to all agents. Values support @SYSENV:VAR_NAME.",
+      "additionalProperties": { "type": "string" }
+    },
+    "parentEnvAllowlist": {
+      "type": "array",
+      "description": "Host-JVM env keys layered under globalEnv when composing the child process env. Default: ['PATH','HOME','LANG','TZ']. Missing keys are skipped silently.",
+      "items": { "type": "string" },
+      "default": ["PATH", "HOME", "LANG", "TZ"]
+    },
+    "openTelemetryExport": {
+      "type": "string",
+      "enum": ["LANGFUSE", "LOG"],
+      "default": "LANGFUSE"
+    },
+    "runners": {
+      "type": "object",
+      "description": "Pluggable execution backends, keyed by alias. The built-in 'local' runner is implicit and must not appear here; any agent that doesn't set 'runner' uses 'local'.",
+      "additionalProperties": { "$ref": "#/$defs/RunnerConfig" },
+      "not": { "required": ["local"] }
+    },
+    "costLimits": { "$ref": "#/$defs/CostLimits" },
+    "llmPrice": { "$ref": "#/$defs/LlmPriceConfig" },
+    "costTrackedTagKeys": {
+      "type": "array",
+      "description": "Subject-tag keys (ADR-0060) queryable via GET /api/v1/costs/by-tag/{key}, letting an operator break Claude spend down by tag value. Empty = the endpoint accepts no keys. See ADR-0062.",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
+      "maxItems": 10
+    }
+  },
+  "$defs": {
+    "CostLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Soft caps on Claude spend, evaluated pre-flight before each `claude` invocation. Spend is backed by the durable `cost_entries` SQLite ledger, so both windows survive a server restart. See ADR-0035.",
+      "properties": {
+        "globalUsdPerMin": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "description": "Global cap on Claude spend (USD) summed over the trailing 60 s window. Null disables enforcement."
+        },
+        "perAgentUsdPerDay": {
+          "type": "object",
+          "description": "Per-agent caps on Claude spend (USD) summed over the trailing 24 h window. Keys are agent names; absent agents are uncapped.",
+          "additionalProperties": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "LlmPriceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional pricing of Claude runs from sources other than the CLI's own estimate. Omit to price every attempt from the CLI's total_cost_usd.",
+      "properties": {
+        "sessionSpend": { "$ref": "#/$defs/SessionSpendConfig" }
+      }
+    },
+    "SessionSpendConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "costPath"],
+      "description": "Price each Claude attempt from an external spend API keyed by the CLI session id. Falls back to the CLI figure, marked on the run, when the lookup fails.",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "GET URL template containing {sessionId} exactly once, in the path or query only (not the host, port, userinfo or fragment). https://, or http:// to a loopback host only."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Request headers sent verbatim. Values may use @SYSENV:VAR. Never logged."
+        },
+        "costPath": {
+          "type": "string",
+          "description": "JSONPath into the response yielding one number or a list of numbers (summed), e.g. $.spend or $.data[*].spend."
+        },
+        "callsPath": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional JSONPath yielding the number of model calls the endpoint has ingested for the session, e.g. $.calls; an endpoint returning per-request rows and no count field can count the rows with a length function, e.g. $.requests.length(). When set, Homer polls at 0, 5, 15 and 30 s after the CLI exits until the count reaches the calls the CLI made, charging a partial figure (marked incomplete) otherwise."
+        },
+        "requestsPath": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional JSONPath yielding the response's per-request rows, e.g. $.requests. Set together with startedPath and requestSpendPath, it prices each attempt from only the rows whose start time falls inside that attempt's window, instead of the session-cumulative costPath figure — so an agent that resumes its session with --continue is charged per attempt, not the running total. Must be set with the other two window keys or left null."
+        },
+        "startedPath": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional JSONPath into one requestsPath row yielding its start time, e.g. $.started. ISO-8601 (with a zone), or a number read as epoch milliseconds — or epoch seconds when its magnitude is below 100000000000. A row whose value cannot be read refuses the whole window, not just that row. Must be set with requestsPath and requestSpendPath or left null."
+        },
+        "requestSpendPath": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Optional JSONPath into one requestsPath row yielding its cost, e.g. $.spend. Must be set with requestsPath and startedPath or left null."
+        },
+        "windowGraceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5000,
+          "description": "Milliseconds added on each side of the attempt window when matching requestsPath rows, absorbing clock skew and ingestion delay. Only used when the window keys are set."
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000,
+          "default": 3000,
+          "description": "Per-request timeout in milliseconds. Without callsPath one attempt, no retry; with callsPath each of the four scheduled polls gets this timeout."
+        }
+      }
+    },
+    "Server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiAuth"],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080
+        },
+        "apiAuth": {
+          "$ref": "#/$defs/AuthConfig",
+          "description": "API authentication. Required: running without auth needs the explicit `!<unsecured>` opt-in (ADR-0036)."
+        },
+        "rateLimit": { "$ref": "#/$defs/RateLimitConfig" },
+        "perCallerRateLimit": { "$ref": "#/$defs/RateLimitConfig" },
+        "loginRateLimit": { "$ref": "#/$defs/RateLimitConfig" },
+        "corsAllowedOrigins": {
+          "type": "array",
+          "description": "Allowed CORS origins (full URLs with scheme). Empty = any host but WITHOUT credential reflection; pinned origins enable credentialed CORS. Under a Password (cookie) auth scheme an empty list is a startup error — explicit origins are required (ADR-0016).",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "maxProcesses": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000,
+          "description": "Maximum number of process rows retained. At the cap a new run evicts the oldest terminal row; if none can be evicted the run is refused with 503. Hard ceiling on workspace.retain.recordFor."
+        },
+        "maxAgentInvocationDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 5,
+          "description": "Maximum allowed depth of nested RunAgent invocations. Root call is depth 1; an agent that runs another agent makes that child depth 2, etc. Refuses with 422 when exceeded. Caps runaway recursion (an agent that calls itself directly or transitively)."
+        },
+        "shutdownDrainSec": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30,
+          "description": "Seconds to wait for in-flight ProcessExecutor jobs before stopping the Ktor engine. Audit P0 #3."
+        },
+        "requireClaudeCodeVersion": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "If set, every successful Claude run must report this exact value in its system event's claude_code_version field. A mismatch (or a missing field when the pin is set) fails the run with ClaudeCliVersionMismatchException and is not retried. Leave null to skip the check. Audit P1 #15."
+        },
+        "claudeDropSystemSubtypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_]+$",
+            "not": { "const": "init" }
+          },
+          "default": ["thinking_tokens"],
+          "description": "system-event subtypes dropped from a Claude step's stdout before it is written, so maxOutputBytes counts conversation rather than telemetry. Third-party models emit one thinking_tokens event per thinking token; native Anthropic models emit none. Each attempt's stderr records what was dropped. Empty list disables. 'init' is refused (it carries claude_code_version). See ADR-0063."
+        },
+        "maxRequestBodyBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10485760,
+          "description": "Maximum accepted HTTP request body size in bytes; larger bodies are rejected with 413."
+        },
+        "maxArtifactBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 104857600,
+          "description": "Maximum size in bytes of a single artifact file served by GET /api/v1/artifacts. Files larger than this are rejected pre-flight with 413 Payload Too Large. Default 100 MiB. Audit P1 #18."
+        },
+        "maxRetainedArtifactBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 16777216,
+          "description": "Per-run byte cap on artifacts retained past the workspace purge (workspace.retain.artifacts). The retained set is agent-written and lives until the record dies, so the operator's disk ceiling is maxProcesses x this value. Overflow keeps what fits in declared-glob order and flags the record retainedTruncated. See ADR-0053."
+        },
+        "maxConfigFileBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1048576,
+          "description": "Maximum size in bytes of a single agent definition file, files-API write payload, or homer-config file. Files larger than this are rejected pre-flight before YAML/JSON parsing. Default 1 MiB. Audit P1 #14."
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10485760,
+          "description": "Maximum size in bytes of a single command's stdout or stderr file. Either file exceeding the cap kills the command via the existing TTL kill path with an [HOMER] Output cap exceeded marker; ExecutionInfo.outputTruncated surfaces the reason. Default 10 MiB. Audit P1 #17."
+        },
+        "claudeStreamPollMs": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 2000,
+          "default": 150,
+          "description": "Polling interval (ms) of the stdout file poll behind GET /api/v1/stream/processes/{id}/llm-events. Coerced to 50..2000 at startup. Default 150."
+        },
+        "mcp": { "$ref": "#/$defs/McpServerConfig" },
+        "questions": { "$ref": "#/$defs/QuestionsConfig" },
+        "localRunner": { "$ref": "#/$defs/LocalRunnerConfig" },
+        "runnerClaimTimeoutSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 300,
+          "description": "Seconds a run waits in the claim queue for a runner with a free permit (or a matching registered instance) before it fails. Agents may override with runnerClaimTimeoutSec. See ADR-0066."
+        },
+        "maxPendingRunnerClaims": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "Bound on runs waiting in the claim queue; a run arriving at the bound fails immediately instead of waiting. See ADR-0066."
+        },
+        "dispatch": { "$ref": "#/$defs/DispatchConfig" },
+        "langGraph": { "$ref": "#/$defs/LangGraphConfig" },
+        "agentGrants": {
+          "type": "object",
+          "description": "Per-agent grants layered onto a caller's own grants when it runs another agent (ADR-0037). Keys are agent names.",
+          "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/Grant" } }
+        }
+      }
+    },
+    "LangGraphConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "LangGraph runtime configuration.",
+      "properties": {
+        "stateDir": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Durable directory for LangGraph SQLite checkpoints, kept outside the ephemeral per-process workspace so continuations survive across runs. null = derived as a 'langgraph' subdirectory beside databasePath."
+        }
+      }
+    },
+    "DispatchConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "ask-and-dispatch: running commands register a question + target agent; Homer fires the target run automatically when the operator answers. See ADR-0021.",
+      "properties": {
+        "maxPending": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 100,
+          "description": "Global cap on the number of simultaneously PENDING dispatches. A new dispatch that would exceed the cap is rejected with 429."
+        },
+        "defaultTtlSec": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "Default TTL (seconds) applied to dispatches that do not supply their own ttlSec. null = no default TTL (dispatches stay PENDING until answered or cancelled)."
+        },
+        "sweepIntervalSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60,
+          "description": "How often (seconds) the background sweep runs to cancel PENDING dispatches whose expires_at has passed. Default 60."
+        },
+        "settledRetentionSec": {
+          "type": "integer",
+          "minimum": 3600,
+          "default": 604800,
+          "description": "How long (seconds) a settled dispatch or continuation (any status but PENDING and DISPATCHING) is kept, measured from its createdAt; the dispatch and continuation sweeps then delete it with its dispatch-bound question or join watch rows. Default 604800 (7 days), minimum 3600."
+        },
+        "resultTokenTtlSec": {
+          "type": "integer",
+          "minimum": 60,
+          "default": 3600,
+          "description": "TTL (seconds) for read-by-reference result tokens minted when a watched sub-process's result exceeds the inline cap. Floored at 60 so a token outlives the resumed parent's first segment. See ADR-0025."
+        },
+        "maxJoinSubs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 32,
+          "description": "Maximum sub-agents a single POST /api/v1/callback/joins request may fan out to. Each sub starts a process immediately, so this caps synchronous per-request fan-out; an over-limit request is rejected with 400."
+        }
+      }
+    },
+    "QuestionsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Human-in-the-loop questions: running commands ask the operator via the injected homer-ask helper or the MCP question tools and wait for an answer. See ADR-0019.",
+      "properties": {
+        "maxWaitSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 86400,
+          "description": "Upper bound (seconds) for a single answer-wait. Caller-supplied waits (REST waitSec, helper --wait/--ttl) are clamped to this value. Waits are resumable, so this caps one HTTP hold, not the total time a question may stay open. Default 86400 (1 day)."
+        },
+        "maxOpenPerProcess": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Maximum simultaneously open questions per process; further asks are rejected with 429."
+        },
+        "maxTextLength": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000,
+          "description": "Maximum length (characters) of the question text and of each option; longer payloads are rejected with 400."
+        },
+        "maxOptions": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 20,
+          "description": "Maximum number of options per question; more are rejected with 400."
+        },
+        "maxConcurrentWaitsPerProcess": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 32,
+          "description": "Maximum simultaneously held answer-waits per process; further waits are rejected with 429. Bounds the connections a workspace command can pin open."
+        }
+      }
+    },
+    "McpServerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Streamable HTTP MCP endpoint at /mcp. Disabled by default; when enabled, agents with mcp.enabled=true are exposed as MCP tools alongside the run-management tools. See ADR-0018.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Serve the /mcp endpoint."
+        },
+        "maxWaitSec": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "Upper bound (seconds) for the per-call _wait argument on agent tools. Requested waits are clamped to 0..maxWaitSec."
+        },
+        "maxInlineArtifactBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 65536,
+          "description": "Maximum artifact size (bytes) the get_artifact tool inlines into the tool result. Larger files are truncated to this many bytes."
+        }
+      }
+    },
+    "AuthConfig": {
+      "description": "API authentication. bearer = long-lived tokens; hmac = body-signature verification; password = username + bcrypt hash, served via HttpOnly session cookie (closes audit P0 #6, see ADR-0010); combined = multiple schemes side-by-side; unsecured = no auth.",
+      "oneOf": [
+        { "$ref": "#/$defs/AuthConfigBearer" },
+        { "$ref": "#/$defs/AuthConfigHmac" },
+        { "$ref": "#/$defs/AuthConfigPassword" },
+        { "$ref": "#/$defs/AuthConfigCombined" },
+        { "$ref": "#/$defs/AuthConfigUnsecured" }
+      ]
+    },
+    "AuthConfigHmac": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "keys"],
+      "properties": {
+        "type": { "const": "hmac" },
+        "keys": {
+          "type": "object",
+          "description": "Map of keyId -> HmacKeyConfig. The first key whose signature header is present and whose MAC matches wins.",
+          "additionalProperties": { "$ref": "#/$defs/HmacKeyConfig" }
+        }
+      }
+    },
+    "AuthConfigCombined": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "schemes"],
+      "description": "Allow multiple auth schemes simultaneously. Any single scheme admitting the request lets it through. At most one Bearer, one Hmac, and one Password; no nested Combined; no Unsecured.",
+      "properties": {
+        "type": { "const": "combined" },
+        "schemes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/AuthConfigBearer" },
+              { "$ref": "#/$defs/AuthConfigHmac" },
+              { "$ref": "#/$defs/AuthConfigPassword" }
+            ]
+          }
+        }
+      }
+    },
+    "AuthConfigPassword": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "users", "sessionSecret"],
+      "description": "Username + password authentication. A successful POST /api/v1/auth/login sets an HttpOnly Secure session cookie (SameSite configurable via cookieSameSite, default Lax) carrying a signed { username, exp, ver } payload. Closes audit P0 #6 (long-term phase). See ADR-0010.",
+      "properties": {
+        "type": { "const": "password" },
+        "users": {
+          "type": "object",
+          "description": "Map of username -> { passwordHash, role, grants }. Hashes are bcrypt — produce them with `./agentdebug.sh hash-password`.",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/PasswordUserConfig" }
+        },
+        "sessionSecret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Secret used to HMAC-sign the session cookie. Supports @SYSENV:VAR_NAME. Rotate by setting sessionSecretPrevious to the old value, deploying with a new sessionSecret, then clearing sessionSecretPrevious after sessionTtlMin elapses."
+        },
+        "sessionSecretPrevious": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Previous session secret accepted during rotation. Supports @SYSENV:VAR_NAME. Null when no rotation is in progress."
+        },
+        "sessionTtlMin": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 720,
+          "description": "Session cookie lifetime in minutes (Max-Age and exp claim). Default 12 h."
+        },
+        "cookieName": {
+          "type": "string",
+          "minLength": 1,
+          "default": "homer_session",
+          "description": "Name of the session cookie."
+        },
+        "cookieSecure": {
+          "type": "boolean",
+          "default": true,
+          "description": "Set the cookie's Secure flag. Set to false only for plain-HTTP localhost dev that can't use the Secure-on-localhost browser exception."
+        },
+        "cookieSameSite": {
+          "enum": ["lax", "none", "strict"],
+          "default": "lax",
+          "description": "SameSite attribute for the session cookie. 'lax' (default) suits a console served from the same origin as the API. Set 'none' when the console is served from a different origin (cross-origin cookie auth); 'none' requires cookieSecure=true (HTTPS). CSRF stays closed via the X-Homer-CSRF header + pinned CORS regardless. See ADR-0028."
+        },
+        "bcryptCost": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 15,
+          "default": 12,
+          "description": "Bcrypt cost factor used by `./agentdebug.sh hash-password`. Verification reads the cost from the hash itself."
+        }
+      }
+    },
+    "PasswordUserConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passwordHash"],
+      "properties": {
+        "passwordHash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Bcrypt hash of the user's password (typically $2a$12$...). Generate via `./agentdebug.sh hash-password`."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Grants full access when set to 'admin'. See ADR-0037."
+        },
+        "grants": {
+          "type": "array",
+          "description": "Agent-scoped grants (agents + actions). See ADR-0037.",
+          "items": { "$ref": "#/$defs/Grant" }
+        }
+      }
+    },
+    "HmacKeyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secret"],
+      "description": "Per-key HMAC configuration. Defaults match the generic HMAC-of-body convention (Vikunja-compatible when signatureHeader is set to X-Vikunja-Signature).",
+      "properties": {
+        "secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shared secret. Supports @SYSENV:VAR_NAME."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Grants full access when set to 'admin'. See ADR-0037."
+        },
+        "grants": {
+          "type": "array",
+          "description": "Agent-scoped grants (agents + actions). See ADR-0037.",
+          "items": { "$ref": "#/$defs/Grant" }
+        },
+        "signatureHeader": {
+          "type": "string",
+          "minLength": 1,
+          "default": "X-Homer-Signature",
+          "description": "HTTP header carrying the signature."
+        },
+        "algorithm": {
+          "enum": ["sha1", "sha256", "sha512"],
+          "default": "sha256"
+        },
+        "encoding": {
+          "enum": ["hex", "base64"],
+          "default": "hex",
+          "description": "Encoding of the signature header value."
+        },
+        "prefix": {
+          "type": "string",
+          "default": "",
+          "description": "Required prefix stripped before decoding (e.g. 'sha256=' for GitHub)."
+        },
+        "payloadTemplate": {
+          "type": "string",
+          "default": "{{body}}",
+          "description": "What gets HMACed. Tokens: {{body}}, {{timestamp}}, {{method}}, {{path}}, {{query}} (raw query string, no leading '?')."
+        },
+        "timestampHeader": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "If set, header value is checked for staleness and payloadTemplate must include {{timestamp}} (rejected at startup otherwise; an unsigned timestamp provides no replay protection)."
+        },
+        "replayToleranceSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 300,
+          "description": "Max skew vs server clock (seconds). Only enforced when timestampHeader is set."
+        }
+      }
+    },
+    "AuthConfigBearer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "tokens"],
+      "properties": {
+        "type": { "const": "bearer" },
+        "tokens": {
+          "type": "object",
+          "description": "Map of username -> TokenConfig (scalar string or object with token + role/grants).",
+          "additionalProperties": { "$ref": "#/$defs/TokenConfig" }
+        }
+      }
+    },
+    "AuthConfigUnsecured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "unsecured" }
+      }
+    },
+    "TokenConfig": {
+      "description": "Either a scalar bearer token string, or an object with token + role/grants.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["token"],
+          "properties": {
+            "token": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Bearer token; must not be blank. Supports @SYSENV:VAR_NAME."
+            },
+            "role": {
+              "type": "string",
+              "enum": ["admin"],
+              "description": "Grants full access when set to 'admin'. See ADR-0037."
+            },
+            "grants": {
+              "type": "array",
+              "description": "Agent-scoped grants (agents + actions). See ADR-0037.",
+              "items": { "$ref": "#/$defs/Grant" }
+            }
+          }
+        }
+      ]
+    },
+    "Grant": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A grant over one or more agents (name glob patterns, '*' = all) and the actions permitted on them. See ADR-0037.",
+      "required": ["agents", "actions"],
+      "properties": {
+        "agents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Action" },
+          "minItems": 1
+        }
+      }
+    },
+    "Action": {
+      "type": "string",
+      "enum": ["run", "read", "control", "edit", "debug"]
+    },
+    "RateLimitConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "default": 1000 },
+        "refillPeriod": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Refill period in seconds.",
+          "default": 60
+        }
+      }
+    },
+    "LangfuseConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serverUrl": { "type": "string", "format": "uri" },
+        "publicKey": { "type": "string" },
+        "secretKey": { "type": "string" },
+        "projectId": {
+          "type": "string",
+          "description": "Langfuse project id, used only to deep-link a run to its trace. Copy it out of any Langfuse URL. Blank = no trace links in the console."
+        }
+      }
+    },
+    "RunnerConfig": {
+      "description": "Execution backend configuration. JSON form uses a 'type' discriminator.",
+      "oneOf": [
+        { "$ref": "#/$defs/KubernetesRunner" },
+        { "$ref": "#/$defs/SshRunner" },
+        { "$ref": "#/$defs/ExternalRunner" }
+      ]
+    },
+    "LocalRunnerConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Claim-queue facets of the built-in local runner: the tags it serves and how many runs it serves at once. See ADR-0066.",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$" },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "concurrency": { "type": ["integer", "null"], "minimum": 1, "default": null }
+      }
+    },
+    "KubernetesRunner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "image"],
+      "properties": {
+        "type": { "const": "kubernetes" },
+        "kubeconfig": {
+          "type": ["string", "null"],
+          "description": "Path to kubeconfig. null = in-cluster config or $KUBECONFIG."
+        },
+        "namespace": { "type": "string", "default": "default" },
+        "image": { "type": "string", "minLength": 1 },
+        "shell": { "type": "string", "default": "/bin/sh" },
+        "resources": { "$ref": "#/$defs/ResourceSpec" },
+        "volumes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VolumeSpec" }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Annotations set on every pod this runner creates, e.g. secret-injector or scrape config. Passed through verbatim; Homer sets none of its own."
+        },
+        "initContainers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ContainerSpec" }
+        },
+        "podStartTimeoutSeconds": { "type": "integer", "minimum": 1, "default": 120 },
+        "keepPodOnFailure": { "type": "boolean", "default": false },
+        "keepPodTtlSeconds": { "type": "integer", "minimum": 1, "default": 3600 },
+        "homerApiUrl": {
+          "type": ["string", "null"],
+          "description": "Cluster-internal Homer URL injected as HMR_API_URL. v1: plain HTTP only."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Per-runner environment variables, layered between globalEnv and agent env. Values support @SYSENV:VAR. Keys must not be blank or use the reserved HMR_ prefix. Remote runners do not receive the backend's parentEnvAllowlist host env — set per-host values (PATH, LANG, TZ, HOME) here instead."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$" },
+          "maxItems": 32,
+          "uniqueItems": true,
+          "description": "Tags this runner serves for agents that select a runner with runnerTags (every requested tag must be present here). Empty = reachable by alias only. See ADR-0066."
+        },
+        "concurrency": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "Runs this runner serves at once. A run addressed to a saturated runner waits in the claim queue and fails at the claim TTL. null = unbounded. See ADR-0066."
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "serviceAccountName": { "type": ["string", "null"] },
+        "securityContext": { "$ref": "#/$defs/SecurityContextSpec" },
+        "syncExcludes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Entry names excluded from every workspace upload into the pod: a bare name (e.g. \"build\") matches at any depth; a leading '/' (e.g. \"/build\") anchors the entry to the upload root, e.g. [\".git\", \".gradle\", \"build\"]."
+        },
+        "extraUploads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExtraUploadSpec" },
+          "description": "Host files/folders uploaded into every pod workspace on this runner; env (optional) is repointed at the pod-local copy. See ADR-0042/0043."
+        }
+      }
+    },
+    "SshRunner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "host", "user", "auth", "remoteWorkspaceRoot"],
+      "properties": {
+        "type": { "const": "ssh" },
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 22 },
+        "user": { "type": "string", "minLength": 1 },
+        "auth": { "$ref": "#/$defs/SshAuth" },
+        "knownHostsPath": { "type": ["string", "null"] },
+        "strictHostKeyChecking": { "type": "boolean", "default": true },
+        "remoteWorkspaceRoot": { "type": "string", "minLength": 1, "pattern": "^/(?!(\\.|\\.\\.)(/|$))[^/]+(/(?!(\\.|\\.\\.)(/|$))[^/]+)*$" },
+        "homerApiUrl": { "type": ["string", "null"] },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Per-runner environment variables, layered between globalEnv and agent env. Values support @SYSENV:VAR. Keys must not be blank or use the reserved HMR_ prefix. Remote runners do not receive the backend's parentEnvAllowlist host env — set per-host values (PATH, LANG, TZ; sshd supplies HOME) here instead."
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$" },
+          "maxItems": 32,
+          "uniqueItems": true,
+          "description": "Tags this runner serves for agents that select a runner with runnerTags (every requested tag must be present here). Empty = reachable by alias only. See ADR-0066."
+        },
+        "concurrency": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "Runs this runner serves at once. A run addressed to a saturated runner waits in the claim queue and fails at the claim TTL. null = unbounded. See ADR-0066."
+        },
+        "shell": { "type": "string", "default": "/bin/sh" },
+        "connectTimeoutSeconds": { "type": "integer", "minimum": 1, "default": 30 },
+        "idleTimeoutSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "SSH-idle timeout in seconds; null (the default) disables it — a remote command producing no output for a long time is a normal state, and the command's own timeout bounds it."
+        },
+        "heartbeatIntervalSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": 30,
+          "description": "SSH keepalive interval in seconds; null disables keepalives. Heartbeats keep NAT/proxy idle timers on the path alive and let the client detect a dead link while the idle timeout is off."
+        },
+        "sftpTransferTimeoutSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": 300,
+          "description": "Per-operation SFTP transfer deadline in seconds; null disables the bound. Each blocking SFTP round trip (file copy, directory listing, stat, mkdir, the SFTP subsystem handshake, and the client close) must complete within this time or the SSH session is closed and the transfer fails, so a peer answering keepalives while stalling SFTP data cannot hold a run slot and workspace lock indefinitely. A close that fails or exceeds the deadline is logged and swallowed — it does not fail the transfer."
+        },
+        "syncExcludes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Entry names excluded from every workspace upload onto the remote host: a bare name (e.g. \"build\") matches at any depth; a leading '/' (e.g. \"/build\") anchors the entry to the upload root, e.g. [\".git\", \".gradle\", \"build\"]."
+        },
+        "extraUploads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExtraUploadSpec" },
+          "description": "Host files/folders uploaded into every remote workspace on this runner; env (optional) is repointed at the remote copy. See ADR-0042."
+        }
+      }
+    },
+    "ExternalRunner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "token"],
+      "description": "Trust domain for pull-mode runner instances (homer-runner). Instances register with this token and announce their own tags and concurrency. See ADR-0066.",
+      "properties": {
+        "type": { "const": "external" },
+        "token": { "type": "string", "minLength": 1, "description": "Shared secret instances present as Authorization: Bearer on /api/v1/runner/*. Supports @SYSENV:VAR. At least 32 characters after @SYSENV resolution; generate with e.g. openssl rand -hex 32. Must differ from every apiAuth credential — bearer token, HMAC key secret or session signing secret (current or rotated-out) — and from every other domain's token." },
+        "homerApiUrl": { "type": ["string", "null"], "description": "Homer URL reachable from the instances; injected into runs as HMR_API_URL. Must be https://, or http:// to a loopback host, without embedded credentials (runs send their callback token there)." },
+        "allowedTags": {
+          "type": ["array", "null"],
+          "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$" },
+          "maxItems": 32,
+          "uniqueItems": true,
+          "description": "Tags an instance may announce at registration; null = any tag. A typo guard, not a security gate."
+        },
+        "heartbeatTimeoutSec": { "type": "integer", "minimum": 35, "default": 60, "description": "An instance silent for longer is dropped and its runs fail. Must be at least 35 (the 30 s long-poll window plus 5 s slack)." },
+        "maxInstances": { "type": "integer", "minimum": 1, "default": 32 },
+        "maxConcurrencyPerInstance": { "type": "integer", "minimum": 1, "default": 16, "description": "Upper bound on the concurrency an instance may announce." },
+        "transferTimeoutSec": { "type": "integer", "minimum": 1, "default": 300, "description": "Deadline for one tar transfer in either direction, and for each output-chunk request." },
+        "maxTransferBytes": { "type": "integer", "minimum": 1, "default": 1073741824, "description": "Largest tar an instance may post for one download." },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Per-domain environment variables delivered to runs on any instance of this domain. Values support @SYSENV:VAR. Keys must not be blank or use the reserved HMR_ prefix."
+        },
+        "extraUploads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExtraUploadSpec" },
+          "description": "Host files/folders uploaded into every workspace on whichever instance claims the run; env (optional) is repointed at the instance's copy. Same shape, reserved-path and boot-check rules as the ssh runner's extraUploads, but always uploaded in full (no syncExcludes). See ADR-0042."
+        }
+      }
+    },
+    "ExtraUploadSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local", "remote"],
+      "properties": {
+        "local": { "type": "string", "minLength": 1, "description": "Host file or directory; must exist at startup." },
+        "remote": { "type": "string", "minLength": 1, "description": "Destination relative to the remote projectRoot, in normalized form (no '.', '..', '//', or trailing '/'); must not equal, live under, or be an ancestor of workdir/, artifacts/, .homer/agent, .homer/bin, .homer/mcp.json." },
+        "env": { "type": ["string", "null"], "description": "Workspace env var repointed at the remote copy. Must not start with HMR_." }
+      }
+    },
+    "SshAuth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "privateKeyPath"],
+          "properties": {
+            "type": { "const": "key" },
+            "privateKeyPath": { "type": "string", "minLength": 1 },
+            "passphrase": { "type": ["string", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "agent" } }
+        }
+      ]
+    },
+    "SecurityContextSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Pod- and container-level security context. Required when running under Pod Security Admission 'restricted' or any policy that enforces runAsNonRoot.",
+      "properties": {
+        "runAsUser": { "type": ["integer", "null"], "minimum": 0 },
+        "runAsGroup": { "type": ["integer", "null"], "minimum": 0 },
+        "runAsNonRoot": { "type": ["boolean", "null"] },
+        "fsGroup": { "type": ["integer", "null"], "minimum": 0 },
+        "allowPrivilegeEscalation": { "type": ["boolean", "null"] },
+        "readOnlyRootFilesystem": { "type": ["boolean", "null"] },
+        "capabilities": { "$ref": "#/$defs/CapabilitiesSpec" },
+        "seccompProfile": { "$ref": "#/$defs/SeccompProfileSpec" }
+      }
+    },
+    "CapabilitiesSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "add": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "drop": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "SeccompProfileSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["RuntimeDefault", "Localhost", "Unconfined"] },
+        "localhostProfile": { "type": ["string", "null"] }
+      },
+      "if": { "properties": { "type": { "const": "Localhost" } }, "required": ["type"] },
+      "then": { "required": ["localhostProfile"] }
+    },
+    "ResourceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "VolumeSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mountPath", "source"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "mountPath": { "type": "string", "minLength": 1 },
+        "readOnly": { "type": "boolean", "default": false },
+        "source": { "$ref": "#/$defs/VolumeSource" }
+      }
+    },
+    "VolumeSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "path"],
+          "properties": {
+            "type": { "const": "hostPath" },
+            "path": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "name"],
+          "properties": {
+            "type": { "const": "configMap" },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "secretName"],
+          "properties": {
+            "type": { "const": "secret" },
+            "secretName": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "claimName"],
+          "properties": {
+            "type": { "const": "pvc" },
+            "claimName": { "type": "string", "minLength": 1 },
+            "readOnly": { "type": "boolean", "default": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "emptyDir" }
+          }
+        }
+      ]
+    },
+    "ContainerSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "image"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "image": { "type": "string", "minLength": 1 },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "volumeMounts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/VolumeMountSpec" }
+        }
+      }
+    },
+    "VolumeMountSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mountPath"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "mountPath": { "type": "string", "minLength": 1 },
+        "readOnly": { "type": "boolean", "default": false },
+        "subPath": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

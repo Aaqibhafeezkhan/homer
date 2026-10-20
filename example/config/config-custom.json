@@ -1,0 +1,44 @@
+{
+  "server": {
+    "port": 8080,
+    "apiAuth": {
+      "type": "unsecured"
+    },
+    "corsAllowedOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+  },
+  "agentsSearchPath": "/app/agents",
+  "workspaceRootPath": "/app/workspace/runs",
+  "databasePath": "/app/workspace/homer.db",
+  "langfuse": {
+    "serverUrl": "https://cloud.langfuse.com",
+    "publicKey": "pk-lf-xxx-your-key-here",
+    "secretKey": "sk-lf-xxx-your-secret-here"
+  },
+  "globalEnv": {
+    "PATH": "/usr/local/bin:/usr/bin:/bin"
+  },
+  "runners": {
+    "build-box": {
+      "type": "ssh",
+      "host": "builder.internal",
+      "user": "homer",
+      "auth": { "type": "agent" },
+      "knownHostsPath": "/etc/homer/ssh/known_hosts",
+      "remoteWorkspaceRoot": "/var/homer/workspaces",
+      "syncExcludes": [".git", "node_modules"],
+      "extraUploads": [
+        { "local": "/app/scripts", "remote": ".homer/scripts", "env": "SCRIPTS_DIR" }
+      ]
+    },
+    "k8s-builds": {
+      "type": "kubernetes",
+      "namespace": "homer-agents",
+      "image": "registry.example.com/android-build:34",
+      "homerApiUrl": "http://homer.example.internal:8080",
+      "syncExcludes": [".git", ".gradle", "build"],
+      "extraUploads": [
+        { "local": "/app/scripts", "remote": ".homer/scripts", "env": "SCRIPTS_DIR" }
+      ]
+    }
+  }
+}

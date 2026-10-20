@@ -1,0 +1,59 @@
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# Build artifacts
+.gradle/
+*/build/
+*/out/
+*.class
+*.jar
+*.war
+# Gradle outputs at any depth (app/app/build, app/buildSrc/.gradle, …): `*/build/`
+# matches only depth 2, so a stale local homer-*-all.jar could reach the image.
+# Not `**/*.jar` — app/gradle/wrapper/gradle-wrapper.jar must stay in the context.
+**/build/
+**/.gradle/
+
+# Python client dev artifacts (the image pip-installs from source; a local
+# .venv here was ~71 MB of dead weight in the COPY layer)
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/*.egg-info/
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+
+# Docker files (avoid recursion)
+docker/workspace/
+docker/config/config.json
+docker/.env
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+!CLAUDE.md
+!SERVER.md
+!AGENT.md

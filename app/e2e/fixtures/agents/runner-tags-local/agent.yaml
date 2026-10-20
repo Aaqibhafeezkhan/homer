@@ -1,0 +1,7 @@
+name: runner-tags-local
+description: Selects its runner by tags that the fixture config's local runner serves (server.localRunner.tags)
+runnerTags: [e2e-local]
+commands:
+  - !<cmd>
+    label: echo-on-tagged-runner
+    cmd: echo "claimed by a runner serving e2e-local"

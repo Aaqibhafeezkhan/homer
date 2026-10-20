@@ -1,0 +1,6 @@
+name: nested-analysis
+description: A child agent nested inside nested-parent's directory; loads and runs independently (ADR-0068)
+commands:
+  - !<script>
+    label: report-self
+    content: echo "nested-analysis-ran"

@@ -1,0 +1,9 @@
+name: runnercmd-check-fail
+description: runnerCmd fixture whose check fails with exit 3; the run must FAIL with resultCode 3
+commands:
+  - !<runnerCmd>
+    runner: local
+    check:
+      - "exit 3"
+    execute: |
+      echo "never reached"

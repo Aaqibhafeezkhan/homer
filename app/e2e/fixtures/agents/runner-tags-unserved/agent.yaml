@@ -1,0 +1,8 @@
+name: runner-tags-unserved
+description: Requests runner tags no configured runner serves; the run must fail at its short claim TTL without running a command
+runnerTags: [no-such-runner]
+runnerClaimTimeoutSec: 2
+commands:
+  - !<cmd>
+    label: never-runs
+    cmd: echo "must not run"

@@ -1,0 +1,8 @@
+name: external-sleeper
+description: Sleeps on the e2e homer-runner so a kill must cancel the remote process
+runnerTags: [e2e-external]
+commands:
+  - !<script>
+    label: remote-nap
+    content: |
+      sleep 3131

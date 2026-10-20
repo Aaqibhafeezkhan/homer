@@ -1,0 +1,10 @@
+name: continuer
+description: Starts `json-emitter` fire-and-forget via homer-dispatch with a completion continuation back to `continued`
+commands:
+  - !<script>
+    label: dispatch-sub
+    content: |
+      pid=$(homer-dispatch --agent json-emitter \
+        --continue-agent continued --continue-thread thread-42 \
+        --continue-param note=from-continuer --result-jsonpath '$.answer')
+      echo "sub=$pid"

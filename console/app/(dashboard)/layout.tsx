@@ -1,0 +1,67 @@
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/lib/auth/auth-context';
+import { appConfig } from '@/lib/config/app-config';
+import { Header } from '@/components/layout/header';
+import { Sidebar } from '@/components/layout/sidebar';
+import { VersionBadge } from '@/components/layout/version-badge';
+import { useAgentReloadStream, useProcessStatusStream } from '@/lib/api/streams';
+import { useAuthExpiredHandler } from '@/lib/auth/use-auth-expired-handler';
+import { useMarkInAppNavigation } from '@/lib/hooks/use-mark-in-app-navigation';
+import { PluginsProvider } from '@/lib/plugins/plugins-context';
+
+export const dynamic = 'force-dynamic';
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { status } = useAuth();
+  const router = useRouter();
+  const expiredHandled = useAuthExpiredHandler();
+
+  useEffect(() => {
+    // Only redirect on an explicit anon status. While loading, render the
+    // skeleton so the cookie-bound auth probe has a chance to land before
+    // we bounce the user to /login. Closes P1 #19 (auth-redirect race).
+    // Skip if expiry recovery already replaced to /login?expired=1 — a
+    // second push here would win the race and drop the banner.
+    if (status === 'anon' && appConfig.auth.enabled && !expiredHandled.current) {
+      router.push('/login');
+    }
+  }, [status, router, expiredHandled]);
+
+  useProcessStatusStream();
+  useAgentReloadStream();
+  useMarkInAppNavigation();
+
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (status === 'anon' && appConfig.auth.enabled) {
+    return null;
+  }
+
+  return (
+    <PluginsProvider>
+      <div className="flex min-h-screen flex-col">
+        <Header />
+        <div className="flex flex-1">
+          <Sidebar />
+          <main id="main" className="flex-1 overflow-auto">
+            {children}
+          </main>
+        </div>
+        <VersionBadge />
+      </div>
+    </PluginsProvider>
+  );
+}

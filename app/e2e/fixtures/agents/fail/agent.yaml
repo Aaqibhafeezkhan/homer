@@ -1,0 +1,8 @@
+name: fail
+description: Always fails with exit code 7 after writing to stderr
+commands:
+  - !<script>
+    label: fail-loudly
+    content: |
+      echo "deliberate failure on stderr" >&2
+      exit 7

@@ -1,0 +1,14 @@
+name: continued
+description: Continuation target; echoes the resume payload, thread id, and continue-params
+dispatch:
+  enabled: true
+commands:
+  - !<script>
+    label: echo-resume
+    content: echo "resume=$HMR_LG_RESUME thread=$HMR_LG_THREAD note=$NOTE"
+inputs:
+  - paramName: note
+    envName: NOTE
+    src: query
+    type: ANY
+    required: false
