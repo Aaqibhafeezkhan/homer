@@ -31,7 +31,7 @@ test('an atlas that is not shaped as expected fails the build', () => {
 test("the repository's atlas builds its markup as DOM nodes, never from an HTML string (CWE-79)", () => {
   const { script, body } = atlasPage(readFileSync(new URL('../../docs/homer-feature-atlas.html', import.meta.url), 'utf8'))
   for (const [part, text] of Object.entries({ script, body })) {
-    assert.doesNotMatch(text, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/, `the atlas ${part} parses a string as HTML`)
+    assert.doesNotMatch(text, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|\.srcdoc|new DOMParser/, `the atlas ${part} parses a string as HTML`)
   }
 })
 
