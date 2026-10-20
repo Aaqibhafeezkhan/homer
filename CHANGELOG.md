@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-10-20
+
 ### Homer
 
 - **Security: the feature atlas builds its section links as DOM nodes** — A section heading's text is no longer inserted as HTML into the navigation rail (CWE-79), and the documentation site extracts the atlas's script whatever the tag's case.
