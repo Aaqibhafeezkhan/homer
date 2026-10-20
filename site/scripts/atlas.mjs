@@ -11,8 +11,9 @@
 export function atlasPage(html) {
   const css = only(html, /<style>([\s\S]*?)<\/style>/g, 'one <style> block')
   const inner = only(html, /<body class="atlas">([\s\S]*?)<\/body>/g, 'one <body class="atlas">')
-  const script = only(inner, /<script>([\s\S]*?)<\/script>/g, 'one <script> in the body')
-  const body = inner.replace(/<script>[\s\S]*?<\/script>/, '').trim()
+  // Case-insensitive, as HTML is: a <SCRIPT> block must be extracted, not left in the body (CWE-116).
+  const script = only(inner, /<script>([\s\S]*?)<\/script>/gi, 'one <script> in the body')
+  const body = inner.replace(/<script>[\s\S]*?<\/script>/i, '').trim()
   if (/<script\b/i.test(body)) throw new Error('feature atlas: a second <script> in the body')
   const page = `---
 layout: page

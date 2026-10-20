@@ -3683,7 +3683,14 @@ cd console &amp;&amp; npm install &amp;&amp; npm run build</code></pre>
       var count = sec.querySelectorAll('.f').length;
       var a = document.createElement('a');
       a.href = '#' + sec.id;
-      a.innerHTML = '<span>' + h2.textContent + '</span><span class="n">' + count + '</span>';
+      // Built as nodes, never as markup: a heading's text must not be read as HTML (CWE-79).
+      var label = document.createElement('span');
+      label.textContent = h2.textContent;
+      var n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = String(count);
+      a.appendChild(label);
+      a.appendChild(n);
       nav.appendChild(a);
     });
 
