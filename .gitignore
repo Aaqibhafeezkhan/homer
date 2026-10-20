@@ -20,3 +20,5 @@ docs/superpowers/
 # Quality report outputs (tools/quality, ADR-0082)
 /reports/
 /gl-code-quality.json
+# JVM heap dumps (java_pid*.hprof) hold process memory, the environment's credentials included.
+*.hprof

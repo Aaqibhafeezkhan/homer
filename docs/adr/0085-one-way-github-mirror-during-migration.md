@@ -117,7 +117,8 @@ sync runs makes the push fail instead of being overwritten.
 - Bad: both pipelines run the same checks and are edited by hand.
   `tools/github-sync/ci-parity-test.sh` fails the `github-sync-tests` job when
   their gradle, quality-script or npm commands differ. It compares the upstream
-  pipeline against all GitHub workflows together, not `ci.yml` alone, because the
+  pipeline against the GitHub workflows together except `codeql.yml` (GitHub-only
+  code scanning), not `ci.yml` alone, because the
   upstream scheduled checks live in the upstream pipeline definition while GitHub
   keeps them in `nightly.yml`; a check moving between GitHub workflows is caught by review.
 - Neutral: when development moves to GitHub, the job, the scripts and the
