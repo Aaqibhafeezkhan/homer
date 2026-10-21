@@ -416,7 +416,7 @@ in your own Dockerfile; an npm global install replaces the version the
 base image shipped, in either direction (upgrade or hold back):
 
 ```dockerfile
-FROM ghcr.io/livesport/homer/homer-app:1.17.0
+FROM ghcr.io/livesport/homer/homer-app:1.35.0
 ARG CLAUDE_CODE_VERSION=2.1.245
 USER root
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
