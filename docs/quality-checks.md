@@ -141,6 +141,18 @@ table CI does, once the reports exist.
   required route rule.
 - **AI code review.** Every merge request is reviewed by the Homer AI review
   bot. After fixing its findings, request a new round with `@homer review`.
+- **AI review of GitHub pull requests ([ADR-0091](adr/0091-ai-review-of-github-pull-requests.md)).**
+  The `main` ruleset requires the `homer-ai-review` status, which is `success`
+  when no blocker or major finding is open.
+  - A pull request from an organization member is reviewed 30 minutes after
+    its last push.
+  - One from anyone else is reviewed once a maintainer has approved its head
+    commit, and only after a pre-check. When such a pull request changes a
+    build, test or CI file, or `CLAUDE.md`, the pre-check stops the AI review
+    and a maintainer reviews the pull request by hand.
+  - After fixing the findings, an organization member asks for the next round
+    with an `@homer review` comment. The review answers in its threads and
+    resolves the ones a later round finds fixed.
 
 ## Open backlog and next steps
 

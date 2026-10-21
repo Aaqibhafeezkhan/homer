@@ -149,3 +149,4 @@ One of:
 | [0088](0088-dependency-check-on-the-nvd-mirror.md) | Check runtime dependencies against the dependency-check project's NVD mirror | proposed |
 | [0089](0089-settle-llm-cost-in-the-background.md) | Settle an LLM step's session cost in the background | proposed |
 | [0090](0090-accepted-issue-pull-request-gate.md) | A pull request merges only for an issue a maintainer accepted | proposed |
+| [0091](0091-ai-review-of-github-pull-requests.md) | The AI review of GitHub pull requests, gated before any model runs | proposed |
