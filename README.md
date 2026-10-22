@@ -342,6 +342,10 @@ bundled skill and schema ride in the same release as the format).
 - `example/` — example config and agents for the compose stack, plus example
   console plugins
 - `docs/` — ADRs and the feature atlas
+- `site/` — VitePress documentation site: `.vitepress/` config and theme,
+  `pages/`, and the `scripts/` that assemble the published docs and schemas
+- `tools/` — repository tooling: the PR policy check (`pr-policy/`) and the
+  quality gates (`quality/`)
 - `plugins/`, `.claude-plugin/` — the `homer-authoring` Claude Code plugin and
   its marketplace manifest
 
