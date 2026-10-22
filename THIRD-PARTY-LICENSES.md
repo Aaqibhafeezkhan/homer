@@ -499,15 +499,15 @@ the lock alone, so they carry no attributions.
   - Copyright (c) 2021 Suren Atoyan
 - **@monaco-editor/react** 4.7.0 — https://github.com/suren-atoyan/monaco-react#readme
   - Copyright (c) 2018 Suren Atoyan
-- **@next/env** 16.4.0 — https://github.com/vercel/next.js
-- **@next/swc-darwin-arm64** 16.4.0 — no project URL
-- **@next/swc-darwin-x64** 16.4.0 — no project URL
-- **@next/swc-linux-arm64-gnu** 16.4.0 — no project URL
-- **@next/swc-linux-arm64-musl** 16.4.0 — no project URL
-- **@next/swc-linux-x64-gnu** 16.4.0 — no project URL
-- **@next/swc-linux-x64-musl** 16.4.0 — no project URL
-- **@next/swc-win32-arm64-msvc** 16.4.0 — no project URL
-- **@next/swc-win32-x64-msvc** 16.4.0 — no project URL
+- **@next/env** 16.4.2 — https://github.com/vercel/next.js
+- **@next/swc-darwin-arm64** 16.4.2 — no project URL
+- **@next/swc-darwin-x64** 16.4.2 — no project URL
+- **@next/swc-linux-arm64-gnu** 16.4.2 — no project URL
+- **@next/swc-linux-arm64-musl** 16.4.2 — no project URL
+- **@next/swc-linux-x64-gnu** 16.4.2 — no project URL
+- **@next/swc-linux-x64-musl** 16.4.2 — no project URL
+- **@next/swc-win32-arm64-msvc** 16.4.2 — no project URL
+- **@next/swc-win32-x64-msvc** 16.4.2 — no project URL
 - **@radix-ui/number** 1.1.3 — https://radix-ui.com/primitives
   - Copyright (c) 2022 WorkOS
 - **@radix-ui/primitive** 1.1.7 — https://radix-ui.com/primitives
@@ -742,7 +742,7 @@ the lock alone, so they carry no attributions.
   - Copyright 2017 Andrey Sitnik <andrey@sitnik.ru>
 - **next-themes** 0.4.6 — https://github.com/pacocoursey/next-themes
   - Copyright (c) 2022 Paco Coursey
-- **next** 16.4.0 — https://nextjs.org
+- **next** 16.4.2 — https://nextjs.org
   - Copyright (c) 2025 Vercel, Inc.
 - **parse-entities** 4.0.2 — https://github.com/wooorm/parse-entities
   - Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>
@@ -828,7 +828,7 @@ the lock alone, so they carry no attributions.
 
 #### MPL-2.0 OR Apache License, Version 2.0
 
-- **dompurify** 3.4.16 — https://github.com/cure53/DOMPurify
+- **dompurify** 3.4.17 — https://github.com/cure53/DOMPurify
 
 #### The 3-Clause BSD License
 
