@@ -4,7 +4,7 @@
 
 ### Console
 
-- **Security: `next` 16.4.2 and `dompurify` 3.4.17** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 and DOMPurify `<= 3.4.16` advisory ranges, so the `npm audit` gate passes again.
+- **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.
 
 ## [1.35.0] - 2026-10-20
 

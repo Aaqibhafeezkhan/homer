@@ -466,10 +466,9 @@ Backup important files:
 Two `overrides` entries pin patched copies of transitive dependencies:
 
 - **`dompurify` (via `monaco-editor`)** — `overrides.dompurify` pins the
-  transitive copy Monaco bundles to `^3.4.17` (fixing the XSS / mXSS /
-  prototype-pollution advisories affecting `<= 3.4.10`, the DOM XSS
-  affecting `3.4.13`–`3.4.15` and the sanitizer-bypass advisories affecting
-  `<= 3.4.16`, all CWE-79). This
+  transitive copy Monaco bundles to `^3.4.16` (fixing the XSS / mXSS /
+  prototype-pollution advisories affecting `<= 3.4.10` and the DOM XSS
+  affecting `3.4.13`–`3.4.15`). This
   avoids the npm-suggested "fix", which downgrades `monaco-editor` to `0.53.0`.
   Drop the override once `monaco-editor` ships a release depending on a patched
   `dompurify`.
