@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Console
+
+- **Security: the console's bundled DOMPurify and Next.js move past critical advisories** — A DOMPurify sanitiser bypass and an unauthenticated remote-code-execution path in Next.js image optimization no longer apply to the shipped bundle.
+
 ## [1.35.0] - 2026-10-20
 
 ### Homer
