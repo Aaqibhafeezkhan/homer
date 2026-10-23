@@ -152,7 +152,12 @@ class ComposeImageSourceTest {
                 "release images and nothing else builds the working tree (ADR-0092, DOCKER.md § Quick Start).",
         )
         val lines = overlay.readLines()
-        for ((name, context) in listOf("backend" to ".", "frontend" to "./console")) {
+        val buildSpecs =
+            listOf(
+                Triple("backend", ".", "app/Dockerfile"),
+                Triple("frontend", "./console", "Dockerfile"),
+            )
+        for ((name, context, dockerfile) in buildSpecs) {
             val index = service(lines, name)
             assertTrue(index >= 0, "docker-compose.build.yml no longer defines a `$name` service.")
             val build = childKey(lines, index, "build")
@@ -162,12 +167,23 @@ class ComposeImageSourceTest {
                     "that service and `docker compose -f docker-compose.yml -f docker-compose.build.yml up` " +
                     "pulls the release image instead of building the working tree (ADR-0092).",
             )
-            val keys = childKeys(lines, build).map { lines[it].trimStart().substringBefore(':') }
-            assertTrue(
-                "context" in keys && "dockerfile" in keys,
-                "docker-compose.build.yml: `$name`'s `build:` section declares $keys instead of a context and a " +
-                    "dockerfile, so it builds something other than the working tree (context `$context`).",
-            )
+            for ((key, expected) in listOf("context" to context, "dockerfile" to dockerfile)) {
+                val actual = valueAt(lines, childKey(lines, build, key))
+                assertTrue(
+                    actual == expected,
+                    "docker-compose.build.yml: `$name` builds with `$key: ${actual.ifEmpty { "(missing)" }}` instead " +
+                        "of `$expected`, so it builds something other than the working tree it claims to (ADR-0092).",
+                )
+            }
+            if (name == "backend") {
+                val actualTarget = valueAt(lines, childKey(lines, build, "target"))
+                assertTrue(
+                    actualTarget == "runner",
+                    "docker-compose.build.yml: the backend builds target `${actualTarget.ifEmpty { "(none)" }}` instead " +
+                        "of `runner`. app/Dockerfile's last stage is homer-runner, so without `target: runner` the " +
+                        "build produces the external runner image instead of the backend.",
+                )
+            }
             val image = imageOf(overlay, name)
             assertTrue(
                 image.startsWith("homer-") && !image.contains("ghcr.io"),
@@ -180,6 +196,37 @@ class ComposeImageSourceTest {
                 "docker-compose.build.yml: `$name` publishes ports. The overlay adds a build, nothing else — " +
                     "the base file owns the topology, and a second copy of the bindings drifts from it.",
             )
+        }
+    }
+
+    @Test
+    fun `every dev-overlay command in the docs also names the build overlay`() {
+        // docker-compose.dev.yml sets build arguments and no context, so stacked on the base file
+        // alone it merges build args into a service with no `build:` section and `docker compose up`
+        // fails the merge — every command that adds the dev overlay needs the build overlay under it.
+        val scanned =
+            listOf("README.md", "DOCKER.md", "docs/homer-feature-atlas.html", "rebuild-docker.sh", "docker-compose.build.yml")
+        for (name in scanned) {
+            val file = File(repoRoot, name)
+            assertTrue(file.isFile, "$name is missing; move this guard with the dev-overlay docs rather than deleting it.")
+            val logical = mutableListOf<String>()
+            for (line in file.readLines()) {
+                // A trailing `\` continues the command on the next line — the compose stacks are wrapped.
+                if (logical.isNotEmpty() && logical.last().endsWith("\\")) {
+                    logical[logical.lastIndex] = logical.last().dropLast(1) + line
+                } else {
+                    logical.add(line)
+                }
+            }
+            for (line in logical) {
+                assertTrue(
+                    !line.contains("-f docker-compose.dev.yml") || line.contains("docker-compose.build.yml"),
+                    "$name runs `-f docker-compose.dev.yml` without the build overlay: the dev overlay sets " +
+                        "build arguments and no context, so stacked on the base file alone `docker compose up` " +
+                        "merges them into a service with no `build:` section and fails (ADR-0092). Add " +
+                        "`-f docker-compose.build.yml` before it.",
+                )
+            }
         }
     }
 
@@ -222,7 +269,8 @@ class ComposeImageSourceTest {
         val assignment = Regex("""(^|[^'\w])HOMER_ADMIN_TOKEN=(\S*)""")
         val scanned =
             composeFiles() +
-                listOf("README.md", "DOCKER.md", ".env.example").map { File(repoRoot, it) }
+                listOf("README.md", "DOCKER.md", "console/DEPLOYMENT.md", "docs/homer-feature-atlas.html", ".env.example")
+                    .map { File(repoRoot, it) }
         for (file in scanned) {
             assertTrue(file.isFile, "${file.name} is missing; move this guard with the quick start rather than deleting it.")
             for ((number, line) in file.readLines().withIndex()) {
