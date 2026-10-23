@@ -6,6 +6,7 @@ import homer.app.fixtures.TestFixtures
 import homer.app.models.MaintenanceConfig
 import homer.app.services.persistence.DatabaseService
 import homer.app.services.persistence.ServerMetaRepository
+import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -58,14 +60,23 @@ class MaintenanceModeServiceTest {
     private fun newService(
         config: MaintenanceConfig = MaintenanceConfig(),
         initialEnabled: Boolean = false,
+        logger: Logger = TestFixtures.mockLogger(),
     ): MaintenanceModeService =
         MaintenanceModeService(
             repository = repository,
             config = config,
             initialEnabled = initialEnabled,
-            logger = TestFixtures.mockLogger(),
+            logger = logger,
             scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
         ).also { svc = it }
+
+    /** Asserts the shed warning, which arrives as `warn(format, argument)` on [logger]. */
+    private fun verifyShedLog(
+        logger: Logger,
+        expected: String,
+    ) {
+        verify { logger.warn(withArg<String> { assertTrue(it.contains(expected), it) }, any<Any>()) }
+    }
 
     // --- persistence ---
 
@@ -143,13 +154,19 @@ class MaintenanceModeServiceTest {
     @Test
     fun `a start past the total cap is shed`() =
         runBlocking {
-            newService(MaintenanceConfig(maxQueuedStarts = 2, maxQueuedStartsPerPrincipal = 10))
+            val logger = TestFixtures.mockLogger()
+            newService(
+                MaintenanceConfig(maxQueuedStarts = 2, maxQueuedStartsPerPrincipal = 10),
+                logger = logger,
+            )
             svc.setEnabled(true)
 
             val parked = List(2) { async { svc.awaitRelease("alice") } }
             yield()
 
-            assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease("alice") }
+            val shed = assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease("alice") }
+            assertFalse(shed.perPrincipal, "the global cap tripped, not this caller's share")
+            verifyShedLog(logger, "queue is full")
             assertEquals(2, svc.queueDepth(), "a shed start must not enter the queue")
 
             svc.setEnabled(false)
@@ -159,12 +176,18 @@ class MaintenanceModeServiceTest {
     @Test
     fun `one caller filling its share does not block another caller`() =
         runBlocking {
-            newService(MaintenanceConfig(maxQueuedStarts = 10, maxQueuedStartsPerPrincipal = 1))
+            val logger = TestFixtures.mockLogger()
+            newService(
+                MaintenanceConfig(maxQueuedStarts = 10, maxQueuedStartsPerPrincipal = 1),
+                logger = logger,
+            )
             svc.setEnabled(true)
 
             val hog = async { svc.awaitRelease("alice") }
             yield()
-            assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease("alice") }
+            val shed = assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease("alice") }
+            assertTrue(shed.perPrincipal, "this caller's share tripped, not the global cap")
+            verifyShedLog(logger, "for this caller")
 
             // The other principal still has its own share.
             val other = async { svc.awaitRelease("bob") }
@@ -184,7 +207,8 @@ class MaintenanceModeServiceTest {
 
             val first = async { svc.awaitRelease(null) }
             yield()
-            assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease(null) }
+            val shed = assertFailsWith<MaintenanceQueueFullException> { svc.awaitRelease(null) }
+            assertTrue(shed.perPrincipal)
 
             svc.setEnabled(false)
             first.await().release()

@@ -133,8 +133,9 @@ marked `Constraint:`.
     true minutes earlier, and creates its process row while it is still parked.
   - **Constraint:** the drain releases waiters **in its own loop** (take a release slot,
     complete the waiter's `released`, then await its run off the loop), never by handing each
-    waiter a coroutine to race for a slot — arrival order is the point — and a slot is held
-    until the released start's run exists, which is what bounds the flood at the runners.
+    waiter a coroutine to race for a slot — arrival order within one drain is the point (rapid
+    re-toggles overlap drains, and the order across drains is not guaranteed) — and a slot is
+    held until the released start's run exists, which is what bounds the flood at the runners.
   - **Constraint:** the total, per-principal and wait bounds are `server.maintenance` config,
     not constants; a shed or expired start leaves no process row and names no input value.
 - **`StartupReconciliation`** — runs once before traffic: interrupted runs to `UNKNOWN`, their

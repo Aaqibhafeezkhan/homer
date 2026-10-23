@@ -476,8 +476,10 @@ While it is on:
 - **A run already `WORKING` keeps running.** This is an admission gate, not a
   kill switch, and it does not touch `/api/v1/readyz`.
 
-When the mode goes off the queue drains in arrival order, at most
-`maintenance.releaseConcurrency` starts at a time. A queued start is only
+When the mode goes off the queue drains in arrival order within one release
+drain, at most `maintenance.releaseConcurrency` starts at a time; rapid
+re-toggles run drains concurrently, so the order across drains is not
+guaranteed. A queued start is only
 *parked*: it re-runs its own cost-cap, cooldown, invocation-chain and input
 checks after it is released, against the state in force then.
 

@@ -31,8 +31,10 @@ internal fun interface MaintenanceSlot {
 /**
  * Admin maintenance mode: the admission gate every non-cron agent start passes through
  * while an operator replaces Homer. The flag is durable (a `server_meta` key) and the
- * starts it holds back wait in a bounded FIFO queue, released in order once the mode goes
- * off. Cron is skipped at its own tick instead — a missed schedule is never replayed.
+ * starts it holds back wait in a bounded FIFO queue, released in order within one release
+ * drain once the mode goes off (rapid re-toggles overlap drains, so the order across
+ * drains is not guaranteed). Cron is skipped at its own tick instead — a missed schedule
+ * is never replayed.
  * See ADR-0092 and root §12 rules 4–5.
  *
  * A queued start is only *parked* here: the caller runs its own preflight (cycle, depth,
@@ -93,7 +95,7 @@ internal class MaintenanceModeService(
 
     /**
      * Parks the caller while the mode is on, returning once it is off and the caller's turn
-     * in arrival order comes up. Throws [MaintenanceQueueFullException] when the queue or this
+     * in the release drain's arrival order comes up. Throws [MaintenanceQueueFullException] when the queue or this
      * caller's share of it is at its bound, and [MaintenanceWaitTimeoutException] when the wait
      * runs out — in both cases the start never runs and is never replayed.
      *
@@ -194,6 +196,10 @@ internal class MaintenanceModeService(
      * waiters racing each other for the slot woke in whatever order their threads reached it, and
      * the queue's arrival order is the whole point. Only the wait for the released start's run to
      * exist runs off the loop, so the loop stays free to release the next one up to the bound.
+     *
+     * The order is per drain: two rapid toggles-off launch overlapping drains, and which drain's
+     * acquire resumes first — scheduling, not arrival — decides the order across them. Every
+     * waiter is still handed out exactly once.
      */
     private fun releaseQueuedStarts() {
         scope.launch {

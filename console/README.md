@@ -333,7 +333,9 @@ What the mode means for what you see: a run already `WORKING` keeps running
 and finishes normally; a cron schedule does not fire and a fire missed during
 the window is not replayed when it ends; any other start — the Run button, the
 API, MCP, a `!<agent>` hop, a dispatch, a continuation — waits in a queue and
-starts, in arrival order, once an admin turns the mode off. A start that
+starts, in arrival order within one release drain, once an admin turns the
+mode off (rapid re-toggles overlap drains, so the order across drains is not
+guaranteed). A start that
 arrives after the queue is full is refused with `429`, and one that waits
 longer than the configured limit with `503`; neither creates a run.
 

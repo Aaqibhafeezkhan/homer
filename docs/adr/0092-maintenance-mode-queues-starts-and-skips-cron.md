@@ -76,11 +76,15 @@ convergence point already exists.
   (`MaintenanceWaitTimeoutException`), both mapped in the sealed `when` of
   `homerExceptionStatus` (ADR-0002) and neither names an input value. The bounds are `server.maintenance` config keys rather than
   constants, because the wait has to outlive an operator's deployment window.
-- **The release.** Waiters are released in arrival order, at most
+- **The release.** Waiters are released in arrival order within one release
+  drain, at most
   `releaseConcurrency` (4) at a time, and a release slot is held until the
   released start's run exists — not merely until its caller wakes. That is what
   keeps the end of the window from handing the runners one burst the size of the
-  whole queue. If the mode goes on again mid-drain, the rest stay queued.
+  whole queue. If the mode goes on again mid-drain, the rest stay queued. Two
+  rapid toggles-off launch overlapping drains: the order across drains is then
+  scheduling, not arrival — the guarantee is the per-drain order, and every
+  waiter is still handed out exactly once.
 - **Cron.** `CronSchedulerService.tick` filters out every agent and logs one skip
   line while the mode is on. A schedule missed during the window is **not
   replayed** when it ends: a fire is "run this now", and running a day's worth of
@@ -130,7 +134,9 @@ Each constraint has a test that asserts the denial path (root §12 rule 8):
 - the total cap sheds and the per-principal cap sheds one principal without
   blocking another;
 - the wait expires, removes the entry and throws;
-- release order is arrival order, and release keeps at most `releaseConcurrency`
+- release order is arrival order within one drain (overlapping drains after
+  rapid re-toggles are only asserted to hand every waiter out exactly once),
+  and release keeps at most `releaseConcurrency`
   starts in flight;
 - `tick` fires nothing while the mode is on, nothing is replayed when it goes
   off, and `fireNow` still reaches the start path;
@@ -162,7 +168,8 @@ Each constraint has a test that asserts the denial path (root §12 rule 8):
 
 ### Option A — Admission gate plus cron skip
 
-- Good: keeps the arriving work, in arrival order, with the queue bounded and the
+- Good: keeps the arriving work, in arrival order within one release drain, with
+  the queue bounded and the
   surplus shed.
 - Good: re-running the preflight at dequeue means the run is checked against the
   state it will actually execute in.

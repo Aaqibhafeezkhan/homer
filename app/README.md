@@ -231,7 +231,7 @@ Output:
 | GET | `/api/v1/runners` | Configured runners with permits in use, and each external domain's live instances | `admin` role required |
 | GET | `/api/v1/runners/queue` | Pending runner claims: count, oldest age, breakdown by filter | `admin` role required |
 | GET | `/api/v1/maintenance` | Maintenance mode state: `enabled`, `since` (Unix epoch seconds; null while off, and also for a mode that was already on when the server booted — the toggle time is not persisted) and `queued` (starts waiting). Responses carry `Cache-Control: no-store`. | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
-| POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues. Off: the queue drains in arrival order, `releaseConcurrency` at a time. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
+| POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues. Off: the queue drains in arrival order within one release drain, `releaseConcurrency` at a time — rapid re-toggles overlap drains, so the order across drains is not guaranteed. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
 | GET | `/api/v1/costs` | Current LLM harness (Claude/Codex) spend windows + configured caps; also returns `costTrackedTagKeys`, the keys queryable via `GET /api/v1/costs/by-tag/{key}` | `admin` role required |
 | GET | `/api/v1/costs/monthly` | Per-agent LLM harness (Claude/Codex) spend for one UTC month, from the persistent cost ledger (query: `month`, defaults to current UTC month; `400` if malformed) | `admin` role required |
 | GET | `/api/v1/costs/totals` | All-time per-agent LLM harness (Claude/Codex) spend from the persistent cost ledger | `admin` role required |
@@ -443,8 +443,10 @@ the number of starts currently waiting. Both responses carry
 was turned on.
 
 `POST` takes `{ "enabled": true | false }` (`400` on anything else, including an
-unknown key). Turning it **off** releases the queue in arrival order, at most
-`server.maintenance.releaseConcurrency` starts at a time; a start that waited
+unknown key). Turning it **off** releases the queue in arrival order within one
+release drain, at most `server.maintenance.releaseConcurrency` starts at a
+time; rapid re-toggles run drains concurrently, so the order across drains is
+not guaranteed. A start that waited
 longer than `queueWaitSec` answers `503`, and one that arrived at a full queue
 (`maxQueuedStarts`, or its own `maxQueuedStartsPerPrincipal` share) answers
 `429` — neither is replayed later.
