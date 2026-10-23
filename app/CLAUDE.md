@@ -119,12 +119,14 @@ marked `Constraint:`.
   is enforced inside `ProcessRepository.obtainProcessId`'s INSERT transaction, sharing
   `CooldownDecision` so the two cannot drift. ADR-0051.
 - **`MaintenanceModeService`** — the admin maintenance flag and the bounded queue of starts
-  parked behind it: `isEnabled()`, `setEnabled()` (persisted to `server_meta`), `queueDepth()`
-  and `awaitRelease(owner)`, which `AgentRunStarter` calls and `CronSchedulerService` reads the
-  flag to skip its tick. Nearly every entry point converges on `AgentRunStarter.start`, so this
-  one gate covers HTTP, MCP, `!<agent>` hops, dispatches and continuations; retry, resume and
-  debug build their process directly and take the gate in `respondStartedUnderRootSpan`
-  (`routes/RunHandlers.kt`), so a fourth start path must not be added without one. See ADR-0092.
+  parked behind it: `isEnabled()`, `setEnabled()` (persisted to `server_meta`), `queueDepth()`,
+  `awaitRelease(owner)` and `gated(owner) { start }` — the park-and-release protocol every start
+  path runs through, `AgentRunStarter.start` and the direct-build starts in
+  `routes/RunHandlers.kt` alike; `CronSchedulerService` reads the flag to skip its tick. Nearly
+  every entry point converges on `AgentRunStarter.start`, so this one gate covers HTTP, MCP,
+  `!<agent>` hops, dispatches and continuations; retry, resume and debug build their process
+  directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`), so a
+  fourth start path must not be added without one. See ADR-0092.
   - **Constraint:** the gate is called **before** `AgentRunStarter`'s preflight, so a released
     start re-runs the cycle, depth, cost-cap and cooldown checks and resolves its inputs **at
     dequeue, not at enqueue** — moving the call below them starts a run on a decision that was

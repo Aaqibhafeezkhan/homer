@@ -66,52 +66,53 @@ internal class AgentRunStarter(
         resolveInputs: suspend () -> Map<String, String>,
     ): Int {
         val span = telemetryService.tracer.startAgentRootSpan(agent, "agent_request")
-        var releaseSlot: MaintenanceSlot? = null
 
         try {
             val context = Context.current().with(span)
             // Parks this start while maintenance mode is on, before any preflight: a start
             // released later must re-run the cycle/depth/cost/cooldown checks and resolve its
-            // inputs against the state in force at dequeue, not at enqueue. See ADR-0092.
-            releaseSlot = maintenanceGate.awaitRelease(owner)
-            checkPreflight(agent, invocationChain)
-            val newChain = invocationChain + agent.name
-            val queryParamsEnv = resolveInputs()
-            // Current flags for a fresh run; union with the registration snapshot when
-            // this is a replay of stored inputs.
-            val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
+            // inputs against the state in force at dequeue, not at enqueue. The gate holds its
+            // release slot until the run exists — or the start fails — and frees it even when
+            // this caller is cancelled. See ADR-0092.
+            val processId =
+                maintenanceGate.gated(owner) {
+                    checkPreflight(agent, invocationChain)
+                    val newChain = invocationChain + agent.name
+                    val queryParamsEnv = resolveInputs()
+                    // Current flags for a fresh run; union with the registration snapshot when
+                    // this is a replay of stored inputs.
+                    val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
 
-            val result =
-                processExecutor.execute(
-                    processFactory.create(
-                        agent = agent,
-                        queryParams = queryParamsEnv,
-                        parentContext = context,
-                        invocationChain = newChain,
-                        ancestorLockKeys = ancestorLockKeys,
-                        owner = owner,
-                        extraSecretInputKeys = secretEnvNames,
-                        parentProcessId = parentProcessId,
-                        rootProcessId = rootProcessId,
-                    ),
-                    context,
-                )
+                    val result =
+                        processExecutor.execute(
+                            processFactory.create(
+                                agent = agent,
+                                queryParams = queryParamsEnv,
+                                parentContext = context,
+                                invocationChain = newChain,
+                                ancestorLockKeys = ancestorLockKeys,
+                                owner = owner,
+                                extraSecretInputKeys = secretEnvNames,
+                                parentProcessId = parentProcessId,
+                                rootProcessId = rootProcessId,
+                            ),
+                            context,
+                        )
 
-            val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
-            span.setAllAttributes(
-                runAttributes(result.processId, agent, source, parentProcessId, rootProcessId, traceTags, extraAttributes),
-            )
+                    val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
+                    span.setAllAttributes(
+                        runAttributes(result.processId, agent, source, parentProcessId, rootProcessId, traceTags, extraAttributes),
+                    )
+                    result.processId
+                }
             span.setStatus(StatusCode.OK)
 
-            return result.processId
+            return processId
         } catch (e: Exception) {
             span.setStatus(StatusCode.ERROR, e.message ?: "Unknown error")
             span.recordException(e)
             throw e
         } finally {
-            // The run now exists (or the start failed): free the bounded release slot. A start
-            // that was shed or timed out never took one. See ADR-0092.
-            releaseSlot?.release()
             span.end()
         }
     }

@@ -334,7 +334,7 @@ class ClaimQueueFullException(
  * shed rather than accumulated. Maps to 429. §12 rules 4–5, ADR-0092.
  */
 class MaintenanceQueueFullException(
-    bound: Int,
+    val bound: Int,
 ) : HomerException("Maintenance mode is on and the start queue is full (bound: $bound queued starts)")
 
 /**

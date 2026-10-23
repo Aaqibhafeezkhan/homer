@@ -117,7 +117,14 @@ internal class MaintenanceModeService(
             // A caller that timed out, was cancelled or was released by stop() must not pin a
             // release slot the drain may already have handed it — and the drain does hand one
             // out to a waiter whose caller is gone, so this has to run on cancellation too.
-            if (parked) waiter.done.complete(Unit)
+            // Its queue entry and per-principal count go with it: a disconnected caller is no
+            // longer waiting, and a phantom entry would overstate `queued` and eat the
+            // caller's share of the queue until the mode went off. A waiter the drain already
+            // popped makes the removal a no-op.
+            if (parked) {
+                remove(waiter)
+                waiter.done.complete(Unit)
+            }
         }
     }
 
@@ -140,24 +147,31 @@ internal class MaintenanceModeService(
     /** Adds [owner]'s start to the tail of the queue, or returns null when the mode just went off. */
     private fun enqueue(owner: String?): Waiter? {
         val waiter = Waiter(owner)
-        synchronized(lock) {
-            if (!enabled.get()) return null
-            if (queue.size >= config.maxQueuedStarts) {
-                logger.warn("Maintenance start queue is full ({}); shedding the start", config.maxQueuedStarts)
-                throw MaintenanceQueueFullException(config.maxQueuedStarts)
+        try {
+            synchronized(lock) {
+                if (!enabled.get()) return null
+                if (queue.size >= config.maxQueuedStarts) {
+                    throw MaintenanceQueueFullException(config.maxQueuedStarts)
+                }
+                val held = perPrincipal[ownerKey(owner)] ?: 0
+                if (held >= config.maxQueuedStartsPerPrincipal) {
+                    throw MaintenanceQueueFullException(config.maxQueuedStartsPerPrincipal)
+                }
+                queue.addLast(waiter)
+                perPrincipal[ownerKey(owner)] = held + 1
             }
-            val held = perPrincipal[ownerKey(owner)] ?: 0
-            if (held >= config.maxQueuedStartsPerPrincipal) {
-                logger.warn("Maintenance start queue holds {} starts for this caller; shedding the start", held)
-                throw MaintenanceQueueFullException(config.maxQueuedStartsPerPrincipal)
-            }
-            queue.addLast(waiter)
-            perPrincipal[ownerKey(owner)] = held + 1
+        } catch (e: MaintenanceQueueFullException) {
+            // Logged outside the lock: the appenders are synchronous, and a shed flood is
+            // exactly when arriving callers must not serialize behind log I/O while holding
+            // the queue lock. Throwing costs nothing; the I/O is what had to leave.
+            logger.warn("Maintenance start queue is full ({}); shedding the start", e.bound)
+            throw e
         }
         return waiter
     }
 
-    /** Drops a waiter that timed out before its turn came; a waiter already released is a no-op. */
+    /** Drops a waiter whose caller left the gate (timeout or cancellation) before its turn came;
+     *  a waiter the drain already popped is a no-op. */
     private fun remove(waiter: Waiter) {
         synchronized(lock) {
             if (queue.remove(waiter)) decrement(waiter.owner)
@@ -213,5 +227,26 @@ internal class MaintenanceModeService(
     private companion object {
         /** The slot for a start the mode never parked: releasing it does nothing. */
         val NO_SLOT = MaintenanceSlot { }
+    }
+}
+
+/**
+ * The park-and-release protocol every start path shares: park behind the gate, run [start] once
+ * the mode is off and this start's turn comes, and give the release slot back in `finally`, so a
+ * cancelled caller never pins it. The caller's preflight and input resolution belong inside
+ * [start], so a released start is validated against the state in force at dequeue — and the slot
+ * is held until [start]'s run exists. `AgentRunStarter.start` and the direct-build start paths in
+ * `routes/RunHandlers.kt` both go through this, so the discipline cannot drift between them.
+ * See ADR-0092.
+ */
+internal suspend fun <T> MaintenanceModeService.gated(
+    owner: String?,
+    start: suspend () -> T,
+): T {
+    val slot = awaitRelease(owner)
+    try {
+        return start()
+    } finally {
+        slot.release()
     }
 }

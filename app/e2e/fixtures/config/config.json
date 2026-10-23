@@ -19,6 +19,7 @@
     "rateLimit": { "limit": 100000, "refillPeriod": 60 },
     "perCallerRateLimit": { "limit": 100000, "refillPeriod": 60 },
     "mcp": { "enabled": true },
+    "maintenance": { "queueWaitSec": 5 },
     "localRunner": { "tags": ["e2e-local"] }
   },
   "runners": {

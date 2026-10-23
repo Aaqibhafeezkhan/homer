@@ -230,7 +230,7 @@ Output:
 | GET | `/api/v1/status` | Get server status | `admin` role required |
 | GET | `/api/v1/runners` | Configured runners with permits in use, and each external domain's live instances | `admin` role required |
 | GET | `/api/v1/runners/queue` | Pending runner claims: count, oldest age, breakdown by filter | `admin` role required |
-| GET | `/api/v1/maintenance` | Maintenance mode state: `enabled`, `since` (Unix epoch seconds, null while off) and `queued` (starts waiting). Responses carry `Cache-Control: no-store`. | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
+| GET | `/api/v1/maintenance` | Maintenance mode state: `enabled`, `since` (Unix epoch seconds; null while off, and also for a mode that was already on when the server booted — the toggle time is not persisted) and `queued` (starts waiting). Responses carry `Cache-Control: no-store`. | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
 | POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues. Off: the queue drains in arrival order, `releaseConcurrency` at a time. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
 | GET | `/api/v1/costs` | Current LLM harness (Claude/Codex) spend windows + configured caps; also returns `costTrackedTagKeys`, the keys queryable via `GET /api/v1/costs/by-tag/{key}` | `admin` role required |
 | GET | `/api/v1/costs/monthly` | Per-agent LLM harness (Claude/Codex) spend for one UTC month, from the persistent cost ledger (query: `month`, defaults to current UTC month; `400` if malformed) | `admin` role required |
@@ -435,7 +435,9 @@ replayed) and every other agent start — HTTP, MCP, dispatch, continuation,
 }
 ```
 
-`since` is Unix epoch **seconds** and `null` while the mode is off; `queued` is
+`since` is Unix epoch **seconds** and `null` while the mode is off, and also
+for a mode that was already on when the server booted (the toggle time is not
+persisted, so a restart cannot report when it was turned on); `queued` is
 the number of starts currently waiting. Both responses carry
 `Cache-Control: no-store`, so a proxy cannot serve a stale "off" after the mode
 was turned on.

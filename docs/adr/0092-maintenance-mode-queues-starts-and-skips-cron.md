@@ -74,8 +74,7 @@ convergence point already exists.
   everyone; the wait is bounded (`queueWaitSec`, 600). A surplus start is shed
   with `429` (`MaintenanceQueueFullException`), an expired wait with `503`
   (`MaintenanceWaitTimeoutException`), both mapped in the sealed `when` of
-  `homerExceptionStatus` (ADR-0002) and both naming the bound and the agent, never
-  an input value. The bounds are `server.maintenance` config keys rather than
+  `homerExceptionStatus` (ADR-0002) and neither names an input value. The bounds are `server.maintenance` config keys rather than
   constants, because the wait has to outlive an operator's deployment window.
 - **The release.** Waiters are released in arrival order, at most
   `releaseConcurrency` (4) at a time, and a release slot is held until the

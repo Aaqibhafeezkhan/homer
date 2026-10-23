@@ -264,6 +264,114 @@ class MaintenanceModeServiceTest {
         }
 
     @Test
+    fun `a cancelled caller leaves the queue and its per-principal share is free again`() =
+        runBlocking {
+            newService(MaintenanceConfig(maxQueuedStartsPerPrincipal = 1))
+            svc.setEnabled(true)
+
+            val abandoned = launch { svc.awaitRelease("alice") }
+            yield()
+            assertEquals(1, svc.queueDepth())
+
+            abandoned.cancelAndJoin()
+            assertEquals(0, svc.queueDepth(), "a cancelled caller must not stay queued")
+
+            // The phantom entry never ate the share: the same caller fits again.
+            val next = async { svc.awaitRelease("alice") }
+            yield()
+            assertEquals(1, svc.queueDepth())
+
+            svc.setEnabled(false)
+            withTimeout(5_000) { next.await().release() }
+        }
+
+    @Test
+    fun `the mode going on again mid-drain leaves the rest queued for the next release`() =
+        runBlocking {
+            // One slot: the first released start holds it until the test lets go, so the drain
+            // is demonstrably still in flight when the mode flips back on.
+            newService(MaintenanceConfig(releaseConcurrency = 1))
+            svc.setEnabled(true)
+
+            val order = mutableListOf<String>()
+            val firstReleased = CompletableDeferred<Unit>()
+            val hold = CompletableDeferred<Unit>()
+            val first =
+                async {
+                    val slot = svc.awaitRelease("first")
+                    order += "first"
+                    firstReleased.complete(Unit)
+                    hold.await()
+                    slot.release()
+                }
+            val rest =
+                listOf("second", "third").map { owner ->
+                    async {
+                        val slot = svc.awaitRelease(owner)
+                        order += owner
+                        slot.release()
+                    }
+                }
+            yield()
+            assertEquals(3, svc.queueDepth())
+
+            svc.setEnabled(false)
+            withTimeout(5_000) { firstReleased.await() }
+            // Mid-drain: the second waiter may already have been handed its slot, but the
+            // third is still parked. The drain stops at the flag, so the third is not
+            // released while the mode is on.
+            svc.setEnabled(true)
+            hold.complete(Unit)
+            withTimeout(5_000) { first.await() }
+            assertFalse(rest[1].isCompleted, "a waiter still queued must not be released while the mode is on")
+
+            // The next release drains the rest, in arrival order.
+            svc.setEnabled(false)
+            withTimeout(5_000) { rest.awaitAll() }
+            assertEquals(listOf("first", "second", "third"), order)
+        }
+
+    @Test
+    fun `two switches-off in quick succession release in arrival order`() =
+        runBlocking {
+            // One release slot at a time, so the recorded order is the order the two drains
+            // handed the waiters out, not the order three threads happened to resume in.
+            newService(MaintenanceConfig(releaseConcurrency = 1))
+            svc.setEnabled(true)
+
+            val order = mutableListOf<String>()
+            val waiters =
+                listOf("first", "second", "third").map { owner ->
+                    async {
+                        val slot = svc.awaitRelease(owner)
+                        order += owner
+                        slot.release()
+                    }
+                }
+            yield()
+            assertEquals(3, svc.queueDepth())
+
+            // The second toggle starts a second drain while the first may still be running;
+            // both must take waiters from the head of the queue or the order inverts.
+            svc.setEnabled(false)
+            svc.setEnabled(false)
+            waiters.awaitAll()
+            assertEquals(listOf("first", "second", "third"), order)
+        }
+
+    @Test
+    fun `switching off with nothing queued drains nothing`() =
+        runBlocking {
+            newService()
+            svc.setEnabled(true)
+            svc.setEnabled(false)
+
+            assertEquals(0, svc.queueDepth())
+            // The gate is simply open again.
+            withTimeout(5_000) { svc.awaitRelease("alice").release() }
+        }
+
+    @Test
     fun `stop fails the parked starts with the wait-timeout error`() =
         runBlocking {
             // supervisorScope: the parked start fails on purpose, and a failing child of the

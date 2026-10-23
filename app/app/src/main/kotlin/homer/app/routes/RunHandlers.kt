@@ -20,6 +20,7 @@ import homer.app.services.Authorizer
 import homer.app.services.CostMeter
 import homer.app.services.MaintenanceModeService
 import homer.app.services.ProcessManager
+import homer.app.services.gated
 import homer.app.services.visibleOriginRootProcessId
 import homer.app.services.visibleRootProcessId
 import homer.app.services.withoutFailureBackoff
@@ -360,7 +361,7 @@ private suspend fun respondStartedUnderRootSpan(
     val span = telemetryService.tracer.startAgentRootSpan(agent, spanName)
     try {
         val (processId, attributes) =
-            maintenanceGate.gatedStart(call.principalName()) { start(Context.current().with(span)) }
+            maintenanceGate.gated(call.principalName()) { start(Context.current().with(span)) }
         span.setAllAttributes(attributes)
         span.setStatus(StatusCode.OK)
         call.respond(ExecuteResponse(processId = processId))
@@ -370,23 +371,5 @@ private suspend fun respondStartedUnderRootSpan(
         throw e
     } finally {
         span.end()
-    }
-}
-
-/**
- * Parks [start] behind the maintenance gate, exactly as [AgentRunStarter.start] does: the caller's
- * preflight and input resolution run inside [start], after the gate returns, so a released start is
- * validated against the state in force at dequeue, and the release slot is held until its run
- * exists. A start the queue sheds or expires never reaches [start]. See ADR-0092.
- */
-private suspend fun <T> MaintenanceModeService.gatedStart(
-    owner: String?,
-    start: suspend () -> T,
-): T {
-    val slot = awaitRelease(owner)
-    try {
-        return start()
-    } finally {
-        slot.release()
     }
 }

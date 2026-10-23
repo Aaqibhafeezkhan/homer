@@ -4,7 +4,7 @@
 
 ### Homer
 
-- **Added: admin maintenance mode** — An admin-only `GET`/`POST /api/v1/maintenance` queues new agent starts and skips cron fires until it is turned off, while runs already `WORKING` finish; the queue is bounded and the mode survives a restart. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
+- **Added: admin maintenance mode** — An admin-only `GET /api/v1/maintenance` (read) and `POST /api/v1/maintenance` (toggle) queue new agent starts and skip cron fires until the mode is turned off, while runs already in progress finish; the queue is bounded (new `server.maintenance` config keys) and the mode survives a restart. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
 
 ### Console
 
