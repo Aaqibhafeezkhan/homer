@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Changed: `docker compose up` pulls the published release images** — The stack no longer builds locally; `HOMER_VERSION` picks the release tag, and building from source moves to the `docker-compose.build.yml` overlay. See [ADR-0092](docs/adr/0092-the-default-compose-stack-runs-published-images.md).
+
 ### Console
 
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.

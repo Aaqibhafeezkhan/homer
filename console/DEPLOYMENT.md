@@ -131,16 +131,21 @@ For detailed Docker documentation and deployment options, see [../DOCKER.md](../
 Edit `docker-compose.yml` in the project root to customize:
 - Volume mounts
 - Network configuration
-- Backend image/build context
+- The backend image
 - Environment variables
 
-Example for custom backend image:
+The base file has no `build:` sections — it pulls the published release images,
+with the tag selected by `HOMER_VERSION`. Override `image:` to run your own:
+
 ```yaml
 services:
   backend:
     image: my-registry/homer-backend:v1.0.0
-    # Remove the build section
 ```
+
+Building from source is the `docker-compose.build.yml` overlay, which adds the
+`build:` sections back (and tags what it builds locally); see
+[../DOCKER.md](../DOCKER.md) § *Quick Start*.
 
 ## Production Deployment
 

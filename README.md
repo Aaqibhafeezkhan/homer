@@ -192,6 +192,39 @@ docker compose up -d
 # Console: http://localhost:3000   API: http://localhost:8080 (both bound to 127.0.0.1)
 ```
 
+The stack pulls the published release images
+(`ghcr.io/livesport/homer/homer-app` and `ghcr.io/livesport/homer/homer-console`),
+so nothing is built locally and no JDK or Maven Central access is needed.
+`HOMER_VERSION` in `.env` selects the release and defaults to the pinned current
+one. To build from source instead, add the build overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+```
+
+To verify the images before the first pull — every release is signed with
+cosign and carries SLSA provenance and a CycloneDX SBOM (ADR-0086) — run:
+
+```bash
+version=1.35.0   # keep in step with HOMER_VERSION in .env
+for image in ghcr.io/livesport/homer/homer-app ghcr.io/livesport/homer/homer-console; do
+  cosign verify "$image:$version" \
+    --certificate-identity-regexp '^https://github\.com/livesport/homer/\.github/workflows/release\.yml@refs/tags/[0-9]+\.[0-9]+\.[0-9]+$' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  gh attestation verify "oci://$image:$version" --repo livesport/homer \
+    --signer-workflow livesport/homer/.github/workflows/release.yml \
+    --predicate-type https://slsa.dev/provenance/v1
+done
+```
+
+Then pin what you verified by digest, so a later re-tag cannot change what you
+run: `docker buildx imagetools inspect "$image:$version" --format
+'{{.Manifest.Digest}}'` prints it, and a local `docker-compose.override.yml`
+(loaded automatically by the plain `docker compose up -d` above) sets
+`image: ghcr.io/livesport/homer/homer-app@sha256:<digest>`. The full recipe,
+SBOM attestation included, is in
+[`DOCKER.md`](DOCKER.md) § *Verifying a published image*.
+
 Run the bundled `hello` example agent and check on it:
 
 ```bash
