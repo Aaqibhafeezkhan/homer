@@ -332,9 +332,13 @@ class ClaimQueueFullException(
  * Raised when the maintenance-mode start queue is at a bound
  * (`server.maintenance.maxQueuedStarts` or `…maxQueuedStartsPerPrincipal`); the start is
  * shed rather than accumulated. Maps to 429. §12 rules 4–5, ADR-0092.
+ *
+ * [perPrincipal] says which bound tripped: the queue's total cap (`false`) or this
+ * caller's own share of it (`true`) — the shed log tells the two causes apart by it.
  */
 class MaintenanceQueueFullException(
     val bound: Int,
+    val perPrincipal: Boolean = false,
 ) : HomerException("Maintenance mode is on and the start queue is full (bound: $bound queued starts)")
 
 /**

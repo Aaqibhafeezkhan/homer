@@ -155,7 +155,7 @@ internal class MaintenanceModeService(
                 }
                 val held = perPrincipal[ownerKey(owner)] ?: 0
                 if (held >= config.maxQueuedStartsPerPrincipal) {
-                    throw MaintenanceQueueFullException(config.maxQueuedStartsPerPrincipal)
+                    throw MaintenanceQueueFullException(config.maxQueuedStartsPerPrincipal, perPrincipal = true)
                 }
                 queue.addLast(waiter)
                 perPrincipal[ownerKey(owner)] = held + 1
@@ -164,7 +164,14 @@ internal class MaintenanceModeService(
             // Logged outside the lock: the appenders are synchronous, and a shed flood is
             // exactly when arriving callers must not serialize behind log I/O while holding
             // the queue lock. Throwing costs nothing; the I/O is what had to leave.
-            logger.warn("Maintenance start queue is full ({}); shedding the start", e.bound)
+            logger.warn(
+                if (e.perPrincipal) {
+                    "Maintenance start queue holds {} starts for this caller; shedding the start"
+                } else {
+                    "Maintenance start queue is full ({}); shedding the start"
+                },
+                e.bound,
+            )
             throw e
         }
         return waiter
