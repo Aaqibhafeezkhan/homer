@@ -206,6 +206,7 @@ private fun Route.agentToolingRoutes(deps: ApiDeps) {
                 processExecutor = processExecutor,
                 processFactory = processFactory,
                 telemetryService = telemetryService,
+                maintenanceGate = maintenanceModeService,
             )
         }
 

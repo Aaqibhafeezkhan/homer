@@ -78,6 +78,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -137,6 +138,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -194,6 +196,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -259,6 +262,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -306,6 +310,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -346,6 +351,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -405,6 +411,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -461,6 +468,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -516,6 +524,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -573,6 +582,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -615,6 +625,7 @@ class RetryTraceAttributesTest {
                             telemetryService = TestFixtures.mockTelemetryService(span),
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }

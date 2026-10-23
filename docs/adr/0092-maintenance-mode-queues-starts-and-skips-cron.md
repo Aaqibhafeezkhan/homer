@@ -26,8 +26,10 @@ window is open.
 
 ## Decision Drivers
 
-- Every entry point already converges on one function, `AgentRunStarter.start`,
-  so a gate there covers all of them without each caller growing its own check.
+- Nearly every entry point already converges on one function,
+  `AgentRunStarter.start`, so a gate there covers them without each caller
+  growing its own check; the three replay/debug handlers that build their
+  process directly take the same gate.
 - Cron is the exception that is not a caller: `CronSchedulerService.tick` decides
   on its own that a run should exist, so it can be told to decide otherwise.
 - Root §12 rules 4 and 5: a queue a caller can multiply is bounded locally and
@@ -63,6 +65,10 @@ convergence point already exists.
   resolves its inputs **at dequeue, not at enqueue**: a cost cap that was reached
   or a cooldown that started while the run waited is seen, and the run is refused
   then. Nothing is created while parked — a shed start leaves no process row.
+  Retry, resume and debug build their process directly instead of going through
+  the starter, so each takes the same gate at the same point — after its
+  authorization and body validation, before its pre-flight and input resolution,
+  inside its own root span.
 - **The queue.** Bounded in total (`maxQueuedStarts`, 500) and per principal
   (`maxQueuedStartsPerPrincipal`, 50), so one caller cannot fill the queue for
   everyone; the wait is bounded (`queueWaitSec`, 600). A surplus start is shed
@@ -115,7 +121,9 @@ convergence point already exists.
 
 Each constraint has a test that asserts the denial path (root §12 rule 8):
 
-- a start while the mode is on parks, and runs only after it goes off;
+- a start while the mode is on parks, and runs only after it goes off — for
+  retry, resume and debug too, the three start paths that do not go through
+  `AgentRunStarter`;
 - a cost-capped or cooldown-blocked start is refused **at dequeue**: the preflight
   is verified to have run zero times while parked;
 - a shed start creates no process row, and neither shed nor expiry puts an input

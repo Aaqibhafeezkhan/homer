@@ -121,8 +121,10 @@ marked `Constraint:`.
 - **`MaintenanceModeService`** — the admin maintenance flag and the bounded queue of starts
   parked behind it: `isEnabled()`, `setEnabled()` (persisted to `server_meta`), `queueDepth()`
   and `awaitRelease(owner)`, which `AgentRunStarter` calls and `CronSchedulerService` reads the
-  flag to skip its tick. Every entry point converges on `AgentRunStarter.start`, so this one
-  gate covers HTTP, MCP, `!<agent>` hops, dispatches and continuations. See ADR-0092.
+  flag to skip its tick. Nearly every entry point converges on `AgentRunStarter.start`, so this
+  one gate covers HTTP, MCP, `!<agent>` hops, dispatches and continuations; retry, resume and
+  debug build their process directly and take the gate in `respondStartedUnderRootSpan`
+  (`routes/RunHandlers.kt`), so a fourth start path must not be added without one. See ADR-0092.
   - **Constraint:** the gate is called **before** `AgentRunStarter`'s preflight, so a released
     start re-runs the cycle, depth, cost-cap and cooldown checks and resolves its inputs **at
     dequeue, not at enqueue** — moving the call below them starts a run on a decision that was

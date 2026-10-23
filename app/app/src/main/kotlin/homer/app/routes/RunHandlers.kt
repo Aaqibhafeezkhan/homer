@@ -18,6 +18,7 @@ import homer.app.models.ProcessInfo
 import homer.app.services.AgentRunStarter
 import homer.app.services.Authorizer
 import homer.app.services.CostMeter
+import homer.app.services.MaintenanceModeService
 import homer.app.services.ProcessManager
 import homer.app.services.visibleOriginRootProcessId
 import homer.app.services.visibleRootProcessId
@@ -138,6 +139,7 @@ internal suspend fun handleAgentDebug(
     processExecutor: ProcessExecutor,
     processFactory: ProcessFactory,
     telemetryService: TelemetryService,
+    maintenanceGate: MaintenanceModeService,
 ) {
     val req =
         call.receiveOr400<DebugAgentRequest>(
@@ -153,7 +155,7 @@ internal suspend fun handleAgentDebug(
                 reservedOverrides.joinToString(", "),
         )
     }
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_debug_request") { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_debug_request", maintenanceGate) { context ->
         // Manual recovery is not gated by `afterFailure`; `minInterval` still holds. See ADR-0051.
         val debugAgent = agent.copy(env = agent.env + req.env).withoutFailureBackoff()
         val queryParamsBuilder = ParametersBuilder()
@@ -207,8 +209,9 @@ internal suspend fun handleRetry(
     telemetryService: TelemetryService,
     costMeter: CostMeter,
     agentInputResolver: AgentInputResolver,
+    maintenanceGate: MaintenanceModeService,
 ) {
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_retry_request") { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_retry_request", maintenanceGate) { context ->
         // Re-validate the stored inputs against the CURRENT agent definition (a fresh
         // request would); retry must not replay values the current input policy rejects.
         val retryParams = agentInputResolver.resolveRetryParams(agent, sourceProcess.inputParams)
@@ -276,8 +279,9 @@ internal suspend fun handleResume(
     telemetryService: TelemetryService,
     costMeter: CostMeter,
     agentInputResolver: AgentInputResolver,
+    maintenanceGate: MaintenanceModeService,
 ) {
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_resume_request") { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_resume_request", maintenanceGate) { context ->
         // Same re-validation as retry, plus the recover markers. A stored
         // HMR_LG_RESUME survives resolveRetryParams' reserved-name passthrough
         // and wins over recover in the runtime -- the correct replay for a
@@ -339,6 +343,10 @@ internal suspend fun handleResume(
  * the span ERROR and propagates. Via startAgentRootSpan, not spanBuilder: debug, retry and resume
  * build their own root span outside AgentRunStarter, so anything that gates run tracing has to be
  * applied here too — `telemetry.export: OFF` included. See ADR-0050.
+ *
+ * [maintenanceGate] parks [start] while maintenance mode is on, in the span and before [start]
+ * runs, exactly as [AgentRunStarter.start] does: these three are the starts that do not go through
+ * the starter, and every start path has to queue. See ADR-0092.
  */
 @Suppress("SuspendFunSwallowedCancellation") // records the span error and rethrows
 private suspend fun respondStartedUnderRootSpan(
@@ -346,11 +354,13 @@ private suspend fun respondStartedUnderRootSpan(
     telemetryService: TelemetryService,
     agent: Agent,
     spanName: String,
+    maintenanceGate: MaintenanceModeService,
     start: suspend (Context) -> Pair<Int, Attributes>,
 ) {
     val span = telemetryService.tracer.startAgentRootSpan(agent, spanName)
     try {
-        val (processId, attributes) = start(Context.current().with(span))
+        val (processId, attributes) =
+            maintenanceGate.gatedStart(call.principalName()) { start(Context.current().with(span)) }
         span.setAllAttributes(attributes)
         span.setStatus(StatusCode.OK)
         call.respond(ExecuteResponse(processId = processId))
@@ -360,5 +370,23 @@ private suspend fun respondStartedUnderRootSpan(
         throw e
     } finally {
         span.end()
+    }
+}
+
+/**
+ * Parks [start] behind the maintenance gate, exactly as [AgentRunStarter.start] does: the caller's
+ * preflight and input resolution run inside [start], after the gate returns, so a released start is
+ * validated against the state in force at dequeue, and the release slot is held until its run
+ * exists. A start the queue sheds or expires never reaches [start]. See ADR-0092.
+ */
+private suspend fun <T> MaintenanceModeService.gatedStart(
+    owner: String?,
+    start: suspend () -> T,
+): T {
+    val slot = awaitRelease(owner)
+    try {
+        return start()
+    } finally {
+        slot.release()
     }
 }

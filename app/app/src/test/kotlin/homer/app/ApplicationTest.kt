@@ -2026,6 +2026,7 @@ class ApplicationTest {
                             telemetryService = mockTelemetryService,
                             costMeter = mockCostMeter,
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -2073,6 +2074,7 @@ class ApplicationTest {
                             telemetryService = mockTelemetryService,
                             costMeter = mockCostMeter,
                             agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
@@ -2590,6 +2592,7 @@ class ApplicationTest {
                             telemetryService = mockTelemetryService,
                             costMeter = mockk(relaxed = true),
                             agentInputResolver = agentInputResolver,
+                            maintenanceGate = mockk(relaxed = true),
                         )
                     }
                 }
