@@ -25,7 +25,7 @@ auto-loads when you read files in its package (root §9 lists each as canonical 
 
 ```
 HTTP API     Application.kt + its configureXxx files + routes (Ktor + bearer auth)
-Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
+Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
 Execution    ProcessExecutor · AgentExecutor · CommandExecutorFactory · RunnerRegistry · RunnerClaimQueue · ExternalRunnerDomain · ExternalRunnerInstance · RunnerStatusReport · LockManager · ParallelRunsManager
 Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
 Infra        ShellExecutor · Workspace · FileOperations · ResultToEnvMapper · SysEnvResolver · TelemetryService · LangfuseClient
@@ -118,6 +118,21 @@ marked `Constraint:`.
 - **`CooldownGate`** — the pre-flight cooldown refusal before a run is created; the bound itself
   is enforced inside `ProcessRepository.obtainProcessId`'s INSERT transaction, sharing
   `CooldownDecision` so the two cannot drift. ADR-0051.
+- **`MaintenanceModeService`** — the admin maintenance flag and the bounded queue of starts
+  parked behind it: `isEnabled()`, `setEnabled()` (persisted to `server_meta`), `queueDepth()`
+  and `awaitRelease(owner)`, which `AgentRunStarter` calls and `CronSchedulerService` reads the
+  flag to skip its tick. Every entry point converges on `AgentRunStarter.start`, so this one
+  gate covers HTTP, MCP, `!<agent>` hops, dispatches and continuations. See ADR-0092.
+  - **Constraint:** the gate is called **before** `AgentRunStarter`'s preflight, so a released
+    start re-runs the cycle, depth, cost-cap and cooldown checks and resolves its inputs **at
+    dequeue, not at enqueue** — moving the call below them starts a run on a decision that was
+    true minutes earlier, and creates its process row while it is still parked.
+  - **Constraint:** the drain releases waiters **in its own loop** (take a release slot,
+    complete the waiter's `released`, then await its run off the loop), never by handing each
+    waiter a coroutine to race for a slot — arrival order is the point — and a slot is held
+    until the released start's run exists, which is what bounds the flood at the runners.
+  - **Constraint:** the total, per-principal and wait bounds are `server.maintenance` config,
+    not constants; a shed or expired start leaves no process row and names no input value.
 - **`StartupReconciliation`** — runs once before traffic: interrupted runs to `UNKNOWN`, their
   questions expired, purge times stamped, and dispatches and continuations left mid-fire settled
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).

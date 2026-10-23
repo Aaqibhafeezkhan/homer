@@ -77,6 +77,7 @@ class OwnerStampingTest {
                     costMeter = mockk(relaxed = true),
                     maxInvocationDepth = 5,
                     cooldownGate = mockk(relaxed = true),
+                    maintenanceGate = mockk(relaxed = true),
                 )
 
             application {

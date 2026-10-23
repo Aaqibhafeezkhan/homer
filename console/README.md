@@ -13,6 +13,7 @@ A modern, self-hosted web application for monitoring and managing Homer processe
 - **Runtime Plugins**: add your own pages to the console without rebuilding it — drop an ES module into `console/public/plugins/`, name it in `CONSOLE_PLUGINS`, and it contributes a sidebar entry and its own route and calls the Homer API through the console's authenticated client. See [Plugins](#plugins).
 - **Custom themes**: add your own look to the console without rebuilding it — drop a stylesheet into `console/public/themes/` and name it in `CONSOLE_THEMES`; it joins the theme dropdown and its tokens apply like a built-in theme's. Name one light and one dark theme in `CONSOLE_THEME_MODES` and they replace the built-ins entirely. See [Custom themes](#custom-themes).
 - **Runners**: Read-only admin view of configured runners, registered pull-mode instances and the claim queue
+- **Maintenance banner**: A red alert bar across every dashboard page while the backend's maintenance mode is on — scheduled runs are skipped and new runs wait in a queue until an admin turns it off. See [Maintenance banner](#maintenance-banner).
 - **Collapsible sidebar**: A toggle at the bottom of the sidebar collapses it to icons only (the name stays as a tooltip and `aria-label`) so the page gets more room; the choice is saved in `localStorage` and restored on the next visit. The Questions and Continuations badges stay visible on the icon when collapsed.
 - **Responsive Design**: Works on desktop, tablet, and mobile devices
 - **Resilient Error Handling**: A render error in one dashboard page shows a recoverable error card in the content area while the header and sidebar stay usable; a last-resort boundary catches anything that would otherwise blank the whole app.
@@ -312,6 +313,29 @@ instance winding down; and a breakdown of runs currently waiting for a
 runner, by the alias or tags they need, with the pending count and the
 oldest wait. Both endpoints poll every 5 s. No actions — this page
 shows state, it does not change it.
+
+### Maintenance banner
+
+While the backend is in maintenance mode (an admin turns it on through
+`POST /api/v1/maintenance`), a red alert bar sits at the top of every
+dashboard page, above the header:
+
+> Maintenance mode is on. Scheduled runs are skipped and new runs wait in a
+> queue until an admin turns it off.
+
+It reads the `maintenance` flag on `GET /api/v1/health`, which is polled
+every 15 s, so it appears and clears on its own without a reload. While the
+mode is off the bar renders nothing at all; a backend older than the flag
+omits it, and the bar stays hidden. It is read-only — the console has no
+control to toggle the mode (out of scope for the feature; use the API).
+
+What the mode means for what you see: a run already `WORKING` keeps running
+and finishes normally; a cron schedule does not fire and a fire missed during
+the window is not replayed when it ends; any other start — the Run button, the
+API, MCP, a `!<agent>` hop, a dispatch, a continuation — waits in a queue and
+starts, in arrival order, once an admin turns the mode off. A start that
+arrives after the queue is full is refused with `429`, and one that waits
+longer than the configured limit with `503`; neither creates a run.
 
 ### Answering agent questions
 

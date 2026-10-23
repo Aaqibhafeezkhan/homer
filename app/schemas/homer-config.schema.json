@@ -243,6 +243,7 @@
           "default": 1000,
           "description": "Bound on runs waiting in the claim queue; a run arriving at the bound fails immediately instead of waiting. See ADR-0066."
         },
+        "maintenance": { "$ref": "#/$defs/MaintenanceConfig" },
         "dispatch": { "$ref": "#/$defs/DispatchConfig" },
         "langGraph": { "$ref": "#/$defs/LangGraphConfig" },
         "agentGrants": {
@@ -261,6 +262,37 @@
           "type": ["string", "null"],
           "default": null,
           "description": "Durable directory for LangGraph SQLite checkpoints, kept outside the ephemeral per-process workspace so continuations survive across runs. null = derived as a 'langgraph' subdirectory beside databasePath."
+        }
+      }
+    },
+    "MaintenanceConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Admin maintenance mode: while an admin has it on, cron fires are skipped and every other agent start waits in a bounded queue until it is turned off. See ADR-0092.",
+      "properties": {
+        "maxQueuedStarts": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 500,
+          "description": "Bound on starts waiting in the maintenance queue; a start arriving at the bound fails immediately with 429 instead of waiting."
+        },
+        "maxQueuedStartsPerPrincipal": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 50,
+          "description": "Bound on one caller's share of the maintenance queue, so a single caller cannot fill it and lock everyone else out."
+        },
+        "queueWaitSec": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 600,
+          "description": "How long (seconds) a start may wait in the maintenance queue before it is dropped and answers 503. The wait is not replayed once the mode goes off."
+        },
+        "releaseConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "description": "How many queued starts are released at a time when the mode goes off, so the end of maintenance does not resume every waiter in one burst."
         }
       }
     },

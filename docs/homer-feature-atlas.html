@@ -789,6 +789,17 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
 # {"added":[…], "updated":[…], "removed":[…], "errors":[…]}</code></pre>
         </article>
 
+        <article class="f">
+          <h3>Maintenance mode <span class="where">http · operations</span></h3>
+          <p>An admin holds the server still for a restart: cron fires are skipped, and every other start — HTTP, MCP,
+            a <code>!&lt;agent&gt;</code> hop, a dispatch, a continuation — parks in a bounded queue and starts, in
+            arrival order, when the mode goes off. Runs already <code>WORKING</code> finish untouched, and a schedule
+            missed during the window is not replayed. A start past the queue's size is shed with <code>429</code>, one
+            past its wait with <code>503</code>; neither creates a run. The flag survives a restart.</p>
+          <pre><code>curl -X POST "$HOMER/api/v1/maintenance" -d '{"enabled": true}'
+# {"enabled":true,"since":1761…,"queued":0}   GET reads it back, admin only</code></pre>
+        </article>
+
       </div>
     </section>
 

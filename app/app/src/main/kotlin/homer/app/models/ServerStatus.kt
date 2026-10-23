@@ -120,6 +120,26 @@ data class HealthResponse(
     val status: String = "ok",
     val runners: List<RunnerSummary>,
     val sweep: SweepStatusResponse? = null,
+    // Admin maintenance mode: true while new starts are queued and cron is skipped. Read
+    // from the in-memory flag, so polling this costs no database read. See ADR-0092.
+    val maintenance: Boolean = false,
+)
+
+/** `GET`/`POST /api/v1/maintenance`: the admin maintenance-mode state. See ADR-0092. */
+@Serializable
+data class MaintenanceResponse(
+    val enabled: Boolean,
+    // Epoch seconds the mode was turned on; null while off, and null for a mode that was
+    // already on when this process booted (the toggle time is not persisted).
+    val since: Long? = null,
+    // Starts waiting in the queue right now.
+    val queued: Int = 0,
+)
+
+/** `POST /api/v1/maintenance` body. An unknown key or a non-boolean `enabled` is rejected with 400. */
+@Serializable
+data class SetMaintenanceRequest(
+    val enabled: Boolean,
 )
 
 @Serializable

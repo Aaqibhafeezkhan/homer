@@ -219,7 +219,7 @@ Output:
 | GET | `/api/v1/heartbeat` | Liveness ping with version. Use `/livez` for Kubernetes probes. | Any authenticated caller (open under `unsecured`) |
 | GET | `/api/v1/livez` | Kubernetes-style liveness probe — always `200`. Wire `livenessProbe` here. | Not required |
 | GET | `/api/v1/readyz` | Kubernetes-style readiness probe — `200` in steady state, `503` once drain begins. Wire `readinessProbe` and any reverse-proxy upstream check here. | Not required |
-| GET | `/api/v1/health` | Rich JSON status (runners + sweep snapshot) for the console. Configured runners' **aliases** (in the runner list and the sweep snapshot's `runnerAlias`) are admin-only (the built-in `local` row keeps its fixed, non-sensitive alias): a non-admin caller gets `alias: null` with the generic backend `type` — the same classification as the status API. In the sweep snapshot, `ranAt` is the time the boot sweep last ran as Unix epoch **seconds**. **Not** a probe — stays `200` during drain. | Any authenticated caller (open under `unsecured`) |
+| GET | `/api/v1/health` | Rich JSON status (runners + sweep snapshot + `maintenance`) for the console. Configured runners' **aliases** (in the runner list and the sweep snapshot's `runnerAlias`) are admin-only (the built-in `local` row keeps its fixed, non-sensitive alias): a non-admin caller gets `alias: null` with the generic backend `type` — the same classification as the status API. In the sweep snapshot, `ranAt` is the time the boot sweep last ran as Unix epoch **seconds**. `maintenance` is the admin maintenance flag (see [below](#getpost-apiv1maintenance)). **Not** a probe — stays `200` during drain. | Any authenticated caller (open under `unsecured`) |
 | POST | `/api/v1/runner/register` | Register a pull-mode runner instance in the domain the token belongs to (`201`; `422` bad tags/concurrency; `429` at `maxInstances`). See [`SERVER.md`](SERVER.md) § *Runner protocol reference*. | Runner domain token (`runners.*.token`); `401` for every `apiAuth` credential |
 | DELETE | `/api/v1/runner/instances/{id}` | Deregister an instance (`204`; `404` unknown or foreign id). | Runner domain token |
 | POST | `/api/v1/runner/instances/{id}/claim` | Long-poll for a run to execute (`200` session, `204` nothing or the instance is draining, `404` unknown or foreign instance id, `429` too many polls). | Runner domain token |
@@ -230,6 +230,8 @@ Output:
 | GET | `/api/v1/status` | Get server status | `admin` role required |
 | GET | `/api/v1/runners` | Configured runners with permits in use, and each external domain's live instances | `admin` role required |
 | GET | `/api/v1/runners/queue` | Pending runner claims: count, oldest age, breakdown by filter | `admin` role required |
+| GET | `/api/v1/maintenance` | Maintenance mode state: `enabled`, `since` (Unix epoch seconds, null while off) and `queued` (starts waiting). Responses carry `Cache-Control: no-store`. | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
+| POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues. Off: the queue drains in arrival order, `releaseConcurrency` at a time. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
 | GET | `/api/v1/costs` | Current LLM harness (Claude/Codex) spend windows + configured caps; also returns `costTrackedTagKeys`, the keys queryable via `GET /api/v1/costs/by-tag/{key}` | `admin` role required |
 | GET | `/api/v1/costs/monthly` | Per-agent LLM harness (Claude/Codex) spend for one UTC month, from the persistent cost ledger (query: `month`, defaults to current UTC month; `400` if malformed) | `admin` role required |
 | GET | `/api/v1/costs/totals` | All-time per-agent LLM harness (Claude/Codex) spend from the persistent cost ledger | `admin` role required |
@@ -416,6 +418,39 @@ Pending runner claims (requests waiting for a free permit), grouped by filter.
 
 A filter sets exactly one of `alias`/`tags`; the other is `null`. Top-level
 `oldestAgeSec` is `null` and `byFilter` is `[]` when nothing is waiting.
+
+### `GET`/`POST /api/v1/maintenance`
+
+Admin maintenance mode: a durable switch an operator flips before replacing the
+server. While it is on, cron fires are **skipped** (a missed schedule is never
+replayed) and every other agent start — HTTP, MCP, dispatch, continuation,
+`!<agent>` hop — waits in a bounded queue instead of running. A run already
+`WORKING` is untouched: this is an admission gate, not a kill switch.
+
+```json
+{
+  "enabled": true,
+  "since": 1700000000,
+  "queued": 2
+}
+```
+
+`since` is Unix epoch **seconds** and `null` while the mode is off; `queued` is
+the number of starts currently waiting. Both responses carry
+`Cache-Control: no-store`, so a proxy cannot serve a stale "off" after the mode
+was turned on.
+
+`POST` takes `{ "enabled": true | false }` (`400` on anything else, including an
+unknown key). Turning it **off** releases the queue in arrival order, at most
+`server.maintenance.releaseConcurrency` starts at a time; a start that waited
+longer than `queueWaitSec` answers `503`, and one that arrived at a full queue
+(`maxQueuedStarts`, or its own `maxQueuedStartsPerPrincipal` share) answers
+`429` — neither is replayed later.
+
+The gate is admin-only and handler-level: a non-admin or unauthenticated caller
+gets the same `404` an unmounted path answers, and the body is parsed only after
+that check, so the endpoint's existence and request shape stay hidden
+(ADR-0037, ADR-0047 rule 3).
 
 ### `GET /api/v1/agents/{agentName}/langgraph`
 

@@ -29,6 +29,10 @@ internal class AgentRunStarter(
     private val costMeter: CostMeter,
     private val maxInvocationDepth: Int,
     private val cooldownGate: CooldownGate,
+    // The maintenance-mode admission gate. It sits above the claim queue, so every runner
+    // backend and every start source (HTTP, MCP, dispatch, continuation, `!agent`) queues
+    // identically while the mode is on. See ADR-0092.
+    private val maintenanceGate: MaintenanceModeService,
 ) {
     /**
      * Starts an agent run and returns the new process id.
@@ -62,9 +66,14 @@ internal class AgentRunStarter(
         resolveInputs: suspend () -> Map<String, String>,
     ): Int {
         val span = telemetryService.tracer.startAgentRootSpan(agent, "agent_request")
+        var releaseSlot: MaintenanceSlot? = null
 
         try {
             val context = Context.current().with(span)
+            // Parks this start while maintenance mode is on, before any preflight: a start
+            // released later must re-run the cycle/depth/cost/cooldown checks and resolve its
+            // inputs against the state in force at dequeue, not at enqueue. See ADR-0092.
+            releaseSlot = maintenanceGate.awaitRelease(owner)
             checkPreflight(agent, invocationChain)
             val newChain = invocationChain + agent.name
             val queryParamsEnv = resolveInputs()
@@ -100,6 +109,9 @@ internal class AgentRunStarter(
             span.recordException(e)
             throw e
         } finally {
+            // The run now exists (or the start failed): free the bounded release slot. A start
+            // that was shed or timed out never took one. See ADR-0092.
+            releaseSlot?.release()
             span.end()
         }
     }

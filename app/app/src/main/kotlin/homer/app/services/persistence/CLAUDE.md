@@ -75,10 +75,16 @@ See ADR-0020.
   `CostRepository` owns the append-only `cost_entries` LLM-spend ledger
   (schema v6) backing `CostMeter`'s cap windows and the cost statistics;
   rows are never pruned. See ADR-0035. `ServerMetaRepository` owns the
-  `server_meta` key/value table (schema v9) holding the stable per-instance
-  id (`getOrCreateInstanceId`, created on first boot) that scopes the
-  Kubernetes startup sweep to this instance's own pods — read once, blocking,
-  while the runner registry is built.
+  `server_meta` key/value table (schema v9), which holds two keys: the stable
+  per-instance id (`getOrCreateInstanceId`, created on first boot) that scopes
+  the Kubernetes startup sweep to this instance's own pods — read once,
+  blocking, while the runner registry is built — and `maintenance_mode`
+  (ADR-0092), read blocking at boot and **written** on the live
+  `POST /api/v1/maintenance` path through `DatabaseService.query { }`; the live
+  *read* is the service's in-memory flag, so the console's health poll costs no
+  database work. A key/value row needs no DDL, so neither key has a
+  schema-version row of its own; `writeMaintenanceMode` upserts (UPDATE, then
+  INSERT when it matched no row) rather than assuming the boot read created it.
 - **`ProcessJobRegistry`** — `ConcurrentHashMap<Int, Job>` of live cancellation
   handles; the one piece of process state that can't be persisted. Empty on
   boot (the coroutines it referred to are gone).

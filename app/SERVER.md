@@ -438,6 +438,11 @@ server:
 | `localRunner` | `LocalRunnerConfig` | No | `{tags=[], concurrency=null}` | Claim-queue facets of the built-in `local` runner: `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). See [Runner claim queue](#runner-claim-queue). |
 | `runnerClaimTimeoutSec` | `Int` | No | `300` | Seconds a run waits in the claim queue for a runner with a free permit before it fails; agents override with `runnerClaimTimeoutSec`. See [Runner claim queue](#runner-claim-queue). |
 | `maxPendingRunnerClaims` | `Int` | No | `1000` | Bound on runs waiting in the claim queue; a run arriving at the bound fails immediately. See [Runner claim queue](#runner-claim-queue). |
+| `maintenance` | `MaintenanceConfig` | No | `{maxQueuedStarts=500, maxQueuedStartsPerPrincipal=50, queueWaitSec=600, releaseConcurrency=4}` | Bounds of the admin maintenance-mode queue: how many starts may wait, how much of it one caller may hold, how long a start may wait, and how many are released at a time. See [Maintenance mode](#maintenance-mode). |
+| `maintenance.maxQueuedStarts` | `Int` | No | `500` | Bound on starts waiting in the maintenance queue; a start arriving at the bound fails immediately with `429`. See [Maintenance mode](#maintenance-mode). |
+| `maintenance.maxQueuedStartsPerPrincipal` | `Int` | No | `50` | Bound on one caller's share of the maintenance queue, so a single caller cannot fill it and lock everyone else out. See [Maintenance mode](#maintenance-mode). |
+| `maintenance.queueWaitSec` | `Int` | No | `600` | How long a start may wait in the maintenance queue before it is dropped and answers `503`. The wait is not replayed once the mode goes off. See [Maintenance mode](#maintenance-mode). |
+| `maintenance.releaseConcurrency` | `Int` | No | `4` | How many queued starts are released at a time when the mode goes off, so the end of maintenance does not resume every waiter in one burst. See [Maintenance mode](#maintenance-mode). |
 
 ### `server.shutdownDrainSec`
 
@@ -449,6 +454,44 @@ containers, higher if your typical agent takes longer than 30s.
 
 A drain timeout is logged at WARN; the engine then stops regardless,
 mirroring k8s `terminationGracePeriodSeconds` semantics.
+
+### Maintenance mode
+
+An operator switch for the window in which Homer itself is being replaced. It is
+**not** a config value — it is turned on and off at runtime by an admin through
+`POST /api/v1/maintenance` (see [`README.md`](README.md)), persisted in the
+`server_meta` table so it survives a restart, and reported on `GET /api/v1/health`
+as `maintenance` and by `GET /api/v1/maintenance` with the queue depth.
+
+While it is on:
+
+- **Cron fires are skipped.** A schedule that comes due during the window is
+  dropped, never replayed — `POST /api/v1/agents/{name}/cron-run` (the console's
+  Run button) still fires, but the run queues like any other start.
+- **Every other agent start waits in a queue** — HTTP, MCP, dispatch,
+  continuation and `!<agent>` hops alike, since they all converge on the same
+  admission gate above the claim queue. A start that waits longer than
+  `maintenance.queueWaitSec` answers `503`; one that arrives at a full queue
+  answers `429`. Neither is replayed.
+- **A run already `WORKING` keeps running.** This is an admission gate, not a
+  kill switch, and it does not touch `/api/v1/readyz`.
+
+When the mode goes off the queue drains in arrival order, at most
+`maintenance.releaseConcurrency` starts at a time. A queued start is only
+*parked*: it re-runs its own cost-cap, cooldown, invocation-chain and input
+checks after it is released, against the state in force then.
+
+See [ADR-0092](../docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
+
+```yaml
+server:
+  apiAuth: !<unsecured>
+  maintenance:
+    maxQueuedStarts: 500
+    maxQueuedStartsPerPrincipal: 50
+    queueWaitSec: 600
+    releaseConcurrency: 4
+```
 
 ### `server.requireClaudeCodeVersion`
 

@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: admin maintenance mode** — An admin-only `GET`/`POST /api/v1/maintenance` queues new agent starts and skips cron fires until it is turned off, while runs already `WORKING` finish; the queue is bounded and the mode survives a restart. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
+
 ### Console
 
+- **Added: a maintenance banner** — A red alert bar across every dashboard page while the backend's maintenance mode is on, so a run that seems to do nothing has an explanation on screen.
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.
 
 ## [1.35.0] - 2026-10-20
