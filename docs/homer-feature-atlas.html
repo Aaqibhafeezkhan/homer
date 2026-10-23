@@ -464,46 +464,59 @@ java -jar homer-&lt;version&gt;-all.jar config.yaml</code></pre>
         </article>
 
         <article class="f step">
-          <h3 data-step="03">Create your first agent <span class="where">agents/hello/</span></h3>
-          <p>A directory under <code>agentsSearchPath</code> containing <code>agent.yaml</code> — on the compose stack
-            that is <code>example/agents/</code>. Commands run in order;
-            declared inputs become environment variables — read them as <code>$VAR</code> in a script.</p>
-          <pre><code>agents/hello/agent.yaml
-name: hello
-description: Greets the caller
+          <h3 data-step="03">Read your first agent <span class="where">example/agents/quickstart/</span></h3>
+          <p>An agent is a directory under <code>agentsSearchPath</code> holding an <code>agent.yaml</code> — on the
+            compose stack that is <code>example/agents/</code>. Commands run in order. This one, the bundled Quick
+            start agent, uses only <code>!&lt;script&gt;</code> steps, so it needs no LLM: it writes an artifact, asks
+            the operator a question with <code>homer-ask</code>, and gates its last steps on the answer.</p>
+          <pre><code>example/agents/quickstart/agent.yaml
+name: quickstart
 commands:
   - !&lt;script&gt;
-    content: 'echo "Hello, $NAME!"'
-inputs:
-  - { paramName: name, envName: NAME, type: string, required: true }</code></pre>
+    content: printf 'ran at %s\n' "$(date -u)" &gt; "$HMR_ARTIFACTS_DIR/report.txt"
+
+  - !&lt;script&gt;
+    timeout: 1800
+    content: homer-ask ask-and-wait "Ship it?" --option ship --option hold
+    resultEnvParam:
+      - { src: STD_OUT, envName: SHIP_ANSWER }
+
+  - !&lt;script&gt;
+    when: '[[ "$SHIP_ANSWER" == ship* ]]'
+    content: cat "$HMR_ARTIFACTS_DIR/report.txt"</code></pre>
         </article>
 
         <article class="f step">
-          <h3 data-step="04">Load it and run it <span class="where">http</span></h3>
+          <h3 data-step="04">Run it <span class="where">http</span></h3>
           <p>Reload picks up new and changed agents without a restart, and tells you what it found. The run call returns
-            a process id immediately — the work happens in the background.</p>
+            a process id immediately — the work happens in the background, and the run then blocks on its question
+            instead of failing.</p>
           <pre><code># compose stack: add -H "Authorization: Bearer $HOMER_ADMIN_TOKEN" to every call
 curl -X POST "http://localhost:8080/api/v1/agents/reload"
-curl -X POST "http://localhost:8080/api/v1/agent/hello?name=World"
+curl -X POST "http://localhost:8080/api/v1/agent/quickstart"
 # {"processId": 1}</code></pre>
         </article>
 
         <article class="f step">
-          <h3 data-step="05">Watch what happened <span class="where">http · console</span></h3>
-          <p>Status carries the full history and per-command exit codes; stdout and stderr are artifacts you can
-            download or tail live. Or just open the process page in the console.</p>
-          <pre><code>curl "http://localhost:8080/api/v1/status/1"
-curl "http://localhost:8080/api/v1/artifacts?processId=1&amp;path=cmd_0.out"
-# console: http://localhost:3000/processes/1</code></pre>
+          <h3 data-step="05">Answer the question, watch it finish <span class="where">console · http</span></h3>
+          <p>The process page tails the run's logs live; the Questions inbox holds what it is waiting for. Answer
+            <strong>ship</strong> and the run resumes, prints the artifact it wrote and reaches
+            <code>FINISHED</code>. Answer <strong>hold</strong> on a later run and its last step exits non-zero, so
+            the run ends <code>FAILED</code> — the outcome follows your answer.</p>
+          <pre><code># console: http://localhost:3000/processes/1
+#          http://localhost:3000/questions
+curl "http://localhost:8080/api/v1/status/1"
+# "status": "FINISHED"
+curl "http://localhost:8080/api/v1/artifacts?processId=1&amp;path=report.txt"</code></pre>
         </article>
 
         <article class="f step">
           <h3 data-step="06">Iterate without the server <span class="where">cli</span></h3>
           <p><code>agentdebug</code> validates an agent against the shipped schema and runs it locally — dry-run first to
             see the exact plan, then a single command at a time.</p>
-          <pre><code>./app/agentdebug.sh --config config.yaml validate hello
-./app/agentdebug.sh --config config.yaml run hello --dry-run
-./app/agentdebug.sh --config config.yaml run hello --cmd 0</code></pre>
+          <pre><code>./app/agentdebug.sh --config config.yaml validate quickstart
+./app/agentdebug.sh --config config.yaml run quickstart --dry-run
+./app/agentdebug.sh --config config.yaml run quickstart --cmd 0</code></pre>
         </article>
 
         <article class="f step">

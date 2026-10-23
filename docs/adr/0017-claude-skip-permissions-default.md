@@ -58,5 +58,8 @@ degrade or fail. Migration: set `dangerouslySkipPermissions: true` explicitly
 - One-line migration for deployments that audited their isolation story;
   intentionally noisy (run failures, not silent downgrades) for those that
   did not.
-- `example/agents/hello_world` opts in explicitly (its claude command calls
-  an MCP tool) and doubles as the migration example.
+- No bundled example opts in any more: `example/agents/hello_world` is a
+  one-line greeting that needs no tool grants, so it no longer carries the
+  flag. Migration examples that do opt in, with their reasoning, are the
+  atlas's *Skip permissions (opt-in)* card and
+  [`case-studies/claude-tool-limits.md`](../case-studies/claude-tool-limits.md).

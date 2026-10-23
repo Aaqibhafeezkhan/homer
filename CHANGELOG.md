@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: a credentials-free `quickstart` example agent** — The Quick start now runs a script-only agent that asks a question in the console and finishes on the answer, so a first run needs no LLM credentials.
+
 ### Console
 
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.

@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: quickstart
+description: |
+  The Quick start agent: no LLM credentials, one operator question, and a
+  result that follows the answer.
+commands:
+  - !<script>
+    label: write-report
+    content: |
+      echo "Writing the report to $HMR_ARTIFACTS_DIR/report.txt"
+      printf 'Homer quick start ran at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$HMR_ARTIFACTS_DIR/report.txt"
+      echo "Waiting for an answer in the console: http://localhost:3000/questions"
+
+  - !<script>
+    label: ask-ship-it
+    timeout: 1800
+    content: |
+      # Progress goes to stderr so stdout carries the bare answer, which
+      # resultEnvParam captures into SHIP_ANSWER.
+      echo "Asking the operator: Ship it?" >&2
+      homer-ask ask-and-wait "Ship it?" --option ship --option hold
+    resultEnvParam:
+      - src: STD_OUT
+        envName: SHIP_ANSWER
+
+  # The captured answer keeps its trailing newline (nothing trims it), so the
+  # predicates below match a prefix rather than the whole value.
+  - !<script>
+    label: ship
+    when: '[[ "$SHIP_ANSWER" == ship* ]]'
+    content: |
+      echo "Shipping. The artifact says:"
+      cat "$HMR_ARTIFACTS_DIR/report.txt"
+
+  - !<script>
+    label: hold
+    when: '[[ "$SHIP_ANSWER" == hold* ]]'
+    content: |
+      echo "Holding: the operator did not ship it." >&2
+      exit 1
