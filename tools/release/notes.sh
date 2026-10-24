@@ -41,8 +41,8 @@ case "${1:-}" in
     tag=$2
     semver "$tag"
     identity="https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag"
-    printf '%s\n## Images\n\n' "$marker"
-    printf 'Signed with cosign, with SLSA provenance and a CycloneDX SBOM attached ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
+    printf '%s\n### Images\n\n' "$marker"
+    printf 'Signed with cosign (keyless) and carrying SLSA provenance and a CycloneDX SBOM ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
     printf '| Image | Digest |\n|---|---|\n'
     first=
     while read -r image digest; do
@@ -53,9 +53,9 @@ case "${1:-}" in
       [ -n "$first" ] || first="ghcr.io/$repo/$image@$digest"
     done
     [ -n "$first" ] || { echo "No image given" >&2; exit 1; }
-    printf '\nVerify an image by its digest before deploying it, for example:\n\n'
+    printf '\nVerify before you pull, then pin the digest:\n\n'
 # shellcheck disable=SC2016 # Markdown backticks, not a command substitution
-    printf '```sh\ncosign verify %s \\\n  --certificate-identity %s \\\n  --certificate-oidc-issuer https://token.actions.githubusercontent.com\n```\n' "$first" "$identity"
+    printf '```bash\ncosign verify %s \\\n  --certificate-identity %s \\\n  --certificate-oidc-issuer https://token.actions.githubusercontent.com\n```\n' "$first" "$identity"
     ;;
   merge)
     body=$(awk -v m="$marker" '$0 == m { exit } { print }' "$2" \
