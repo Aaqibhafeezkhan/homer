@@ -42,6 +42,38 @@ expect fail "an accepted issue in another repository" "someone/homer:4:accepted"
 expect pass "an accepted issue" "livesport/homer:5:bug,accepted"
 expect pass "one accepted issue among several" "livesport/homer:6:" "someone/homer:7:accepted" "livesport/homer:8:accepted"
 
+# The AIF factory's release pull request (ADR-0090, 2026-10-24 amendment): exempt only as a
+# whole — the App's bot account, a release branch of this repository, CHANGELOG.md alone.
+release() {
+  want=$1 name=$2 type=$3 id=$4 repo=$5 ref=$6 files=$7
+  answer >"$scratch/answer.json"
+  printf '%b' "$files" >"$scratch/files.txt"
+  if PR_AUTHOR_TYPE=$type PR_AUTHOR_ID=$id PR_HEAD_REPO=$repo PR_HEAD_REF=$ref PR_FILES="$scratch/files.txt" \
+      "$check" livesport/homer <"$scratch/answer.json" >/dev/null; then got=pass; else got=fail; fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL: $name: expected $want, got $got"
+    failures=$((failures + 1))
+  fi
+}
+
+app=346317994
+rel=aif/release-1.36.0
+cl='modified CHANGELOG.md'
+release pass "the factory's release pull request" Bot "$app" livesport/homer "$rel" "$cl"
+release fail "a user account with the App's id" User "$app" livesport/homer "$rel" "$cl"
+release fail "another bot" Bot 49699333 livesport/homer "$rel" "$cl"
+release fail "no author" "" "" livesport/homer "$rel" "$cl"
+release fail "a release branch of a fork" Bot "$app" someone/homer "$rel" "$cl"
+release fail "a branch that is not a release" Bot "$app" livesport/homer aif/GH-12 "$cl"
+release fail "a release branch with a suffix" Bot "$app" livesport/homer aif/release-1.36.0-x "$cl"
+release fail "a release branch name with a second line" Bot "$app" livesport/homer "$rel
+x" "$cl"
+release fail "a code change beside the changelog" Bot "$app" livesport/homer "$rel" "$cl\nmodified app/x.kt"
+release fail "another file than the changelog" Bot "$app" livesport/homer "$rel" 'modified docs/CHANGELOG.md'
+release fail "a rename onto the changelog" Bot "$app" livesport/homer "$rel" 'renamed CHANGELOG.md'
+release fail "a new changelog" Bot "$app" livesport/homer "$rel" 'added CHANGELOG.md'
+release fail "no file list" Bot "$app" livesport/homer "$rel" ''
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures PR policy test(s) failed."
   exit 1
