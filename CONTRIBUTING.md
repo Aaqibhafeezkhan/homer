@@ -6,6 +6,8 @@
   architecture and conventions. Requires JDK 25.
 - Console (Next.js): see [`console/CLAUDE.md`](console/CLAUDE.md) for
   architecture and conventions. Requires Node.
+- Questions and help go to
+  [GitHub Discussions](https://github.com/livesport/homer/discussions/categories/q-a).
 
 ## Before submitting
 

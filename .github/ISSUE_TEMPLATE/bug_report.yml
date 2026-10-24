@@ -1,0 +1,50 @@
+name: Bug report
+description: Report behaviour that differs from the documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Everything written here is public: no internal hostnames, ticket IDs, credentials, tokens or private logs.
+  - type: input
+    id: version
+    attributes:
+      label: Homer version
+      description: The release or image tag you run — the version the console reports, or the image you started.
+    validations:
+      required: true
+  - type: dropdown
+    id: runner
+    attributes:
+      label: Runner
+      description: The execution backend the agent runs on.
+      options:
+        - local
+        - ssh
+        - kubernetes
+    validations:
+      required: true
+  - type: textarea
+    id: agent-yaml
+    attributes:
+      label: Minimal agent.yaml that reproduces it
+      description: >-
+        The smallest agent definition that shows the problem. This text is public:
+        no internal hostnames, ticket IDs, credentials, tokens or private logs.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual behaviour
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: >-
+        The lines around the failure, from the container log or the console. This text is public:
+        no internal hostnames, ticket IDs, credentials, tokens or private logs.
+      render: shell
