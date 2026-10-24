@@ -30,6 +30,15 @@ class ComposeImageSourceTest {
             .orEmpty()
             .sortedBy { it.name }
 
+    /** The quick-start doc set: the docs that walk a first reader through the compose stack. */
+    private fun quickStartDocs(): List<File> =
+        listOf("README.md", "DOCKER.md", "console/DEPLOYMENT.md", "docs/homer-feature-atlas.html")
+            .map { File(repoRoot, it) }
+
+    /** Every file this class guards: the compose files, the quick-start docs, the rebuild script and `.env.example`. */
+    private fun guardedFiles(): List<File> =
+        composeFiles() + quickStartDocs() + listOf("rebuild-docker.sh", ".env.example").map { File(repoRoot, it) }
+
     private fun indentOf(line: String) = line.takeWhile { it == ' ' }.length
 
     private fun isFiller(line: String) = line.isBlank() || line.trimStart().startsWith("#")
@@ -205,10 +214,9 @@ class ComposeImageSourceTest {
         // alone it merges build args into a service with no `build:` section and `docker compose up`
         // fails the merge — every command that adds the dev overlay needs the build overlay under it.
         val scanned =
-            listOf("README.md", "DOCKER.md", "docs/homer-feature-atlas.html", "rebuild-docker.sh", "docker-compose.build.yml")
-        for (name in scanned) {
-            val file = File(repoRoot, name)
-            assertTrue(file.isFile, "$name is missing; move this guard with the dev-overlay docs rather than deleting it.")
+            quickStartDocs() + listOf("rebuild-docker.sh", "docker-compose.build.yml").map { File(repoRoot, it) }
+        for (file in scanned) {
+            assertTrue(file.isFile, "${file.name} is missing; move this guard with the dev-overlay docs rather than deleting it.")
             val logical = mutableListOf<String>()
             for (line in file.readLines()) {
                 // A trailing `\` continues the command on the next line — the compose stacks are wrapped.
@@ -220,8 +228,8 @@ class ComposeImageSourceTest {
             }
             for (line in logical) {
                 assertTrue(
-                    !line.contains("-f docker-compose.dev.yml") || line.contains("docker-compose.build.yml"),
-                    "$name runs `-f docker-compose.dev.yml` without the build overlay: the dev overlay sets " +
+                    !line.contains("-f docker-compose.dev.yml") || line.contains("-f docker-compose.build.yml"),
+                    "${file.name} runs `-f docker-compose.dev.yml` without the build overlay: the dev overlay sets " +
                         "build arguments and no context, so stacked on the base file alone `docker compose up` " +
                         "merges them into a service with no `build:` section and fails (ADR-0093). Add " +
                         "`-f docker-compose.build.yml` before it.",
@@ -267,10 +275,7 @@ class ComposeImageSourceTest {
     @Test
     fun `no compose file or quick start carries a literal admin token`() {
         val assignment = Regex("""(^|[^'\w])HOMER_ADMIN_TOKEN=(\S*)""")
-        val scanned =
-            composeFiles() +
-                listOf("README.md", "DOCKER.md", "console/DEPLOYMENT.md", "docs/homer-feature-atlas.html", ".env.example")
-                    .map { File(repoRoot, it) }
+        val scanned = guardedFiles()
         for (file in scanned) {
             assertTrue(file.isFile, "${file.name} is missing; move this guard with the quick start rather than deleting it.")
             for ((number, line) in file.readLines().withIndex()) {
@@ -288,6 +293,23 @@ class ComposeImageSourceTest {
                             "credential to everyone who clones the repository (root CLAUDE.md §12 rule 7).",
                     )
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `no guarded file ships an unresolved merge-conflict marker`() {
+        // `<<<<<<< HEAD`, `=======`, `>>>>>>> branch` — a merge left unresolved and committed anyway.
+        val marker = Regex("""^(<{7}|={7}|>{7})($| )""")
+        for (file in guardedFiles()) {
+            assertTrue(file.isFile, "${file.name} is missing; move this guard with the guarded files rather than deleting it.")
+            for ((number, line) in file.readLines().withIndex()) {
+                assertTrue(
+                    !marker.containsMatchIn(line),
+                    "${file.name}:${number + 1} carries a merge-conflict marker, so the file shipped from an " +
+                        "unresolved merge: every fresh clone renders the marker as part of the instructions " +
+                        "or the compose stack it is meant to describe.",
+                )
             }
         }
     }
