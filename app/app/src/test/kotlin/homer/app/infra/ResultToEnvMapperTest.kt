@@ -100,6 +100,29 @@ class ResultToEnvMapperTest {
         assertEquals("Error message", env["ERROR"])
     }
 
+    // The `quickstart` example gates its closing steps on `[[ "$SHIP_ANSWER" == ship* ]]`,
+    // where SHIP_ANSWER is a captured stdout: a trim here would stop both predicates
+    // matching and the run would end FINISHED printing nothing. Pins the raw capture.
+    @Test
+    fun `mapToEnv should preserve the trailing newline with Pass transformer`() {
+        Files.writeString(stdOutFile, "ship\n")
+        Files.writeString(stdErrFile, "")
+        val result = TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOutFile, stdErr = stdErrFile)
+
+        val params =
+            listOf(
+                ResultEnvParam(
+                    src = SrcType.STD_OUT,
+                    envName = "SHIP_ANSWER",
+                    transformer = ResultTransformer.Pass,
+                ),
+            )
+
+        val env = ResultToEnvMapper(result).mapToEnv(params)
+
+        assertEquals("ship\n", env["SHIP_ANSWER"], "a Pass transformer must not trim captured stdout")
+    }
+
     @Test
     fun `mapToEnv should read stderr and stdout from separate sources`() {
         Files.writeString(stdOutFile, "stdout content")

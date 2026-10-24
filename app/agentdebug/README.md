@@ -63,20 +63,20 @@ agent in `example/agents/hello_world/agent.json` is named `hello`:
 # Dry run (no execution)
 ./app/agentdebug.sh --config /tmp/agentdebug-config.json run hello --dry-run
 
-# Run a single command with an input (index 1 is the `script` command,
+# Run a single command with an input (index 0 is the `script` command,
 # which echoes $project_id)
 echo 'project_id=demo-project' > /tmp/input.env
-./app/agentdebug.sh --config /tmp/agentdebug-config.json run hello --cmd 1 --input /tmp/input.env
+./app/agentdebug.sh --config /tmp/agentdebug-config.json run hello --cmd 0 --input /tmp/input.env
 
 # Run with env overrides, keep workspace after run
 echo 'GREETING_SUFFIX=team' > /tmp/extra.env
-./app/agentdebug.sh --config /tmp/agentdebug-config.json --env /tmp/extra.env run hello --cmd 1 --input /tmp/input.env --keep-workspace
+./app/agentdebug.sh --config /tmp/agentdebug-config.json --env /tmp/extra.env run hello --cmd 0 --input /tmp/input.env --keep-workspace
 
 # Generate a bcrypt hash for AuthConfig.Password.users (reads password from stdin)
 echo 'my-password' | ./app/agentdebug.sh hash-password --cost 12
 ```
 
-(`hello`'s command[2] is a real `claude` call — running the full agent
+(`hello`'s command[1] is a real `claude` call — running the full agent
 without `--cmd` executes it too, which requires a logged-in `claude` CLI.)
 
 ## CLI Reference
@@ -189,14 +189,17 @@ Agent-loading logs (`[main] INFO agentdebug - ...`) go to stderr; append
 ### list
 Against the Quick Start config:
 ```
-Available agents (10):
+Available agents (11):
   body-input           - Demonstrates inputs sourced from JSON request body (1 command)
   header-input         - Demonstrates inputs sourced from request headers (1 command)
-  hello                - A sample greeting agent that demonstrates commands and query parameters (3 commands)
+  hello                - A sample greeting agent that demonstrates commands and query parameters (2 commands)
   jsonpath             (1 command)
   langgraph_demo       - Demonstrates the !<langgraph> command launching the Python homer_langgraph runtime (1 command)
   langgraph_demo_check - Check sub-agent the langgraph_demo graph fans out to; always reports ok (1 command)
   mcp-greet            - Demonstrates exposing an agent as an MCP tool on /mcp (1 command)
+  quickstart           - The Quick start agent: no LLM credentials, one operator question, and a
+result that follows the answer.
+ (5 commands)
   result               (5 commands)
   sleep                (1 command)
   when-example         - Demonstrates the `when:` predicate. Each command runs only if its predicate
@@ -211,7 +214,7 @@ with a `cron` schedule gets `, cron: <expression>` after its command count.
 
 ### validate
 
-Success case (`validate hello` against the Quick Start config):
+Success case (`validate hello` against the sample config):
 ```
 Loading config: /tmp/agentdebug-config.json
 Agents path: example/agents
@@ -219,10 +222,9 @@ Agent: hello
 
 ✓ Loaded successfully
 ✓ Name: hello
-✓ Commands: 3 (non-empty)
-✓ Command[0] cmd: valid
-✓ Command[1] script: valid
-✓ Command[2] claude: valid
+✓ Commands: 2 (non-empty)
+✓ Command[0] script: valid
+✓ Command[1] claude: valid
 ✓ Inputs: 1 params
   project_id (STRING, required) -> env: project_id
 ✓ Schema: valid
@@ -293,24 +295,21 @@ Sub-agent, LangGraph, and RunnerCmd commands (`type: agent` / `langgraph` /
 
 ### run --dry-run
 
-Real dry-run of the Quick Start's `hello` agent — every command is prefixed
+Real dry-run of the bundled `hello` agent — every command is prefixed
 by the same 53-`─` separator and `[CMD i/N]` header used in a live run, with
 `timeout=Ns` included:
 ```
-[INFO] Agent: hello (3 commands)
+[INFO] Agent: hello (2 commands)
 [INFO] Workspace: /tmp/agentdebug-workspace/0
 [INFO] Env: 0 global + 1 agent + 0 input = 9 vars
 ─────────────────────────────────────────────────────
-[CMD 0/2] cmd "cmd"  timeout=60s
-[DRY ] cmd: ping google.com -c 1
-─────────────────────────────────────────────────────
-[CMD 1/2] script "script"  timeout=60s
+[CMD 0/1] script "script"  timeout=60s
 [DRY ] shell: sh
 [DRY ] stdin:
 [DRY ]   echo $project_id
 ─────────────────────────────────────────────────────
-[CMD 2/2] claude "claude"  timeout=60s
-[DRY ] cmd: claude --model haiku --dangerously-skip-permissions --max-turns 40 --output-format stream-json --print --verbose
+[CMD 1/1] claude "claude"  timeout=60s
+[DRY ] cmd: claude --model haiku --max-turns 40 --output-format stream-json --print --verbose
 [DRY ] stdin:
 [DRY ]   Say a short, friendly one-line hello to project {{project_id}}.
 ```

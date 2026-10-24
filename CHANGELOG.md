@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Added: a credentials-free `quickstart` example agent** — The Quick start now runs a script-only agent that asks a question in the console and finishes on the answer, so a first run needs no LLM credentials.
 - **Added: admin maintenance mode** — An admin-only `GET /api/v1/maintenance` (read) and `POST /api/v1/maintenance` (toggle) queue new agent starts and skip cron fires until the mode is turned off, while runs already in progress finish; the queue is bounded (new `server.maintenance` config keys) and the mode survives a restart. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
 
 ### Console

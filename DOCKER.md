@@ -96,6 +96,7 @@ homer/
 │   │   └── config-local.json   # Local dev config (unsecured auth)
 │   ├── agents/                  # Agent definitions
 │   │   ├── hello_world/
+│   │   ├── quickstart/
 │   │   └── ...
 │   └── workspace/               # Runtime data, logs
 ├── .dockerignore                # Backend build-context ignore file (context = repo root)

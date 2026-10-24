@@ -209,22 +209,50 @@ docker compose up -d
 # Console: http://localhost:3000   API: http://localhost:8080 (both bound to 127.0.0.1)
 ```
 
-Run the bundled `hello` example agent and check on it:
+Trigger the bundled `quickstart` agent — it is built only from `!<script>`
+steps, so it needs no LLM credentials:
 
 ```bash
 TOKEN=$(grep '^HOMER_ADMIN_TOKEN=.' .env | tail -n 1 | cut -d= -f2-)
 
 curl -X POST -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8080/api/v1/agent/hello?project_id=demo"
+  "http://localhost:8080/api/v1/agent/quickstart"
 # {"processId": 1}
-
-curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/status/1"
 ```
 
-The last step of `hello` calls the Claude CLI. That step fails until Claude
-credentials reach the command environment
-([`app/SERVER.md`](app/SERVER.md) § *Global Environment Variables*). Agents
-built only from `!<cmd>` and `!<script>` steps need no LLM at all.
+The run starts in the background and stops on a question. Open the console at
+<http://localhost:3000/processes/1> to watch its live logs, then answer **ship**
+in the **Questions** inbox (<http://localhost:3000/questions>). The run resumes,
+prints the artifact it wrote, and finishes:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/status/1"
+# ... "status": "FINISHED"
+```
+
+Answer **hold** on a later run instead and that step exits non-zero, so the run
+ends `FAILED` — the outcome follows your answer.
+
+The walkthrough runs on the built-in `local` runner, which is what the compose
+stack defaults to. The question flow is not local-only: Homer materializes the
+`.homer/bin` helpers into every run's workspace and uploads them with it, so an
+`ssh`, `kubernetes` or external runner gets them too — such a target only needs
+`curl` and `awk` plus a reachable `homerApiUrl`, from which the runner injects
+`HMR_API_URL` (see [`app/AGENT.md`](app/AGENT.md) § *Asking the operator
+questions*).
+
+### Next: add Claude
+
+The `hello` example agent (`example/agents/hello_world/agent.json`) ends in a
+`!<claude>` step, so it needs Claude credentials in the command environment —
+for the compose stack, put them in `globalEnv` in `example/config/config.json`
+([`app/SERVER.md`](app/SERVER.md) § *Global Environment Variables*), e.g.
+`"ANTHROPIC_API_KEY": "sk-ant-…"`:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/v1/agent/hello?project_id=demo"
+```
 
 To run without Docker, build and start the server JAR as described in
 [`app/README.md`](app/README.md). Use [`DOCKER.md`](DOCKER.md) for dev and
