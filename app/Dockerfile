@@ -48,7 +48,8 @@ RUN --mount=type=secret,id=artifactory_url \
     ./gradlew shadowJar --no-daemon
 
 # The runtime image is Alpine (musl), where sqlite-jdbc loads only its Linux-Musl
-# native library; drop the other platforms' copies. The jar stays portable outside Docker.
+# native library; drop the other platforms' copies. Only the image's jar is musl-only:
+# a source build (gradlew shadowJar) keeps every platform. See ADR-0015.
 RUN zip -q -d app/build/libs/homer-*-all.jar 'org/sqlite/native/*' -x 'org/sqlite/native/Linux-Musl/*'
 
 # Stage 2: Runtime image
