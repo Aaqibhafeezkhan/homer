@@ -135,6 +135,22 @@ class ReleaseWorkflowGateTest {
         )
     }
 
+    @Test
+    fun `every published tag carries the matrix entry's tag suffix`() {
+        val lines = File(repoRoot, release).readLines().map { it.trim() }
+        assertTrue(
+            "SUFFIX: \${{ matrix.tag-suffix }}" in lines,
+            "$release step `Image tags` no longer reads the matrix entry's `tag-suffix` into SUFFIX.",
+        )
+        val outputs = lines.filter { it.startsWith("echo \"version=") || it.startsWith("echo \"moving=") }
+        val tagged = outputs.filterNot { it.startsWith("echo \"moving=\"") }
+        assertTrue(
+            tagged.size == 3 && tagged.all { it.contains("\$SUFFIX\" >>\"\$GITHUB_OUTPUT\"") },
+            "$release step `Image tags` writes $tagged; the tag version, the branch version and the moving branch " +
+                "tag must each end with \$SUFFIX, or a variant entry (homer-app -slim) pushes over the full image's tag.",
+        )
+    }
+
     /** Each `- image:` matrix entry of [lines] as `IMAGE`, or `IMAGE:SUFFIX` when it sets a `tag-suffix`. */
     private fun publishedImages(lines: List<String>): Set<String> {
         val entries = mutableListOf<String>()
