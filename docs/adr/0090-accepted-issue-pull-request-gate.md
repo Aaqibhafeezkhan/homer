@@ -92,8 +92,15 @@ maintainer's approval is the admission, and the merge is a second one. The
   the type `Bot` (identified by its App, as the Dependabot rule above asks; a
   login can be renamed, an id cannot);
 - the head branch is `aif/release-X.Y.Z` of this repository, not of a fork;
-- `CHANGELOG.md` is the only file the pull request changes, and it modifies
-  it in place (a rename onto it would delete another file).
+- it changes `CHANGELOG.md` and, besides it, at most the files that pin the
+  release version for a fresh clone (ADR-0093): `docker-compose.yml`,
+  `.env.example`, `README.md` and `DOCKER.md`; each only modified in place (a
+  rename onto one would delete another file). The changelog check and the
+  version bump are the factory's; the AI review and the maintainer read them.
+  The gate allows those files whole, not just their pin lines: it sees
+  GitHub's file list, not the diff, and the factory writes the bump with a
+  fixed substitution of the old version by the new one. A change beyond the
+  pins is what the AI review and the maintainer's merge are there to catch.
 
 The facts come from the pull request event and GitHub's file list, never from
 the pull request's own files, and `tools/pr-policy/check.sh` runs from the base
@@ -102,5 +109,5 @@ other required checks, review threads and the maintainer's merge all stay.
 
 This retires the original decision's "the rule has no exception to abuse": the
 release pull request is the one exception. Opening it takes the factory App's
-own installation token, and what it can carry is one changelog edit that a
-maintainer still merges.
+own installation token, and what it can carry is a changelog edit and a version
+bump that a maintainer still merges.
