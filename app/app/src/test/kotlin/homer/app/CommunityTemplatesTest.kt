@@ -60,6 +60,19 @@ class CommunityTemplatesTest {
     }
 
     @Test
+    fun `every field that collects input carries an id`() {
+        for (path in listOf(bugReport, featureRequest)) {
+            val anonymous = bodyFields(path).filter { it.scalarOf("type") != "markdown" && it.scalarOf("id") == null }
+            assertTrue(
+                anonymous.isEmpty(),
+                "$path: fields without an id: ${anonymous.mapNotNull { it.scalarOf("type") }}. GitHub accepts an " +
+                    "id-less field, but every id-list assertion in this class skips it, so a new field pasted " +
+                    "without an id would escape them all.",
+            )
+        }
+    }
+
+    @Test
     fun `the forms require the fields triage cannot work without`() {
         assertEquals(
             listOf("version", "runner", "agent-yaml", "expected-actual"),
