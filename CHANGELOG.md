@@ -10,6 +10,7 @@
 
 ### Console
 
+- **Security: the console's bundled DOMPurify and Next.js move past critical advisories** — A DOMPurify sanitiser bypass and an unauthenticated remote-code-execution path in Next.js image optimization no longer apply to the shipped bundle.
 - **Added: a maintenance banner** — A red alert bar across every dashboard page while the backend's maintenance mode is on, so a run that seems to do nothing has an explanation on screen.
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.
 
