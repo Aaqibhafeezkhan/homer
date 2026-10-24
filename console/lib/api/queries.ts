@@ -293,11 +293,15 @@ export function useHeartbeat() {
   });
 }
 
-// Health Query (runner summary + last startup sweep)
+// Health Query (runner summary + last startup sweep + maintenance mode)
+// Polls every 15 s: the maintenance banner has to appear and clear on its own,
+// without a reload, and the sweep banner rides the same read. The backend serves
+// it from in-memory state, so a tick costs no database work.
 export function useHealth() {
   return useQuery({
     queryKey: queryKeys.health(),
     queryFn: () => homerApi.getHealth(),
+    refetchInterval: 15_000,
     staleTime: 60_000,
     retry: false,
   });

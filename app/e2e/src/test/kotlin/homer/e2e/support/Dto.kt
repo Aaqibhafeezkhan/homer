@@ -86,6 +86,20 @@ data class Heartbeat(
 )
 
 @Serializable
+data class Health(
+    val status: String = "ok",
+    // True while the admin maintenance mode is on: new starts queue and cron is skipped.
+    val maintenance: Boolean = false,
+)
+
+@Serializable
+data class MaintenanceState(
+    val enabled: Boolean,
+    val since: Long? = null,
+    val queued: Int = 0,
+)
+
+@Serializable
 data class AgentParam(
     val paramName: String,
     val envName: String? = null,

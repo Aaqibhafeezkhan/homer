@@ -29,6 +29,10 @@ internal class AgentRunStarter(
     private val costMeter: CostMeter,
     private val maxInvocationDepth: Int,
     private val cooldownGate: CooldownGate,
+    // The maintenance-mode admission gate. It sits above the claim queue, so every runner
+    // backend and every start source (HTTP, MCP, dispatch, continuation, `!agent`) queues
+    // identically while the mode is on. See ADR-0092.
+    private val maintenanceGate: MaintenanceModeService,
 ) {
     /**
      * Starts an agent run and returns the new process id.
@@ -65,36 +69,45 @@ internal class AgentRunStarter(
 
         try {
             val context = Context.current().with(span)
-            checkPreflight(agent, invocationChain)
-            val newChain = invocationChain + agent.name
-            val queryParamsEnv = resolveInputs()
-            // Current flags for a fresh run; union with the registration snapshot when
-            // this is a replay of stored inputs.
-            val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
+            // Parks this start while maintenance mode is on, before any preflight: a start
+            // released later must re-run the cycle/depth/cost/cooldown checks and resolve its
+            // inputs against the state in force at dequeue, not at enqueue. The gate holds its
+            // release slot until the run exists — or the start fails — and frees it even when
+            // this caller is cancelled. See ADR-0092.
+            val processId =
+                maintenanceGate.gated(owner) {
+                    checkPreflight(agent, invocationChain)
+                    val newChain = invocationChain + agent.name
+                    val queryParamsEnv = resolveInputs()
+                    // Current flags for a fresh run; union with the registration snapshot when
+                    // this is a replay of stored inputs.
+                    val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
 
-            val result =
-                processExecutor.execute(
-                    processFactory.create(
-                        agent = agent,
-                        queryParams = queryParamsEnv,
-                        parentContext = context,
-                        invocationChain = newChain,
-                        ancestorLockKeys = ancestorLockKeys,
-                        owner = owner,
-                        extraSecretInputKeys = secretEnvNames,
-                        parentProcessId = parentProcessId,
-                        rootProcessId = rootProcessId,
-                    ),
-                    context,
-                )
+                    val result =
+                        processExecutor.execute(
+                            processFactory.create(
+                                agent = agent,
+                                queryParams = queryParamsEnv,
+                                parentContext = context,
+                                invocationChain = newChain,
+                                ancestorLockKeys = ancestorLockKeys,
+                                owner = owner,
+                                extraSecretInputKeys = secretEnvNames,
+                                parentProcessId = parentProcessId,
+                                rootProcessId = rootProcessId,
+                            ),
+                            context,
+                        )
 
-            val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
-            span.setAllAttributes(
-                runAttributes(result.processId, agent, source, parentProcessId, rootProcessId, traceTags, extraAttributes),
-            )
+                    val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
+                    span.setAllAttributes(
+                        runAttributes(result.processId, agent, source, parentProcessId, rootProcessId, traceTags, extraAttributes),
+                    )
+                    result.processId
+                }
             span.setStatus(StatusCode.OK)
 
-            return result.processId
+            return processId
         } catch (e: Exception) {
             span.setStatus(StatusCode.ERROR, e.message ?: "Unknown error")
             span.recordException(e)

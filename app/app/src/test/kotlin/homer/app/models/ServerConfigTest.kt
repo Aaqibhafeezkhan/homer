@@ -52,6 +52,30 @@ class ServerConfigTest {
     }
 
     @Test
+    fun `maintenance settings default to 500 queued starts, 600 s wait and 4 releases`() {
+        val maintenance = Server().maintenance
+        assertEquals(500, maintenance.maxQueuedStarts)
+        assertEquals(50, maintenance.maxQueuedStartsPerPrincipal)
+        assertEquals(600, maintenance.queueWaitSec)
+        assertEquals(4, maintenance.releaseConcurrency)
+    }
+
+    @Test
+    fun `maintenance settings reject every bound below 1`() {
+        val cases =
+            listOf(
+                "server.maintenance.maxQueuedStarts" to { MaintenanceConfig(maxQueuedStarts = 0) },
+                "server.maintenance.maxQueuedStartsPerPrincipal" to { MaintenanceConfig(maxQueuedStartsPerPrincipal = 0) },
+                "server.maintenance.queueWaitSec" to { MaintenanceConfig(queueWaitSec = 0) },
+                "server.maintenance.releaseConcurrency" to { MaintenanceConfig(releaseConcurrency = 0) },
+            )
+        for ((field, build) in cases) {
+            val ex = assertThrows<IllegalArgumentException>("expected rejection of $field = 0") { build() }
+            assertTrue(ex.message!!.contains(field), ex.message)
+        }
+    }
+
+    @Test
     fun `dispatch settledRetentionSec defaults to 7 days and is floored at one hour`() {
         assertEquals(604_800L, DispatchConfig().settledRetentionSec)
         assertEquals(3600L, DispatchConfig(settledRetentionSec = 3600).settledRetentionSec)

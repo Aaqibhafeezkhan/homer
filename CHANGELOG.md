@@ -5,9 +5,11 @@
 ### Homer
 
 - **Added: a credentials-free `quickstart` example agent** — The Quick start now runs a script-only agent that asks a question in the console and finishes on the answer, so a first run needs no LLM credentials.
+- **Added: admin maintenance mode** — An admin-only `GET /api/v1/maintenance` (read) and `POST /api/v1/maintenance` (toggle) queue new agent starts and skip cron fires until the mode is turned off, while runs already in progress finish; the queue is bounded (new `server.maintenance` config keys) and the mode survives a restart. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
 
 ### Console
 
+- **Added: a maintenance banner** — A red alert bar across every dashboard page while the backend's maintenance mode is on, so a run that seems to do nothing has an explanation on screen.
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.
 
 ## [1.35.0] - 2026-10-20
