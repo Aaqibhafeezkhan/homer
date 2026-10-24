@@ -49,6 +49,7 @@ private fun Route.runStartRoutes(deps: ApiDeps) {
                 telemetryService,
                 costMeter,
                 agentInputResolver,
+                maintenanceModeService,
             )
         }
     }
@@ -93,6 +94,7 @@ private fun Route.processLangGraphRoutes(deps: ApiDeps) {
                 telemetryService,
                 costMeter,
                 agentInputResolver,
+                maintenanceModeService,
             )
         }
     }

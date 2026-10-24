@@ -25,6 +25,7 @@ internal class CronSchedulerService(
     private val agentsService: AgentsService,
     private val agentRunStarter: AgentRunStarter,
     private val agentInputResolver: AgentInputResolver,
+    private val maintenanceMode: MaintenanceModeService,
     private val logger: Logger,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     private val now: () -> ZonedDateTime = { ZonedDateTime.now(ZoneOffset.UTC) },
@@ -81,9 +82,16 @@ internal class CronSchedulerService(
     }
 
     internal suspend fun tick(now: ZonedDateTime) {
-        agentsService.agents.values
-            .filter { it.cron != null && matchesCronSafe(it, it.cron, now) }
-            .forEach { fireAgent(it, now) }
+        val due = agentsService.agents.values.filter { it.cron != null && matchesCronSafe(it, it.cron, now) }
+        if (maintenanceMode.isEnabled()) {
+            // Skipped, not queued: a tick that does not fire is never replayed (matching is
+            // per minute), so a long maintenance window builds no backlog. See ADR-0092.
+            if (due.isNotEmpty()) {
+                logger.info("Maintenance mode is on: skipping {} scheduled fire(s)", due.size)
+            }
+            return
+        }
+        due.forEach { fireAgent(it, now) }
     }
 
     // Validated at load, but a throw inside the tick filter would terminate the

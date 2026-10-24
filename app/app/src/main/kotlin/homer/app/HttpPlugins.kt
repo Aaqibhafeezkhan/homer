@@ -20,6 +20,8 @@ import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
 import homer.app.exceptions.InvocationCycleDetectedException
 import homer.app.exceptions.InvocationDepthExceededException
+import homer.app.exceptions.MaintenanceQueueFullException
+import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.exceptions.MalformedLlmOutputException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
@@ -283,6 +285,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is TooManyPendingDispatchesException,
         is TooManyPendingContinuationsException,
         is ClaimQueueFullException,
+        is MaintenanceQueueFullException,
         is TooManyRunnerInstancesException,
         is TooManyRunnerPollsException,
         is TooManySessionPollsException,
@@ -295,6 +298,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is MalformedLlmOutputException,
         is ProcessManagerAtCapacityException,
         is RunnerClaimTimeoutException,
+        is MaintenanceWaitTimeoutException,
         -> {
             transferCapacityOrServerStatus(e)
         }
@@ -373,6 +377,7 @@ private fun transferCapacityOrServerStatus(e: HomerException): HttpStatusCode =
         is TooManyPendingDispatchesException,
         is TooManyPendingContinuationsException,
         is ClaimQueueFullException,
+        is MaintenanceQueueFullException,
         is TooManyRunnerInstancesException,
         is TooManyRunnerPollsException,
         is TooManySessionPollsException,
@@ -387,6 +392,7 @@ private fun transferCapacityOrServerStatus(e: HomerException): HttpStatusCode =
 
         is ProcessManagerAtCapacityException,
         is RunnerClaimTimeoutException,
+        is MaintenanceWaitTimeoutException,
         -> {
             HttpStatusCode.ServiceUnavailable
         }

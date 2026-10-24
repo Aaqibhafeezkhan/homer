@@ -140,7 +140,10 @@ lib/api/sse.ts  (invalidates cache)   components read via hooks
   `refetchInterval` hard-coded in `lib/api/queries.ts`: costs and the
   runner / claim-queue snapshots (5 s), questions, the open-question count,
   continuations and the pending-continuations count (30 s), plus the
-  LangGraph status panel while it is open (5 s). The process list and the
+  LangGraph status panel while it is open (5 s) and the health query
+  (`useHealth`, 15 s), which the maintenance banner rides — it reads
+  in-memory backend state, so unlike the others a tick costs no database
+  work. The process list and the
   process detail poll every 30 s as a safety net under SSE; both stop once
   their data is terminal — the detail query on the process's status, the
   list query once the page holds rows and every one is terminal

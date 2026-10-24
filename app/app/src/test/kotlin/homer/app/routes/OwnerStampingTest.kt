@@ -77,6 +77,7 @@ class OwnerStampingTest {
                     costMeter = mockk(relaxed = true),
                     maxInvocationDepth = 5,
                     cooldownGate = mockk(relaxed = true),
+                    maintenanceGate = mockk(relaxed = true),
                 )
 
             application {
@@ -131,6 +132,7 @@ class OwnerStampingTest {
                                 processExecutor = mockProcessExecutor,
                                 processFactory = mockProcessFactory,
                                 telemetryService = TestFixtures.mockTelemetryService(),
+                                maintenanceGate = mockk(relaxed = true),
                             )
                         }
                     }
@@ -191,6 +193,7 @@ class OwnerStampingTest {
                                 telemetryService = TestFixtures.mockTelemetryService(),
                                 costMeter = mockk(relaxed = true),
                                 agentInputResolver = agentInputResolver,
+                                maintenanceGate = mockk(relaxed = true),
                             )
                         }
                     }

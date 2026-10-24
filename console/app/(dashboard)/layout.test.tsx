@@ -26,6 +26,9 @@ vi.mock('@/lib/plugins/plugins-context', () => ({
 }));
 vi.mock('@/components/layout/header', () => ({ Header: () => <div>header</div> }));
 vi.mock('@/components/layout/sidebar', () => ({ Sidebar: () => <div>sidebar</div> }));
+vi.mock('@/components/layout/maintenance-banner', () => ({
+  MaintenanceBanner: () => <div>maintenance banner</div>,
+}));
 vi.mock('@/components/layout/version-badge', () => ({
   VersionBadge: () => <div>version</div>,
 }));
@@ -54,6 +57,8 @@ describe('DashboardLayout', () => {
     expect(screen.getByText('header')).toBeInTheDocument();
     expect(screen.getByText('sidebar')).toBeInTheDocument();
     expect(screen.getByText('version')).toBeInTheDocument();
+    // The maintenance banner sits above the header, so it is visible on every page.
+    expect(screen.getByText('maintenance banner')).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 

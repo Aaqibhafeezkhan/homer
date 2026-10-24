@@ -393,6 +393,8 @@ export interface HealthResponse {
   status: string;
   runners: RunnerSummary[];
   sweep?: SweepStatus | null;
+  // Admin maintenance mode: cron is skipped and new starts queue while it is on.
+  maintenance?: boolean;
 }
 
 // Runner status (GET /api/v1/runners) — admin only. Timestamps are epoch seconds.
