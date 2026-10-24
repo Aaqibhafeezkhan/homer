@@ -2,7 +2,7 @@ services:
   backend:
     # Published release image, pulled anonymously; nothing is built locally.
     # HOMER_VERSION selects the release tag and defaults to the pinned current
-    # one. To build from source instead, add docker-compose.build.yml. ADR-0092.
+    # one. To build from source instead, add docker-compose.build.yml. ADR-0093.
     image: ghcr.io/livesport/homer/homer-app:${HOMER_VERSION:-1.35.0}
     container_name: homer-backend
     # Bound to loopback: the default config runs arbitrary shell/Claude, so it must

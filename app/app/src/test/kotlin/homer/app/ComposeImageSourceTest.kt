@@ -7,7 +7,7 @@ import kotlin.test.assertTrue
 
 /**
  * The default compose stack pulls the published release images and builds nothing
- * (ADR-0092), so a fresh clone starts Homer in seconds. This guard keeps the two
+ * (ADR-0093), so a fresh clone starts Homer in seconds. This guard keeps the two
  * halves of that split apart — a `build:` section creeping back into
  * `docker-compose.yml` silently restores the multi-minute first run, and a
  * forgotten `HOMER_VERSION` bump ships a stale release to every new clone.
@@ -95,7 +95,7 @@ class ComposeImageSourceTest {
         assertTrue(
             image >= 0,
             "${file.name}: `$name` declares no `image:`. Without one the stack cannot pull a published " +
-                "image, and `docker compose up` on a fresh clone either builds from source or fails (ADR-0092).",
+                "image, and `docker compose up` on a fresh clone either builds from source or fails (ADR-0093).",
         )
         return valueAt(lines, image)
     }
@@ -111,14 +111,14 @@ class ComposeImageSourceTest {
                 publishedImage(image).matches(value),
                 "docker-compose.yml: `$name` runs `$value`, not the published release image. A fresh clone " +
                     "then builds from source again — minutes of Gradle/Next and a Maven Central connection " +
-                    "before anything starts (ADR-0092).",
+                    "before anything starts (ADR-0093).",
             )
             val index = service(lines, name)
             assertTrue(
                 childKey(lines, index, "build") < 0,
                 "docker-compose.yml: `$name` declares a `build:` section again, so compose builds the working " +
                     "tree instead of pulling the release image. Building from source belongs in " +
-                    "docker-compose.build.yml, which is opt-in (ADR-0092).",
+                    "docker-compose.build.yml, which is opt-in (ADR-0093).",
             )
         }
     }
@@ -138,7 +138,7 @@ class ComposeImageSourceTest {
                 pinned == newest,
                 "docker-compose.yml pins `$name` to `${pinned ?: "nothing"}` while CHANGELOG.md's newest " +
                     "release is `$newest`: the release bumped the changelog without bumping HOMER_VERSION, so " +
-                    "a fresh clone of main pulls the previous release (ADR-0092).",
+                    "a fresh clone of main pulls the previous release (ADR-0093).",
             )
         }
     }
@@ -149,7 +149,7 @@ class ComposeImageSourceTest {
         assertTrue(
             overlay.isFile,
             "docker-compose.build.yml is missing, so building from source is gone: the base compose pulls " +
-                "release images and nothing else builds the working tree (ADR-0092, DOCKER.md § Quick Start).",
+                "release images and nothing else builds the working tree (ADR-0093, DOCKER.md § Quick Start).",
         )
         val lines = overlay.readLines()
         val buildSpecs =
@@ -165,14 +165,14 @@ class ComposeImageSourceTest {
                 build >= 0,
                 "docker-compose.build.yml: `$name` has no `build:` section, so the overlay adds nothing for " +
                     "that service and `docker compose -f docker-compose.yml -f docker-compose.build.yml up` " +
-                    "pulls the release image instead of building the working tree (ADR-0092).",
+                    "pulls the release image instead of building the working tree (ADR-0093).",
             )
             for ((key, expected) in listOf("context" to context, "dockerfile" to dockerfile)) {
                 val actual = valueAt(lines, childKey(lines, build, key))
                 assertTrue(
                     actual == expected,
                     "docker-compose.build.yml: `$name` builds with `$key: ${actual.ifEmpty { "(missing)" }}` instead " +
-                        "of `$expected`, so it builds something other than the working tree it claims to (ADR-0092).",
+                        "of `$expected`, so it builds something other than the working tree it claims to (ADR-0093).",
                 )
             }
             if (name == "backend") {
@@ -189,7 +189,7 @@ class ComposeImageSourceTest {
                 image.startsWith("homer-") && !image.contains("ghcr.io"),
                 "docker-compose.build.yml: `$name` tags what it builds `$image`. A tag under " +
                     "ghcr.io/livesport/homer would shadow the pulled release image with a local build " +
-                    "(ADR-0092).",
+                    "(ADR-0093).",
             )
             assertTrue(
                 childKey(lines, index, "ports") < 0,
@@ -223,7 +223,7 @@ class ComposeImageSourceTest {
                     !line.contains("-f docker-compose.dev.yml") || line.contains("docker-compose.build.yml"),
                     "$name runs `-f docker-compose.dev.yml` without the build overlay: the dev overlay sets " +
                         "build arguments and no context, so stacked on the base file alone `docker compose up` " +
-                        "merges them into a service with no `build:` section and fails (ADR-0092). Add " +
+                        "merges them into a service with no `build:` section and fails (ADR-0093). Add " +
                         "`-f docker-compose.build.yml` before it.",
                 )
             }

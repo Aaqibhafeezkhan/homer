@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0084, ADR-0086
 ---
 
-# ADR-0092: The default compose stack runs published release images
+# ADR-0093: The default compose stack runs published release images
 
 ## Context and Problem Statement
 

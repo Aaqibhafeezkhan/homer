@@ -1,4 +1,4 @@
-# Build-from-source overlay for the default stack (ADR-0092). docker-compose.yml
+# Build-from-source overlay for the default stack (ADR-0093). docker-compose.yml
 # pulls the published release images; this file adds back the `build:` sections
 # and tags each image locally, so a local build never shadows the pulled GHCR
 # tag. Stack it on the base file, and on docker-compose.dev.yml for dev:

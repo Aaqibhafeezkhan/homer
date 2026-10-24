@@ -4,7 +4,7 @@
 
 ### Homer
 
-- **Changed: `docker compose up` pulls the published release images** — The stack no longer builds locally; `HOMER_VERSION` picks the release tag, and building from source moves to the `docker-compose.build.yml` overlay. See [ADR-0092](docs/adr/0092-the-default-compose-stack-runs-published-images.md).
+- **Changed: `docker compose up` pulls the published release images** — The stack no longer builds locally; `HOMER_VERSION` picks the release tag, and building from source moves to the `docker-compose.build.yml` overlay. See [ADR-0093](docs/adr/0093-the-default-compose-stack-runs-published-images.md).
 
 ### Console
 
