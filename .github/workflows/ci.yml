@@ -197,6 +197,15 @@ jobs:
           path: clients/python/report.xml
           retention-days: 7
 
+  # tools/release/notes.sh writes the GitHub release page (release.yml's docs and release-notes
+  # jobs), which run on tags only.
+  release-notes-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tools/release/notes-test.sh
+
   # Every quality report in one table (ADR-0082). A warn-mode check with findings
   # makes gate.mjs exit 3, which passes with a warning annotation; exit 1 fails.
   quality-gate:

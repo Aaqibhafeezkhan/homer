@@ -99,3 +99,15 @@ gh attestation verify "oci://$image" --repo livesport/homer \
   is pruned, so a consumer verifies the digest it actually deploys.
 - Neutral: images that the upstream CI builds during the migration (ADR-0085) are not
   signed. They go to the internal registry only.
+
+## Amendment (2026-10-24): the release page lists the verified digests
+
+A consumer should not have to search the documentation for what to verify. After the images
+are pushed, the `release-notes` job of `release.yml` appends an *Images* section to the GitHub
+release: each image's digest, read from GHCR and verified with cosign against the run's own
+signing identity before it is listed, and one `cosign verify` command per image with that
+identity (a signature covers its own digest only, so one example command would mislead). The
+image list is the `images` job's matrix; `ReleaseWorkflowGateTest` keeps the two equal.
+`tools/release/notes.sh` writes the section and puts it in place of an earlier one, so a rerun,
+which pushes and signs new digests, lists the new ones. The release's notes above it are the
+version's `CHANGELOG.md` section; a tag whose version has none fails before any image is pushed.

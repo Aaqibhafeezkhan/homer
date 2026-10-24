@@ -36,7 +36,7 @@ class ReleaseWorkflowGateTest {
 
     @Test
     fun `release jobs run only on a protected ref`() {
-        for (job in listOf("ci", "docs", "images")) {
+        for (job in listOf("ci", "docs", "images", "release-notes")) {
             val condition = jobCondition(release, job)
             assertTrue(
                 condition != null && condition.contains("github.ref_protected"),
@@ -115,6 +115,24 @@ class ReleaseWorkflowGateTest {
             )
             from = at + step.length
         }
+    }
+
+    @Test
+    fun `the release page lists every image the release publishes`() {
+        val lines = File(repoRoot, release).readLines()
+        val built = lines.mapNotNull { Regex("""^\s+- image: ([a-z0-9-]+)$""").find(it)?.groupValues?.get(1) }.toSet()
+        val listed =
+            lines
+                .firstNotNullOfOrNull { Regex("""^\s+for image in ([a-z0-9 -]+); do$""").find(it)?.groupValues?.get(1) }
+                ?.split(" ")
+                ?.filter { it.isNotBlank() }
+                ?.toSet()
+        assertTrue(built.isNotEmpty(), "$release job `images` no longer has a matrix of `- image:` entries.")
+        assertTrue(
+            listed == built,
+            "$release job `release-notes` lists $listed, but job `images` publishes $built. An image missing from " +
+                "the release page reaches consumers without its digest and verify command (ADR-0086).",
+        )
     }
 
     @Test
