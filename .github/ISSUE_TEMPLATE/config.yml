@@ -1,0 +1,9 @@
+# Everything written here is public: no internal hostnames, ticket IDs, credentials, tokens or private logs.
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://github.com/livesport/homer/discussions/categories/q-a
+    about: Ask a question or share how you run Homer in GitHub Discussions.
+  - name: Report a vulnerability
+    url: https://github.com/livesport/homer/security/advisories/new
+    about: Report a security vulnerability privately, as SECURITY.md describes. Do not open a public issue.

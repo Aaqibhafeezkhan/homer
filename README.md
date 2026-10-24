@@ -349,9 +349,10 @@ bundled skill and schema ride in the same release as the format).
 
 Contributions are welcome! [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
 toolchain (JDK 25 for the backend, Node for the console), the verify commands,
-and the commit, changelog and ADR conventions. Everyone taking part follows the
-[Code of Conduct](CODE_OF_CONDUCT.md). The people behind Homer are in
-[`CONTRIBUTORS.md`](CONTRIBUTORS.md).
+and the commit, changelog and ADR conventions. Questions and help belong in
+[GitHub Discussions](https://github.com/livesport/homer/discussions/categories/q-a).
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). The
+people behind Homer are in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
 
 ## License
 
