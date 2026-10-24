@@ -75,7 +75,9 @@ RUN apk add --no-cache \
 # (--build-arg CLAUDE_CODE_VERSION=x.y.z) for reproducible builds and to match
 # server.requireClaudeCodeVersion.
 ARG CLAUDE_CODE_VERSION=latest
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex
+# The npm cache is cleaned in the same layer: nothing reads it at run time.
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex && \
+    npm cache clean --force
 
 # Install the homer_langgraph Python runtime that backs the !<langgraph>
 # command type. --break-system-packages installs into the system site-packages
