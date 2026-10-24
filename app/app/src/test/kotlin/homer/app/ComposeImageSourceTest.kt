@@ -132,15 +132,18 @@ class ComposeImageSourceTest {
         }
     }
 
+    /** The newest released `## [x.y.z]` version in CHANGELOG.md — what every release pin must equal. */
+    private fun newestRelease(): String =
+        Regex("""^## \[(\d+\.\d+\.\d+)]""", RegexOption.MULTILINE)
+            .find(File(repoRoot, "CHANGELOG.md").readText())
+            ?.groupValues
+            ?.get(1)
+            ?: error("CHANGELOG.md has no released `## [x.y.z]` heading to compare against.")
+
     @Test
     fun `the pinned default is the newest released version`() {
         val base = File(repoRoot, "docker-compose.yml")
-        val newest =
-            Regex("""^## \[(\d+\.\d+\.\d+)]""", RegexOption.MULTILINE)
-                .find(File(repoRoot, "CHANGELOG.md").readText())
-                ?.groupValues
-                ?.get(1)
-        assertTrue(newest != null, "CHANGELOG.md has no released `## [x.y.z]` heading to compare against.")
+        val newest = newestRelease()
         for ((name, image) in listOf("backend" to "homer-app", "frontend" to "homer-console")) {
             val pinned = publishedImage(image).find(imageOf(base, name))?.groupValues?.get(1)
             assertTrue(
@@ -149,6 +152,40 @@ class ComposeImageSourceTest {
                     "release is `$newest`: the release bumped the changelog without bumping HOMER_VERSION, so " +
                     "a fresh clone of main pulls the previous release (ADR-0093).",
             )
+        }
+    }
+
+    @Test
+    fun `the quick start docs name the newest released version`() {
+        // The compose pins above are one half of the release version; the quick start names it too, and a
+        // release made by hand can bump the changelog and the compose defaults while these lag behind.
+        val newest = newestRelease()
+        val pins =
+            listOf(
+                // `.env.example` ships the pin commented out, so the `#` is optional.
+                ".env.example" to Regex("""^#?\s*HOMER_VERSION=(\d+\.\d+\.\d+)$""", RegexOption.MULTILINE),
+                // README.md's image-verification snippet.
+                "README.md" to Regex("""^version=(\d+\.\d+\.\d+)\b""", RegexOption.MULTILINE),
+                // DOCKER.md's `FROM …homer-app:<tag>` and `imagetools inspect …:<tag>` examples.
+                "DOCKER.md" to Regex("""ghcr\.io/livesport/homer/homer-app:(\d+\.\d+\.\d+)"""),
+            )
+        for ((name, pin) in pins) {
+            val file = File(repoRoot, name)
+            assertTrue(file.isFile, "$name is missing; move this guard with the quick start rather than deleting it.")
+            val named = pin.findAll(file.readText()).map { it.groupValues[1] }.toList()
+            assertTrue(
+                named.isNotEmpty(),
+                "$name no longer names a release version this guard can read. A reworded pin stops being " +
+                    "checked silently, so keep the example in the shape the release bump updates.",
+            )
+            for (version in named) {
+                assertTrue(
+                    version == newest,
+                    "$name names `$version` while CHANGELOG.md's newest release is `$newest`: a release bumped " +
+                        "the changelog without updating the quick start, so a reader following it installs the " +
+                        "previous version (ADR-0093).",
+                )
+            }
         }
     }
 
