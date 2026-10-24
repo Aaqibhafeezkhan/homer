@@ -22,6 +22,7 @@ Run the relevant verification command and make sure it's green:
 | `tools/quality/**` | `cd tools/quality && npm ci && npm test` |
 | `site/**`, or a file the site publishes (listed in `site/scripts/sources.mjs`, every ADR) | `cd site && npm ci && npm test && npm run docs:build` (fails on a link to a missing file) |
 | `app/schemas/**` or `Agent.kt` / `AppConfig.kt` | backend verify (runs `SchemaValidationTest`, `AgentMdExamplesTest`) |
+| `.github/ISSUE_TEMPLATE/**` or `.github/pull_request_template.md` | `JAVA_HOME=<path to a JDK 25> app/gradlew -p app :app:test --tests 'homer.app.CommunityTemplatesTest'` (the community-template guard; `node tools/quality/changed.mjs` selects no check for a template-only change) |
 
 ## Expectations
 

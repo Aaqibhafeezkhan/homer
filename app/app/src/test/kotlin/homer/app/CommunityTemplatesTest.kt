@@ -60,6 +60,36 @@ class CommunityTemplatesTest {
     }
 
     @Test
+    fun `the forms require the fields triage cannot work without`() {
+        assertEquals(
+            listOf("version", "runner", "agent-yaml", "expected-actual"),
+            requiredFieldIds(bugReport),
+            "$bugReport: a report missing one of these cannot be triaged, so the field stays required — `logs` is " +
+                "the one field a reporter may leave empty.",
+        )
+        assertEquals(
+            listOf("problem", "proposed-behaviour"),
+            requiredFieldIds(featureRequest),
+            "$featureRequest: a request missing the problem or the proposal cannot be triaged — `alternatives` is " +
+                "the one field a reporter may leave empty.",
+        )
+    }
+
+    @Test
+    fun `the agent and log fields ask GitHub to render what is pasted into them`() {
+        assertEquals(
+            "yaml",
+            renderHint(bugReport, "agent-yaml"),
+            "$bugReport: `agent-yaml` takes a pasted agent definition, so it must keep `render: yaml`.",
+        )
+        assertEquals(
+            "shell",
+            renderHint(bugReport, "logs"),
+            "$bugReport: `logs` takes pasted log lines, so it must keep `render: shell`.",
+        )
+    }
+
+    @Test
     fun `the bug form offers exactly the three runners Homer ships`() {
         val runner = bodyFields(bugReport).field("runner") ?: fail("$bugReport no longer asks which runner runs the agent.")
         assertEquals("dropdown", runner.scalarOf("type"), "$bugReport: the runner field is no longer a dropdown.")
@@ -67,6 +97,15 @@ class CommunityTemplatesTest {
             listOf("local", "ssh", "kubernetes"),
             runner.nested("attributes", bugReport).items("options", bugReport).map { (it as YamlScalar).content },
             "$bugReport: the options must be the three backends Homer ships (ADR-0003, ADR-0032, ADR-0043).",
+        )
+        assertTrue(
+            runner
+                .nested("attributes", bugReport)
+                .scalarOf("description")
+                .orEmpty()
+                .contains("external runner"),
+            "$bugReport: the closed list is the three per-agent backends; the description must say so, so it does " +
+                "not read as a stale model that omits external runner instances.",
         )
     }
 
@@ -171,4 +210,15 @@ class CommunityTemplatesTest {
     private fun bodyFields(path: String): List<YamlMap> = document(path).maps("body", path)
 
     private fun List<YamlMap>.field(id: String): YamlMap? = firstOrNull { it.scalarOf("id") == id }
+
+    /** The ids of the `body` fields a form marks `required: true`, in form order. */
+    private fun requiredFieldIds(path: String): List<String> =
+        bodyFields(path)
+            .filter { (it.entry("validations") as? YamlMap)?.scalarOf("required") == "true" }
+            .mapNotNull { it.scalarOf("id") }
+
+    private fun renderHint(
+        path: String,
+        id: String,
+    ): String? = bodyFields(path).field(id)?.nested("attributes", path)?.scalarOf("render")
 }

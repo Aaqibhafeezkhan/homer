@@ -16,7 +16,10 @@ body:
     id: runner
     attributes:
       label: Runner
-      description: The execution backend the agent runs on.
+      description: >-
+        The execution backend the agent runs on: the three backends Homer ships. A run that went to an
+        external runner instance — operator infrastructure, not a backend a report picks — is
+        reported by choosing the backend the agent declares and naming the instance in the body.
       options:
         - local
         - ssh
