@@ -438,7 +438,8 @@ base image shipped, in either direction (upgrade or hold back):
 FROM ghcr.io/livesport/homer/homer-app:1.36.0
 ARG CLAUDE_CODE_VERSION=2.1.245
 USER root
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && \
+    npm cache clean --force
 USER homer
 ```
 
@@ -921,7 +922,9 @@ The image is deliberately small (`bash`, `curl`, `git`, `tar`, `gzip`,
 ```dockerfile
 FROM registry.example.com/homer/homer-runner:1.25.0
 USER root
-RUN apk add --no-cache nodejs npm && npm install -g @anthropic-ai/claude-code
+RUN apk add --no-cache nodejs npm && \
+    npm install -g @anthropic-ai/claude-code && \
+    npm cache clean --force
 USER homer
 ```
 
