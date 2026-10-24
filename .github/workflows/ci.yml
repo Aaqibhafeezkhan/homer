@@ -197,7 +197,8 @@ jobs:
           path: clients/python/report.xml
           retention-days: 7
 
-  # tools/release/notes.sh writes the GitHub release page (release.yml), which runs on tags only.
+  # tools/release/notes.sh writes the GitHub release page (release.yml's docs and release-notes
+  # jobs), which run on tags only.
   release-notes-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 5

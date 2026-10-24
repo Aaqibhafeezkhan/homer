@@ -256,8 +256,9 @@ jobs:
           cosign-release: v3.1.3
       - name: Images
         run: |
+          # The images job's matrix; ReleaseWorkflowGateTest keeps the two lists equal.
           for image in homer-app homer-runner homer-console; do
-            digest=$(docker buildx imagetools inspect "ghcr.io/$REPO/$image:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+            digest=$(docker buildx imagetools inspect "ghcr.io/$REPO/$image:$TAG" --format '{{.Manifest.Digest}}')
             printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "No digest for $image:$TAG"; exit 1; }
             cosign verify "ghcr.io/$REPO/$image@$digest" \
               --certificate-identity "https://github.com/$GITHUB_WORKFLOW_REF" \

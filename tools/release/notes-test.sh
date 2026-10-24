@@ -26,6 +26,7 @@ cat >"$scratch/CHANGELOG.md" <<'MD'
 ### Homer
 
 - **Added: maintenance mode** — Queues starts. See [ADR-0092](docs/adr/0092-x.md).
+- **Changed: the console** — [Runs](console/README.md) and [the client](clients/python/README.md).
 - **Fixed: a link** — [elsewhere](https://example.com/x) stays as it is.
 
 ## [1.35.0] - 2026-10-20
@@ -44,7 +45,11 @@ has "$scratch/n" '### Homer' "the section's heading"
 has "$scratch/n" '[ADR-0092](https://github.com/livesport/homer/blob/1.36.0/docs/adr/0092-x.md)' "a relative link"
 has "$scratch/n" '[elsewhere](https://example.com/x)' "an absolute link"
 has "$scratch/n" '**Full changelog:** [CHANGELOG.md](https://github.com/livesport/homer/blob/1.36.0/CHANGELOG.md)' "the full changelog"
+has "$scratch/n" '[Runs](https://github.com/livesport/homer/blob/1.36.0/console/README.md)' "a console link"
+has "$scratch/n" '[the client](https://github.com/livesport/homer/blob/1.36.0/clients/python/README.md)' "a clients link"
 lacks "$scratch/n" 'not released yet' "another section"
+(cd "$scratch" && "$notes" changelog 1.36.0) >"$scratch/d"
+cmp -s "$scratch/n" "$scratch/d" || fail "the default CHANGELOG.md path"
 lacks "$scratch/n" 'Fixed: old' "the next section"
 [ "$(head -n 1 "$scratch/n")" = '### Homer' ] || fail "leading blank lines"
 
@@ -59,9 +64,15 @@ printf 'homer-app %s\nhomer-console %s\n' "$d1" "$d2" | "$notes" images 1.36.0 >
 has "$scratch/i" '<!-- release-images -->' "the marker"
 has "$scratch/i" "| \`ghcr.io/livesport/homer/homer-app:1.36.0\` | \`$d1\` |" "an image row"
 has "$scratch/i" "cosign verify ghcr.io/livesport/homer/homer-app@$d1" "the verify command"
+has "$scratch/i" "cosign verify ghcr.io/livesport/homer/homer-console@$d2" "a verify command per image"
 has "$scratch/i" '--certificate-identity https://github.com/livesport/homer/.github/workflows/release.yml@refs/tags/1.36.0' "the identity"
 if printf 'homer-app sha256:short\n' | "$notes" images 1.36.0 >/dev/null 2>&1; then fail "a bad digest passed"; fi
 if "$notes" images 1.36.0 </dev/null >/dev/null 2>&1; then fail "no image passed"; fi
+if printf 'homer_app %s\n' "$d1" | "$notes" images 1.36.0 >/dev/null 2>&1; then fail "a bad image name passed"; fi
+if printf 'homer-app %s\n' "$d1" | "$notes" images latest >/dev/null 2>&1; then fail "a tag that is no version passed"; fi
+printf 'homer-app %s\n' "$d1" | REPO=acme/fork "$notes" images 1.36.0 >"$scratch/f"
+has "$scratch/f" "ghcr.io/acme/fork/homer-app:1.36.0" "REPO names the namespace"
+has "$scratch/f" "https://github.com/acme/fork/.github/workflows/release.yml@refs/tags/1.36.0" "REPO names the identity"
 
 "$notes" changelog 1.36.0 "$scratch/CHANGELOG.md" >"$scratch/body"
 "$notes" merge "$scratch/body" "$scratch/i" >"$scratch/m1"

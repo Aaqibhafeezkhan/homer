@@ -44,18 +44,21 @@ case "${1:-}" in
     printf '%s\n### Images\n\n' "$marker"
     printf 'Signed with cosign (keyless) and carrying SLSA provenance and a CycloneDX SBOM ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
     printf '| Image | Digest |\n|---|---|\n'
-    first=
+    refs=
     while read -r image digest; do
       printf '%s\n' "$image" | grep -qxE '[a-z0-9-]+' || { echo "Bad image name: $image" >&2; exit 1; }
       printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "Bad digest for $image: $digest" >&2; exit 1; }
-# shellcheck disable=SC2016 # Markdown backticks, not a command substitution
+      # shellcheck disable=SC2016 # Markdown backticks, not a command substitution
       printf '| `ghcr.io/%s/%s:%s` | `%s` |\n' "$repo" "$image" "$tag" "$digest"
-      [ -n "$first" ] || first="ghcr.io/$repo/$image@$digest"
+      refs="$refs ghcr.io/$repo/$image@$digest"
     done
-    [ -n "$first" ] || { echo "No image given" >&2; exit 1; }
-    printf '\nVerify before you pull, then pin the digest:\n\n'
-# shellcheck disable=SC2016 # Markdown backticks, not a command substitution
-    printf '```bash\ncosign verify %s \\\n  --certificate-identity %s \\\n  --certificate-oidc-issuer https://token.actions.githubusercontent.com\n```\n' "$first" "$identity"
+    [ -n "$refs" ] || { echo "No image given" >&2; exit 1; }
+    # One command per image: a signature covers its own digest only.
+    printf '\nVerify each image before you pull it, then pin its digest:\n\n```bash\n'
+    for ref in $refs; do
+      printf 'cosign verify %s \\\n  --certificate-identity %s \\\n  --certificate-oidc-issuer https://token.actions.githubusercontent.com\n' "$ref" "$identity"
+    done
+    printf '```\n'
     ;;
   merge)
     body=$(awk -v m="$marker" '$0 == m { exit } { print }' "$2" \

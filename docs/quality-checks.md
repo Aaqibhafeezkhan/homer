@@ -117,6 +117,7 @@ table CI does, once the reports exist.
 | Console type check and production build | `homer-console-tests` | `cd console && npm run build` |
 | High+ advisories in shipped console dependencies | `homer-console-tests` | `cd console && npm audit --omit=dev --audit-level=high` |
 | `tools/quality` script tests | (run with the scripts) | `cd tools/quality && npm test` |
+| Release-page notes script tests (`tools/release/notes.sh`: changelog section, verified image digests) | `release-notes-tests` | `tools/release/notes-test.sh` |
 | Documentation site: generator tests, and a build that fails on a link to a file the repository does not hold or a dead link between pages (ADR-0087) | `docs-site` | `cd site && npm ci && npm test && npm run docs:build` |
 | LangGraph Python runtime tests | `homer-python-tests` | `cd clients/python && .venv/bin/python -m pytest` |
 | Black-box E2E suite against the production backend image (also proves `app/Dockerfile` builds) | `homer-e2e` | see [`app/e2e/README.md`](../app/e2e/README.md) |
