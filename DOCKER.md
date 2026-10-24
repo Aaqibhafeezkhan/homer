@@ -435,7 +435,7 @@ in your own Dockerfile; an npm global install replaces the version the
 base image shipped, in either direction (upgrade or hold back):
 
 ```dockerfile
-FROM ghcr.io/livesport/homer/homer-app:1.35.0
+FROM ghcr.io/livesport/homer/homer-app:1.36.0
 ARG CLAUDE_CODE_VERSION=2.1.245
 USER root
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
@@ -455,7 +455,7 @@ provenance and a CycloneDX SBOM, all bound to the image digest
 ([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
 image by digest before deploying it. The stack pulls by tag
 (`HOMER_VERSION`), so resolve the digest first —
-`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.35.0 --format '{{.Manifest.Digest}}'`
+`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.36.0 --format '{{.Manifest.Digest}}'`
 — and pin that digest in your own override (see [Best Practices → Security](#security)):
 
 ```bash
