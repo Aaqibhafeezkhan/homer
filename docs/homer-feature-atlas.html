@@ -469,21 +469,39 @@ java -jar homer-&lt;version&gt;-all.jar config.yaml</code></pre>
             compose stack that is <code>example/agents/</code>. Commands run in order. This one, the bundled Quick
             start agent, uses only <code>!&lt;script&gt;</code> steps, so it needs no LLM: it writes an artifact, asks
             the operator a question with <code>homer-ask</code>, and gates its last steps on the answer.</p>
-          <pre><code>example/agents/quickstart/agent.yaml
+          <pre><code>example/agents/quickstart/agent.yaml (abridged)
 name: quickstart
 commands:
   - !&lt;script&gt;
-    content: printf 'ran at %s\n' "$(date -u)" &gt; "$HMR_ARTIFACTS_DIR/report.txt"
+    label: write-report
+    content: |
+      printf 'Homer quick start ran at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" &gt; "$HMR_ARTIFACTS_DIR/report.txt"
 
   - !&lt;script&gt;
+    label: ask-ship-it
     timeout: 1800
     content: homer-ask ask-and-wait "Ship it?" --option ship --option hold
     resultEnvParam:
       - { src: STD_OUT, envName: SHIP_ANSWER }
 
   - !&lt;script&gt;
+    label: ship
     when: '[[ "$SHIP_ANSWER" == ship* ]]'
-    content: cat "$HMR_ARTIFACTS_DIR/report.txt"</code></pre>
+    content: cat "$HMR_ARTIFACTS_DIR/report.txt"
+
+  - !&lt;script&gt;
+    label: hold
+    when: '[[ "$SHIP_ANSWER" == hold* ]]'
+    content: |
+      echo "Holding: the operator did not ship it." &gt;&amp;2
+      exit 1
+
+  - !&lt;script&gt;
+    label: unexpected-answer
+    when: '[[ "$SHIP_ANSWER" != ship* &amp;&amp; "$SHIP_ANSWER" != hold* ]]'
+    content: |
+      echo "Unexpected answer: $SHIP_ANSWER" &gt;&amp;2
+      exit 1</code></pre>
         </article>
 
         <article class="f step">
@@ -501,8 +519,9 @@ curl -X POST "http://localhost:8080/api/v1/agent/quickstart"
           <h3 data-step="05">Answer the question, watch it finish <span class="where">console · http</span></h3>
           <p>The process page tails the run's logs live; the Questions inbox holds what it is waiting for. Answer
             <strong>ship</strong> and the run resumes, prints the artifact it wrote and reaches
-            <code>FINISHED</code>. Answer <strong>hold</strong> on a later run and its last step exits non-zero, so
-            the run ends <code>FAILED</code> — the outcome follows your answer.</p>
+            <code>FINISHED</code>. Answer <strong>hold</strong> and that step exits non-zero, so the run ends
+            <code>FAILED</code> — the outcome follows your answer, and an answer matching neither option fails the
+            run rather than passing silently.</p>
           <pre><code># console: http://localhost:3000/processes/1
 #          http://localhost:3000/questions
 curl "http://localhost:8080/api/v1/status/1"

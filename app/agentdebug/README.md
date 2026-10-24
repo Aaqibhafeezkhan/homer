@@ -199,7 +199,7 @@ Available agents (11):
   mcp-greet            - Demonstrates exposing an agent as an MCP tool on /mcp (1 command)
   quickstart           - The Quick start agent: no LLM credentials, one operator question, and a
 result that follows the answer.
- (4 commands)
+ (5 commands)
   result               (5 commands)
   sleep                (1 command)
   when-example         - Demonstrates the `when:` predicate. Each command runs only if its predicate

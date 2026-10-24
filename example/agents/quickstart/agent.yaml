@@ -38,3 +38,12 @@ commands:
     content: |
       echo "Holding: the operator did not ship it." >&2
       exit 1
+
+  # An answer matching neither option (free text typed over the API) would
+  # otherwise skip both steps above and end the run FINISHED, printing nothing.
+  - !<script>
+    label: unexpected-answer
+    when: '[[ "$SHIP_ANSWER" != ship* && "$SHIP_ANSWER" != hold* ]]'
+    content: |
+      echo "Unexpected answer: $SHIP_ANSWER" >&2
+      exit 1

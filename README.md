@@ -213,8 +213,8 @@ curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/status/1"
 # ... "status": "FINISHED"
 ```
 
-Answer **hold** on a later run instead and the agent's last step exits non-zero,
-so the run ends `FAILED` — the outcome follows your answer.
+Answer **hold** on a later run instead and that step exits non-zero, so the run
+ends `FAILED` — the outcome follows your answer.
 
 The walkthrough runs on the built-in `local` runner, which is what the compose
 stack defaults to. The `homer-ask` question helper is not runner-portable: an
