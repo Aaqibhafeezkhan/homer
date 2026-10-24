@@ -88,8 +88,9 @@ a maintainer approved the release, and no issue stands behind it: the
 maintainer's approval is the admission, and the merge is a second one. The
 `accepted-issue` check lets it through only as a whole:
 
-- the author is `homer-factory[bot]`, the factory App's login (the `[bot]`
-  suffix is reserved for Apps, as for Dependabot above);
+- the author is the factory App's bot account, identified by its user id and
+  the type `Bot` (identified by its App, as the Dependabot rule above asks; a
+  login can be renamed, an id cannot);
 - the head branch is `aif/release-X.Y.Z` of this repository, not of a fork;
 - `CHANGELOG.md` is the only file the pull request changes, and it modifies
   it in place (a rename onto it would delete another file).
@@ -98,3 +99,8 @@ The facts come from the pull request event and GitHub's file list, never from
 the pull request's own files, and `tools/pr-policy/check.sh` runs from the base
 branch. Any other change by the factory still needs an accepted issue. The
 other required checks, review threads and the maintainer's merge all stay.
+
+This retires the original decision's "the rule has no exception to abuse": the
+release pull request is the one exception. Opening it takes the factory App's
+own installation token, and what it can carry is one changelog edit that a
+maintainer still merges.

@@ -12,10 +12,6 @@
 - **Added: a maintenance banner** — A red alert bar across every dashboard page while the backend's maintenance mode is on, so a run that seems to do nothing has an explanation on screen.
 - **Security: `next` 16.4.2** — The console's shipped dependency graph leaves the Next.js 16.0.0–16.4.0 advisory range, so the `npm audit` gate passes again.
 
-### Build / CI
-
-- **Changed: the factory's release pull request passes `accepted-issue`** — The AIF factory's `aif/release-X.Y.Z` pull request, which changes `CHANGELOG.md` alone, needs no accepted issue; any other pull request still does. See [ADR-0090](docs/adr/0090-accepted-issue-pull-request-gate.md).
-
 ## [1.35.0] - 2026-10-20
 
 ### Homer
