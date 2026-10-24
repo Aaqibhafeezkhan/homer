@@ -10,7 +10,7 @@ consulted: ADR-0066, ADR-0086, ADR-0093
 ## Context and Problem Statement
 
 `homer-app` bundles the agent toolchain next to the server: Claude Code, Codex,
-Node.js, git, glab, jq and an SSH client. A run on the built-in `local`
+Node.js/npm, git, git-lfs, glab, jq, an SSH client and Info-ZIP unzip. A run on the built-in `local`
 runner needs them; a run on an external pull runner (ADR-0066), Kubernetes or
 SSH does not, because its commands execute on that runner. Pull runners are the
 execution model Homer intends to favour: they keep agent code away from the
@@ -48,9 +48,10 @@ slim one keeps the full image a superset.
 The slim image promises a JRE, Homer, `sh`/`bash` (local commands and `when:`
 predicates), `su-exec` (the entrypoint's privilege drop), `curl` (health
 checks) and `python3` with pip and the `homer_langgraph` runtime. It promises
-nothing else: `!<claude>`, `!<codex>` and any command calling git, jq or an SSH
-client work only on a runner that has them. The full image adds exactly that
-toolchain. A new server-side dependency goes into the slim stage; a new agent
+nothing else: `!<claude>`, `!<codex>` and any command calling Node.js/npm,
+git, git-lfs, glab, jq, an SSH client or Info-ZIP unzip (busybox's basic
+`unzip` remains) work only on a runner that has them. The full image adds
+exactly that toolchain. A new server-side dependency goes into the slim stage; a new agent
 tool goes into the full one.
 
 ### Consequences
