@@ -37,6 +37,7 @@ internal fun buildRunnerRegistry(
         externalDomains = externalRunnerDomains(appConfig, queue),
         queue = queue,
         defaultClaimTimeout = appConfig.server.runnerClaimTimeoutSec.seconds,
+        localRunnerDisabled = !appConfig.server.localRunner.enabled,
     )
 }
 

@@ -31,6 +31,8 @@ class RunnerRegistry(
     val queue: RunnerClaimQueue = RunnerClaimQueue(maxPending = 1000),
     private val defaultClaimTimeout: Duration = 300.seconds,
     private val sweepInterval: Duration = 5.seconds,
+    // server.localRunner.enabled: false, as RunnerWiring read it; see ADR-0095.
+    private val localRunnerDisabled: Boolean = false,
 ) : RunnerLookup,
     ConfiguredRunners {
     constructor(runners: List<Runner>) : this(runners.map { RegisteredRunner(it) })
@@ -86,15 +88,14 @@ class RunnerRegistry(
     override fun forAlias(alias: String): Runner = forAlias(alias, defaultClaimTimeout)
 
     /**
-     * Fails at once with [ConfigurationException] for `local` when no local runner is
-     * registered (`server.localRunner.enabled: false`), rather than queueing a claim
-     * nothing can take.
+     * Fails at once with [ConfigurationException] for `local` when the wiring turned the
+     * local runner off, rather than queueing a claim nothing can take. See ADR-0095.
      */
     fun forAlias(
         alias: String,
         claimTimeout: Duration,
     ): Runner {
-        if (alias == LocalRunner.ALIAS && alias !in byAlias) {
+        if (localRunnerDisabled && alias == LocalRunner.ALIAS) {
             throw ConfigurationException(
                 "runner '${LocalRunner.ALIAS}' is disabled (server.localRunner.enabled: false); route the agent to another runner",
             )
