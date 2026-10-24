@@ -897,11 +897,39 @@ If the image was built without `HOMER_DEBUG=1`, you'll get a clear error:
 Error: agentdebug not available. Rebuild the container with HOMER_DEBUG=1.
 ```
 
+## Slim homer-app image
+
+Each release also publishes `homer-app:<version>-slim`, for a server whose
+agents run on external pull runners (ADR-0066), Kubernetes or SSH rather than
+in the server container
+([ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md)).
+It is about 205 MB compressed against 547 MB for the full image (linux/arm64,
+measured for ADR-0094). It holds a JRE, Homer, `sh`/`bash`, `su-exec`, `curl`
+and `python3` with pip and the `homer_langgraph` runtime, so the console's
+LangGraph graph view and LangGraph status and resume, which run on the server,
+keep working. It has no Claude Code, Codex, Node.js, git, glab, jq or SSH
+client: a run on the built-in `local` runner that calls one of them fails with
+`command not found`, so route every agent to a runner that has them. The full
+image is built `FROM` the slim one and adds exactly that toolchain.
+
+```bash
+docker build --target slim -t homer-backend:slim -f app/Dockerfile .
+```
+
+To run the default stack on it, set the backend image in an override:
+
+```yaml
+# docker-compose.override.yml
+services:
+  backend:
+    image: ghcr.io/livesport/homer/homer-app:${HOMER_VERSION:-1.36.0}-slim
+```
+
 ## homer-runner image
 
 `homer-runner` is the reference pull-mode runner instance (ADR-0066): it runs on
 a machine outside Homer, registers with an `!<external>` domain and executes
-the runs it claims. It is a third stage of `app/Dockerfile` and a release
+the runs it claims. It is a stage of `app/Dockerfile` and a release
 artifact next to `homer-app` and `homer-console`:
 
 ```bash

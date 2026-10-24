@@ -296,21 +296,17 @@ class JdwpNetworkExposureTest {
                 "a different bind silently breaks the IDE attach path (ADR-0076, DOCKER.md § " +
                 "Development Mode).",
         )
-        val dockerfileLines = File(repoRoot, "app/Dockerfile").readLines()
-        val runnerStage =
-            dockerfileLines
-                .dropWhile { !it.endsWith(" AS runner") }
-                .drop(1)
-                .takeWhile { !it.startsWith("FROM ") }
         val apkAdd =
-            runnerStage
-                .dropWhile { !it.trimStart().startsWith("RUN apk add") }
-                .takeWhile { it.isNotBlank() }
-                .joinToString(" ")
+            stageChain(File(repoRoot, "app/Dockerfile").readLines(), "runner")
+                .flatMap { stage ->
+                    stage
+                        .dropWhile { !it.trimStart().startsWith("RUN apk add") }
+                        .takeWhile { it.isNotBlank() }
+                }.joinToString(" ")
         assertTrue(
             apkAdd.contains("bash"),
             "the tunnel's container half runs `bash -c \"exec 3<>/dev/tcp/127.0.0.1/5005 …\"`, so the " +
-                "runtime image (app/Dockerfile's runner stage) must install bash; without it the " +
+                "runtime image (app/Dockerfile's runner stage or a stage it is built FROM) must install bash; without it the " +
                 "documented attach path fails (ADR-0076, DOCKER.md § Development Mode).",
         )
         val dockerMd = File(repoRoot, "DOCKER.md").readText()
@@ -319,5 +315,21 @@ class JdwpNetworkExposureTest {
             "DOCKER.md no longer documents the `docker exec` tunnel this test pins; update the test, " +
                 "the doc and ADR-0076 together (root CLAUDE.md §9).",
         )
+    }
+
+    /** The body lines of Dockerfile stage [name], then of each stage it is built `FROM` within the same file. */
+    private fun stageChain(
+        dockerfile: List<String>,
+        name: String,
+    ): List<List<String>> {
+        val from = Regex("""^FROM (\S+)(?: AS (\S+))?$""")
+        val stages =
+            dockerfile
+                .withIndex()
+                .mapNotNull { (i, line) -> from.find(line)?.let { Triple(i, it.groupValues[1], it.groupValues[2]) } }
+                .associate { (i, base, alias) ->
+                    alias to (base to dockerfile.drop(i + 1).takeWhile { !it.startsWith("FROM ") })
+                }
+        return generateSequence(stages[name]) { (base, _) -> stages[base] }.map { it.second }.toList()
     }
 }

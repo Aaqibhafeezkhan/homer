@@ -52,43 +52,28 @@ RUN --mount=type=secret,id=artifactory_url \
 # a source build (gradlew shadowJar) keeps every platform. See ADR-0015.
 RUN zip -q -d app/build/libs/homer-*-all.jar 'org/sqlite/native/*' -x 'org/sqlite/native/Linux-Musl/*'
 
-# Stage 2: Runtime image
-FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0 AS runner
+# Stage 2: the slim server image (ADR-0094): Homer, a JRE and what the server itself runs:
+# sh/bash for local commands and `when:` predicates, su-exec for the entrypoint, curl for the
+# compose health check, python3 + homer_langgraph for the server-side LangGraph inspect and state
+# calls. No agent toolchain; runs that need one go to a runner that has it.
+FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0 AS slim
 
 ARG HOMER_VERSION=dev
 ENV HOMER_VERSION=$HOMER_VERSION
 
-# Install required tools (add su-exec for privilege drop in entrypoint)
 RUN apk add --no-cache \
-    git \
-    git-lfs \
     bash \
-    nodejs \
-    npm \
     curl \
-    openssh-client \
-    glab \
     su-exec \
-    jq \
     python3 \
-    py3-pip \
-    unzip
-
-# Install Claude Code CLI and Codex CLI globally (binaries accessible to all
-# users; they back the !<claude> and !<codex> command types).
-# CLAUDE_CODE_VERSION defaults to the latest published version; pin it
-# (--build-arg CLAUDE_CODE_VERSION=x.y.z) for reproducible builds and to match
-# server.requireClaudeCodeVersion.
-ARG CLAUDE_CODE_VERSION=latest
-# The npm cache is cleaned in the same layer: nothing reads it at run time.
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex && \
-    npm cache clean --force
+    py3-pip
 
 # Install the homer_langgraph Python runtime that backs the !<langgraph>
 # command type. --break-system-packages installs into the system site-packages
 # (PEP 668 refuses a system-wide install otherwise on Alpine); that location is
 # importable by the unprivileged homer user at runtime. pydantic-core et al.
-# ship musllinux wheels, so no Rust/gcc build toolchain is needed.
+# ship musllinux wheels, so no Rust/gcc build toolchain is needed. py3-pip stays:
+# its apk dependencies (packaging) satisfy langchain-core's, so removing it breaks the import.
 COPY clients/python /tmp/homer_langgraph_src
 RUN pip install --no-cache-dir --break-system-packages /tmp/homer_langgraph_src && \
     rm -rf /tmp/homer_langgraph_src
@@ -130,6 +115,39 @@ RUN printf '#!/bin/sh\nset -e\nif [ ! -f /app/agentdebug.jar ]; then\n  echo "Er
 # arbitrary code as root on the next container start.
 COPY --chown=root:root --chmod=755 app/entrypoint.sh /app/entrypoint.sh
 
+EXPOSE 8080
+
+ENV JAVA_OPTS="-Xmx512m -Xms256m"
+ENV CONFIG_PATH="config/config.json"
+# Place api.log beside app.log in the workspace volume (read by logback.xml).
+ENV HOMER_LOG_DIR="/app/workspace"
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Stage 3: the full server image (homer-app): the slim image plus the agent toolchain
+# that local !<claude>, !<codex> and shell-command runs use.
+FROM slim AS runner
+
+RUN apk add --no-cache \
+    git \
+    git-lfs \
+    nodejs \
+    npm \
+    openssh-client \
+    glab \
+    jq \
+    unzip
+
+# Install Claude Code CLI and Codex CLI globally (binaries accessible to all
+# users; they back the !<claude> and !<codex> command types).
+# CLAUDE_CODE_VERSION defaults to the latest published version; pin it
+# (--build-arg CLAUDE_CODE_VERSION=x.y.z) for reproducible builds and to match
+# server.requireClaudeCodeVersion.
+ARG CLAUDE_CODE_VERSION=latest
+# The npm cache is cleaned in the same layer: nothing reads it at run time.
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex && \
+    npm cache clean --force
+
 # Configure glab for homer user (writes to /home/homer/.config/glab-cli/)
 # Every glab command first checks its release host for a newer release; a build host whose route there
 # stalls held this step until the CI job's 1-hour timeout. GLAB_CHECK_UPDATE=false skips the check,
@@ -143,16 +161,7 @@ RUN git lfs install
 # then drops to homer via su-exec
 USER root
 
-EXPOSE 8080
-
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
-ENV CONFIG_PATH="config/config.json"
-# Place api.log beside app.log in the workspace volume (read by logback.xml).
-ENV HOMER_LOG_DIR="/app/workspace"
-
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-# Stage 3: the external runner instance (ADR-0066). Deliberately small: the
+# Stage 4: the external runner instance (ADR-0066). Deliberately small: the
 # agents it runs decide what else they need; derive from this image to add
 # node/claude, python, docker CLIs and so on. util-linux provides setsid so
 # killed commands take their whole process group with them (ADR-0041).
