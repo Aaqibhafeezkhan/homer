@@ -454,7 +454,8 @@ databasePath: "./homer.db"</code></pre>
         <article class="f step">
           <h3 data-step="02">Start the server <span class="where">docker · jar</span></h3>
           <p>The compose stack is the fastest path — it brings up the API on <code>:8080</code> and the console on
-            <code>:3000</code>. A standalone jar works the same way.</p>
+            <code>:3000</code>, pulling the published release images rather than building anything locally. A
+            standalone jar works the same way.</p>
           <pre><code>cp .env.example .env
 echo "HOMER_ADMIN_TOKEN=$(openssl rand -hex 24)" &gt;&gt; .env
 docker compose up -d
@@ -3435,9 +3436,10 @@ CONSOLE_THEME_MODES=light:corp-light,dark:corp-dark</code></pre>
 
         <article class="f">
           <h3>Docker stack <span class="where">docker</span></h3>
-          <p>Backend plus console in one compose file, with development and production overlays; the e2e suite is its own
-            standalone compose stack. The dev overlay starts no debug listener: JDWP is opt-in, and the debug
-            overlay binds the container's loopback and publishes nothing (attach through a tunnel); build with
+          <p>Backend plus console in one compose file, which pulls the published release images (<code>HOMER_VERSION</code>
+            picks the release tag); development, production and build-from-source overlays stack on it, and the e2e
+            suite is its own standalone compose stack. The dev overlay starts no debug listener: JDWP is opt-in, and the
+            debug overlay binds the container's loopback and publishes nothing (attach through a tunnel); build with
             <code>HOMER_DEBUG=1</code> (a build argument) to bundle <code>agentdebug</code>.</p>
           <pre><code>cp .env.example .env
 echo "HOMER_ADMIN_TOKEN=$(openssl rand -hex 24)" &gt;&gt; .env
@@ -3693,7 +3695,7 @@ cd console &amp;&amp; npm install &amp;&amp; npm run build</code></pre>
           <p><code>app.log</code> for the application log (stdout, plus a rolling <code>workspace/app.log</code> in
             Docker), <code>api.log</code> for per-request access lines, the process's <code>cmd_N.err</code> artifact for
             the command's own stderr, and <code>/api/v1/health</code> for runner and sweep state.</p>
-          <pre><code>docker compose -f docker-compose.yml -f docker-compose.dev.yml up   # dev overlay sets HOMER_LOG_LEVEL=DEBUG</code></pre>
+          <pre><code>docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml up   # dev overlay sets HOMER_LOG_LEVEL=DEBUG</code></pre>
         </article>
 
         <article class="f qa">

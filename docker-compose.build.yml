@@ -1,0 +1,31 @@
+# Build-from-source overlay for the default stack (ADR-0093). docker-compose.yml
+# pulls the published release images; this file adds back the `build:` sections
+# and tags each image locally, so a local build never shadows the pulled GHCR
+# tag. Stack it on the base file, and on docker-compose.dev.yml for dev:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml up
+#
+# No ports and no secrets here: the base file owns the topology, and the
+# Artifactory credentials are BuildKit secrets of the E2E stack only.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      # The Dockerfile's last stage is homer-runner (the external runner image);
+      # without a target, compose would build that instead of the backend.
+      target: runner
+      args:
+        HOMER_VERSION: ${APP_VERSION:-dev}
+        HOMER_DEBUG: ${HOMER_DEBUG:-0}
+        CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+    image: homer-backend:${APP_VERSION:-dev}
+
+  frontend:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+      args:
+        CONSOLE_VERSION: ${APP_VERSION:-dev}
+    image: homer-console:${APP_VERSION:-dev}

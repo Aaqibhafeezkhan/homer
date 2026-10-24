@@ -57,6 +57,21 @@ docker compose up -d
 # Backend API: http://localhost:8080
 ```
 
+`docker compose up` **pulls** the published release images
+(`ghcr.io/livesport/homer/homer-app`, `ghcr.io/livesport/homer/homer-console`)
+and builds nothing locally, so no JDK, Gradle or Maven Central access is needed.
+`HOMER_VERSION` (see [Docker Variables](#docker-variables)) selects the release
+tag and defaults to the pinned current release; the default is bumped as part of
+each release, so a fresh clone of `main` pulls the latest one.
+
+To **build from source** instead, stack the build overlay — it carries the
+`build:` sections the base file no longer has, and tags what it builds locally
+so a local build never shadows the pulled GHCR tag:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
 The services publish only on `127.0.0.1` by default, since the example config
 runs arbitrary shell/Claude. For remote access, put a reverse proxy in front
 (see `console/DEPLOYMENT.md`) rather than changing the port bindings.
@@ -100,8 +115,9 @@ homer/
 │   │   └── ...
 │   └── workspace/               # Runtime data, logs
 ├── .dockerignore                # Backend build-context ignore file (context = repo root)
-├── docker-compose.yml           # Full-stack orchestration
-├── docker-compose.dev.yml       # Development overrides
+├── docker-compose.yml           # Full-stack orchestration (pulls the published release images)
+├── docker-compose.build.yml     # Build-from-source overlay (adds the `build:` sections back)
+├── docker-compose.dev.yml       # Development overrides (stacked on the build overlay)
 ├── docker-compose.debug.yml     # Opt-in JVM debugger overlay (applied on top of dev)
 ├── docker-compose.prod.yml      # Production overrides
 └── .env.example                 # Environment template
@@ -115,9 +131,11 @@ Development mode includes:
 - The `agentdebug` tool bundled into the backend image (`HOMER_DEBUG=1` build argument; rebuild with `--build`)
 - Read-write volume mounts
 
-Start in development mode:
+Start in development mode — the dev overlay sets *build* arguments, so it needs
+the build overlay underneath it (the base file only pulls images):
+
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml up
 ```
 
 This starts **no** JVM debug listener. The JDWP agent is opt-in, because it has
@@ -133,8 +151,8 @@ JDWP is unauthenticated remote code execution, so it is not enabled by the
 default dev stack. To debug the backend, add the debug overlay on top of dev:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-  -f docker-compose.debug.yml up
+docker compose -f docker-compose.yml -f docker-compose.build.yml \
+  -f docker-compose.dev.yml -f docker-compose.debug.yml up
 ```
 
 When enabled, the agent binds `127.0.0.1:5005` **inside the backend container**
@@ -335,11 +353,11 @@ docker run -p 3000:3000 \
 
 ### Build Arguments
 
-Build arguments are set at **image build time** (not runtime). They must be passed under `build.args` in your compose file — setting them only in `environment:` has no effect on the build.
+Build arguments are set at **image build time** (not runtime). They must be passed under `build.args` in your compose file — setting them only in `environment:` has no effect on the build. The default `docker-compose.yml` builds nothing, so these apply when you build from source: `docker-compose.build.yml` carries them, and it is where a new one goes.
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `HOMER_VERSION` | `dev` | Version label embedded in the image |
+| `HOMER_VERSION` | `dev` | Version label embedded in the image. Distinct from the `HOMER_VERSION` *environment* variable above, which selects the pulled release tag. |
 | `HOMER_DEBUG` | `0` | Set to `1` to include the `agentdebug` tool in the image |
 | `CLAUDE_CODE_VERSION` | `latest` | Claude Code CLI version to install. Pin it (e.g. `1.2.3`) for reproducible builds and to match `server.requireClaudeCodeVersion`. |
 
@@ -435,7 +453,10 @@ base image into a clear per-run error instead of silent version drift.
 Every release image on GHCR is signed with cosign and carries SLSA build
 provenance and a CycloneDX SBOM, all bound to the image digest
 ([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
-image by digest before deploying it:
+image by digest before deploying it. The stack pulls by tag
+(`HOMER_VERSION`), so resolve the digest first —
+`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.35.0 --format '{{.Manifest.Digest}}'`
+— and pin that digest in your own override (see [Best Practices → Security](#security)):
 
 ```bash
 image=ghcr.io/livesport/homer/homer-app@sha256:<digest>
@@ -466,6 +487,7 @@ gh attestation verify "oci://$image" --repo livesport/homer \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPOSE_PROJECT_NAME` | homer | Docker Compose project name |
+| `HOMER_VERSION` | the pinned current release | Release tag of the published images the base `docker-compose.yml` pulls, for both services. Set a released version to move; irrelevant when you build from source (`docker-compose.build.yml` labels what it builds `${APP_VERSION:-dev}` instead). |
 
 ### Console plugins in the image
 
@@ -706,12 +728,18 @@ docker compose up -d
 
 ### Build Failures
 
-Clean Docker cache and rebuild:
+A plain `docker compose up` builds nothing, so a failure there is a failed
+**pull**, not a build: check that `HOMER_VERSION` names a released tag and that
+the registry is reachable. The images are public, so a stale `ghcr.io` login is
+the usual cause — `docker logout ghcr.io` and retry.
+
+Building from source (the build overlay) failing: clean the Docker cache and
+rebuild:
 ```bash
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.build.yml down
 docker system prune -f
-docker compose build --no-cache
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.build.yml build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
 ### Out of Memory
@@ -752,12 +780,19 @@ docker compose restart frontend
 
 ### Update Images
 
-Pull latest changes and rebuild:
+The default stack runs published images, so an update is a pull:
+
 ```bash
-git pull
-docker compose down
-docker compose build
+git pull                     # picks up the HOMER_VERSION default of the new release
+docker compose pull
 docker compose up -d
+```
+
+To stay on a version you chose, set `HOMER_VERSION` in `.env` and pull that tag
+— or build the working tree instead, with the build overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 ### Clean Up
@@ -797,6 +832,7 @@ docker compose down --rmi all
 - Don't expose debug ports in production
 - Use secrets management for tokens
 - Base images are pinned by digest (`tag@sha256:…`) in every `Dockerfile` and compose `image:`; `renovate.json` keeps the digests bumped via PRs so pinning stays reproducible without freezing out security patches. When updating a base image manually, refresh both the tag and the digest.
+- The two **Homer** services are the exception, by design: they track a release tag through `HOMER_VERSION` so a fresh clone runs the latest release, and `renovate.json` does not bump them — the tag is bumped in the release commit (ADR-0093). A deployment that must be reproducible pins what it verified by digest instead, in its own override (`image: ghcr.io/livesport/homer/homer-app@sha256:<digest>`, from § [Verifying a published image](#verifying-a-published-image)); that override is yours alone — nothing bumps it for you, so the pin holds until you re-verify the new release and re-pin its digest by hand (§ [Verifying a published image](#verifying-a-published-image)).
 - Limit container resources
 - Backend runs as dedicated `homer` user (UID 1000); frontend runs as `nextjs` user. The `entrypoint.sh` starts as root to fix bind-mounted volume ownership, then drops privileges via `su-exec` before launching the JVM. The recursive `chown` runs **only** when the workspace is not already `homer`-owned (i.e. first run against a fresh host directory); a normal restart skips it, so the root window is a single ownership check plus the `su-exec` drop rather than a root-recursive filesystem walk.
 - The image hands `homer` only the directories it must write at runtime — `/app/workspace` (runs, SQLite db, logs) and `/app/agents` (agent CRUD) plus its home. `/app` itself, `/app/config`, `homer.jar`, and the root-executed `entrypoint.sh` stay root-owned, so an in-container agent process (which runs as `homer`) cannot replace the entrypoint or the jar and gain root on the next container start.
@@ -808,7 +844,7 @@ The `agentdebug` CLI can be included in the backend image and executed inside th
 
 ### Enable agentdebug
 
-`agentdebug` is opt-in — the image must be built with `HOMER_DEBUG=1` as a **build argument**:
+`agentdebug` is opt-in — the image must be built with `HOMER_DEBUG=1` as a **build argument**. The base compose pulls a published image, so this only applies when you build from source: `docker-compose.dev.yml` already sets that argument, and it needs `docker-compose.build.yml` underneath it for the `build:` section to merge into.
 
 ```yaml
 # your docker-compose override
@@ -821,8 +857,8 @@ services:
 
 Then rebuild:
 ```bash
-docker compose build backend
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.build.yml build backend
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
 > **Important**: `HOMER_DEBUG=1` in `environment:` is a runtime env var and has no effect on the build. It must be under `build.args`.
@@ -985,13 +1021,13 @@ services:
 
 Deploy to multiple environments:
 ```bash
-# Development
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Development (builds the working tree)
+docker compose -f docker-compose.yml -f docker-compose.build.yml -f docker-compose.dev.yml up -d
 
 # Your own environment (create the override file first)
 docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
 
-# Production
+# Production (pulls the release images)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
