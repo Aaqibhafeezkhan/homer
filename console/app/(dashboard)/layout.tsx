@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/auth-context';
 import { appConfig } from '@/lib/config/app-config';
 import { Header } from '@/components/layout/header';
+import { MaintenanceBanner } from '@/components/layout/maintenance-banner';
 import { Sidebar } from '@/components/layout/sidebar';
 import { VersionBadge } from '@/components/layout/version-badge';
 import { useAgentReloadStream, useProcessStatusStream } from '@/lib/api/streams';
@@ -53,6 +54,7 @@ export default function DashboardLayout({
   return (
     <PluginsProvider>
       <div className="flex min-h-screen flex-col">
+        <MaintenanceBanner />
         <Header />
         <div className="flex flex-1">
           <Sidebar />

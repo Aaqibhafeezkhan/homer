@@ -328,6 +328,28 @@ class ClaimQueueFullException(
     maxPending: Int,
 ) : HomerException("Runner claim queue is full ($maxPending pending claims)")
 
+/**
+ * Raised when the maintenance-mode start queue is at a bound
+ * (`server.maintenance.maxQueuedStarts` or `…maxQueuedStartsPerPrincipal`); the start is
+ * shed rather than accumulated. Maps to 429. §12 rules 4–5, ADR-0092.
+ *
+ * [perPrincipal] says which bound tripped: the queue's total cap (`false`) or this
+ * caller's own share of it (`true`) — the shed log tells the two causes apart by it.
+ */
+class MaintenanceQueueFullException(
+    val bound: Int,
+    val perPrincipal: Boolean = false,
+) : HomerException("Maintenance mode is on and the start queue is full (bound: $bound queued starts)")
+
+/**
+ * Raised when a start queued in maintenance mode waited longer than
+ * `server.maintenance.queueWaitSec` — or when the mode's queue was released on shutdown.
+ * Maps to 503. §12 rule 5, ADR-0092.
+ */
+class MaintenanceWaitTimeoutException(
+    timeout: Duration,
+) : HomerException("Maintenance mode is on and the start did not leave the queue within ${timeout.inWholeSeconds} s")
+
 /** A pull-mode runner instance announced something the domain does not accept (tag shape, `allowedTags`, `concurrency` cap). Maps to 422. */
 class RunnerRegistrationRejectedException(
     domain: String,

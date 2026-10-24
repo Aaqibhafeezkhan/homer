@@ -138,6 +138,7 @@ data class Server(
     val questions: QuestionsConfig = QuestionsConfig(),
     val dispatch: DispatchConfig = DispatchConfig(),
     val langGraph: LangGraphConfig = LangGraphConfig(),
+    val maintenance: MaintenanceConfig = MaintenanceConfig(),
     /**
      * Per-agent grants keyed by agent name: which target agents (and actions)
      * that agent's own dispatches (e.g. RunAgent, ask-and-dispatch) may reach.
@@ -162,6 +163,34 @@ data class Server(
 
     companion object {
         private val SYSTEM_SUBTYPE_PATTERN = Regex("^[a-zA-Z0-9_]+$")
+    }
+}
+
+/**
+ * Admin maintenance mode: while it is on, cron fires are skipped and every other
+ * agent start waits for it to go off. The wait is a config value, not a constant,
+ * because it has to outlive an operator's deployment window. See ADR-0092.
+ */
+@Serializable
+data class MaintenanceConfig(
+    /** Starts that may wait at once; a start arriving at the bound is shed with 429. §12 rule 4. */
+    val maxQueuedStarts: Int = 500,
+    /** Starts a single caller may hold in the queue; a start past it is shed with 429. */
+    val maxQueuedStartsPerPrincipal: Int = 50,
+    /** Longest a queued start waits before it fails with 503. §12 rule 5. */
+    val queueWaitSec: Int = 600,
+    /** Starts released per moment when the mode goes off, so the release cannot flood runners. */
+    val releaseConcurrency: Int = 4,
+) {
+    init {
+        require(maxQueuedStarts >= 1) { "server.maintenance.maxQueuedStarts must be >= 1; got $maxQueuedStarts" }
+        require(maxQueuedStartsPerPrincipal >= 1) {
+            "server.maintenance.maxQueuedStartsPerPrincipal must be >= 1; got $maxQueuedStartsPerPrincipal"
+        }
+        require(queueWaitSec >= 1) { "server.maintenance.queueWaitSec must be >= 1; got $queueWaitSec" }
+        require(releaseConcurrency >= 1) {
+            "server.maintenance.releaseConcurrency must be >= 1; got $releaseConcurrency"
+        }
     }
 }
 

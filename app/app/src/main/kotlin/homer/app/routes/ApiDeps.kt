@@ -26,6 +26,7 @@ import homer.app.services.LangGraphInspectService
 import homer.app.services.LangGraphRunStatusService
 import homer.app.services.LlmEventStreamService
 import homer.app.services.LogTailService
+import homer.app.services.MaintenanceModeService
 import homer.app.services.McpToolFactory
 import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.ProcessManager
@@ -69,6 +70,7 @@ internal data class ApiDeps(
     val artifactService: ArtifactService,
     val fileOperations: FileOperations,
     val cronSchedulerService: CronSchedulerService,
+    val maintenanceModeService: MaintenanceModeService,
     val workspacePurgeService: WorkspacePurgeService,
     val processEventBroadcaster: ProcessEventBroadcaster,
     val logTailService: LogTailService,

@@ -150,3 +150,4 @@ One of:
 | [0089](0089-settle-llm-cost-in-the-background.md) | Settle an LLM step's session cost in the background | proposed |
 | [0090](0090-accepted-issue-pull-request-gate.md) | A pull request merges only for an issue a maintainer accepted | proposed |
 | [0091](0091-ai-review-of-github-pull-requests.md) | The AI review of GitHub pull requests, gated before any model runs | proposed |
+| [0092](0092-maintenance-mode-queues-starts-and-skips-cron.md) | Maintenance mode queues new starts and skips cron, above the claim queue | proposed |

@@ -18,6 +18,8 @@ import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.InvocationCycleDetectedException
 import homer.app.exceptions.InvocationDepthExceededException
+import homer.app.exceptions.MaintenanceQueueFullException
+import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.exceptions.MalformedLlmOutputException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
@@ -137,6 +139,8 @@ class StatusPagesTest {
                 ContinuationNotPendingException(1, "FIRED") to HttpStatusCode.Conflict,
                 TooManyPendingContinuationsException(1) to HttpStatusCode.TooManyRequests,
                 ClaimQueueFullException(1) to HttpStatusCode.TooManyRequests,
+                MaintenanceQueueFullException(1) to HttpStatusCode.TooManyRequests,
+                MaintenanceWaitTimeoutException(1.seconds) to HttpStatusCode.ServiceUnavailable,
                 RunnerClaimTimeoutException(1.seconds, RunnerFilter.Alias("local"), "none") to HttpStatusCode.ServiceUnavailable,
                 RunnerRegistrationRejectedException("d", "no") to HttpStatusCode.UnprocessableEntity,
                 TooManyRunnerInstancesException("d", 1) to HttpStatusCode.TooManyRequests,

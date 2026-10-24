@@ -57,6 +57,7 @@ import homer.app.services.LangGraphRunStatusService
 import homer.app.services.LlmEventStreamService
 import homer.app.services.LlmTelemetryService
 import homer.app.services.LogTailService
+import homer.app.services.MaintenanceModeService
 import homer.app.services.McpToolFactory
 import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.ProcessGraphInspectRunner
@@ -296,7 +297,24 @@ val appModule =
 
         single { CostRepository(db = get()) }
 
-        single { ServerMetaRepository(db = get()) }
+        single {
+            ServerMetaRepository(
+                db = get(),
+                logger = get { parametersOf("homer.app.services.persistence.ServerMetaRepository") },
+            )
+        }
+
+        single {
+            val repository = get<ServerMetaRepository>()
+            // The persisted flag is read once, blocking, while the service is built — before
+            // traffic, after migrate(). See ADR-0020, ADR-0092.
+            MaintenanceModeService(
+                repository = repository,
+                config = get<AppConfig>().server.maintenance,
+                initialEnabled = repository.readMaintenanceMode(),
+                logger = get { parametersOf("homer.app.services.MaintenanceModeService") },
+            )
+        }
 
         single {
             val config = get<AppConfig>()
@@ -340,6 +358,7 @@ val appModule =
                 costMeter = get(),
                 maxInvocationDepth = get<AppConfig>().server.maxAgentInvocationDepth,
                 cooldownGate = get(),
+                maintenanceGate = get(),
             )
         }
 
@@ -492,6 +511,7 @@ val appModule =
                 agentsService = get(),
                 agentRunStarter = get(),
                 agentInputResolver = get(),
+                maintenanceMode = get(),
                 logger = get { parametersOf("homer.app.services.CronSchedulerService") },
             )
         }

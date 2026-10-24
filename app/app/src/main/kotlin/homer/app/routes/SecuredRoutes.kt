@@ -36,6 +36,7 @@ internal fun Route.apiV1Routes(deps: ApiDeps) {
     with(deps) {
         route("/api/v1") {
             serverRoutes(deps)
+            maintenanceRoutes(deps)
             agentListRoutes(deps)
             processRoutes(deps)
             agentRoutes(deps)

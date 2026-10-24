@@ -1,5 +1,9 @@
 package homer.app.services
 
+import homer.app.exceptions.CooldownActiveException
+import homer.app.exceptions.HomerException
+import homer.app.exceptions.MaintenanceQueueFullException
+import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
 import homer.app.fixtures.AgentFixtures
@@ -8,14 +12,22 @@ import homer.app.models.AgentTelemetry
 import homer.app.models.Param
 import homer.app.models.ProcessCreationResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Trace tags built from `traceTag` inputs: the Langfuse traces API filters on
@@ -45,6 +57,7 @@ class AgentRunStarterTest {
                 costMeter = mockk(relaxed = true),
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
+                maintenanceGate = mockk(relaxed = true),
             )
         val agent =
             AgentFixtures
@@ -208,6 +221,7 @@ class AgentRunStarterTest {
                 costMeter = mockk(relaxed = true),
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
+                maintenanceGate = mockk(relaxed = true),
             )
         val agent = AgentFixtures.simpleAgent(name = "child")
 
@@ -245,6 +259,7 @@ class AgentRunStarterTest {
                 costMeter = mockk(relaxed = true),
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
+                maintenanceGate = mockk(relaxed = true),
             )
         val agent = AgentFixtures.simpleAgent(name = "child")
 
@@ -284,6 +299,7 @@ class AgentRunStarterTest {
                 costMeter = mockk(relaxed = true),
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
+                maintenanceGate = mockk(relaxed = true),
             )
 
         runBlocking { starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "agent") { emptyMap() } }
@@ -293,4 +309,107 @@ class AgentRunStarterTest {
         assertEquals(null, attributes.captured.get(AttributeKey.longKey("root.process.id")))
         assertEquals(null, attributes.captured.get(AttributeKey.longKey("parent.process.id")))
     }
+
+    // --- the maintenance gate (ADR-0092) ---
+
+    /** A starter whose gate is [gate], returning a run id from a relaxed [ProcessExecutor]. */
+    private fun starterWithGate(
+        gate: MaintenanceModeService,
+        processExecutor: ProcessExecutor,
+        cooldownGate: CooldownGate = mockk(relaxed = true),
+        costMeter: CostMeter = mockk(relaxed = true),
+    ): AgentRunStarter =
+        AgentRunStarter(
+            serverId = "test-server",
+            processExecutor = processExecutor,
+            processFactory = mockk(relaxed = true),
+            telemetryService = TestFixtures.mockTelemetryService(TestFixtures.mockSpan()),
+            costMeter = costMeter,
+            maxInvocationDepth = 5,
+            cooldownGate = cooldownGate,
+            maintenanceGate = gate,
+        )
+
+    @Test
+    fun `a start parks at the gate and only then runs, once the mode goes off`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val gate = mockk<MaintenanceModeService>()
+            val modeOff = CompletableDeferred<Unit>()
+            coEvery { gate.awaitRelease(any()) } coAnswers {
+                modeOff.await()
+                MaintenanceSlot { }
+            }
+            val starter = starterWithGate(gate, processExecutor)
+
+            val start = async { starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "http") { emptyMap() } }
+            yield()
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+
+            modeOff.complete(Unit)
+            assertEquals(7, start.await())
+            coVerify(exactly = 1) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `preflight runs at dequeue, not at enqueue`() =
+        runBlocking {
+            // supervisorScope: the start fails on purpose, and a failing child of the test's
+            // own scope would cancel the test body instead of surfacing at the await.
+            supervisorScope {
+                val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+                val cooldownGate = mockk<CooldownGate>()
+                coEvery { cooldownGate.check(any()) } throws CooldownActiveException("child", 5, "cooling down")
+                val gate = mockk<MaintenanceModeService>()
+                val modeOff = CompletableDeferred<Unit>()
+                coEvery { gate.awaitRelease(any()) } coAnswers {
+                    modeOff.await()
+                    MaintenanceSlot { }
+                }
+                val starter = starterWithGate(gate, processExecutor, cooldownGate = cooldownGate)
+
+                val start = async { starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "http") { emptyMap() } }
+                yield()
+                // Parked, so nothing has been refused yet: the checks run against the state at dequeue.
+                coVerify(exactly = 0) { cooldownGate.check(any()) }
+
+                modeOff.complete(Unit)
+                assertFailsWith<CooldownActiveException> { start.await() }
+                coVerify(exactly = 1) { cooldownGate.check(any()) }
+                coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+            }
+        }
+
+    @Test
+    fun `a start the queue sheds creates no run`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val gate = mockk<MaintenanceModeService>()
+            coEvery { gate.awaitRelease(any()) } throws MaintenanceQueueFullException(500)
+            val starter = starterWithGate(gate, processExecutor)
+
+            assertFailsWith<MaintenanceQueueFullException> {
+                starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "http") { emptyMap() }
+            }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a shed or expired start names no input value`() =
+        runBlocking {
+            val secret = "s3cr3t-token-value"
+            val agent = AgentFixtures.simpleAgent(name = "child")
+            for (refusal in listOf(MaintenanceQueueFullException(500), MaintenanceWaitTimeoutException(600.seconds))) {
+                val gate = mockk<MaintenanceModeService>()
+                coEvery { gate.awaitRelease(any()) } throws refusal
+                val starter = starterWithGate(gate, mockk(relaxed = true))
+
+                val thrown =
+                    assertFailsWith<HomerException> {
+                        starter.start(agent, emptyList(), "http") { mapOf("TOKEN" to secret) }
+                    }
+                assertFalse(thrown.message!!.contains(secret), "the refusal must not echo an input value")
+            }
+        }
 }
