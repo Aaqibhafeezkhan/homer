@@ -4,8 +4,8 @@
 # set a label, so `accepted` records that the change belongs in Homer. An issue in another
 # repository does not count: anyone can label issues in a repository they own.
 #
-# One exemption, granted only as a whole: the AIF factory's changelog-only release pull request
-# (ADR-0090, 2026-10-24 amendment).
+# One exemption, granted only as a whole: the AIF factory's release pull request, which changes
+# the changelog and the pinned release version only (ADR-0090, 2026-10-24 amendment).
 #
 # Usage: tools/pr-policy/check.sh OWNER/REPO <closing-issues.json
 # The JSON is the answer to the GraphQL query in .github/workflows/pr-policy.yml. For the
@@ -16,11 +16,26 @@ set -eu
 repo=$1
 # The factory's GitHub App, by its bot account's user id (a login can be renamed).
 factory_app_user_id=346317994
+# What a release pull request may change, each file only in place: the changelog, and the
+# release's version where it is pinned for a fresh clone (ADR-0093).
+release_files='CHANGELOG.md docker-compose.yml .env.example README.md DOCKER.md'
+
+# True when PR_FILES lists only `modified` release files, each once, CHANGELOG.md among them.
+release_files_only() {
+  [ -n "${PR_FILES:-}" ] && [ -f "$PR_FILES" ] && grep -qx 'modified CHANGELOG.md' "$PR_FILES" || return 1
+  [ -z "$(sort "$PR_FILES" | uniq -d)" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "modified "*) ;; *) return 1 ;; esac
+    path=${line#modified }
+    case "$path" in "" | *" "*) return 1 ;; esac
+    case " $release_files " in *" $path "*) ;; *) return 1 ;; esac
+  done <"$PR_FILES"
+}
 
 if [ "${PR_AUTHOR_TYPE:-}" = Bot ] && [ "${PR_AUTHOR_ID:-}" = "$factory_app_user_id" ] && [ "${PR_HEAD_REPO:-}" = "$repo" ] \
   && [ "$(printf '%s\n' "${PR_HEAD_REF:-}" | grep -Ex 'aif/release-[0-9]+\.[0-9]+\.[0-9]+')" = "${PR_HEAD_REF:-}" ] \
-  && [ -n "${PR_FILES:-}" ] && [ -f "$PR_FILES" ] && [ "$(cat "$PR_FILES")" = "modified CHANGELOG.md" ]; then
-  echo "The AIF factory's release pull request ($PR_HEAD_REF): it changes CHANGELOG.md alone."
+  && release_files_only; then
+  echo "The AIF factory's release pull request ($PR_HEAD_REF): it changes the changelog and the pinned version only."
   exit 0
 fi
 refs=$(jq -c --arg repo "$repo" \
