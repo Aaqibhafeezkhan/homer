@@ -1,8 +1,10 @@
 package homer.app.runners
 
+import homer.app.exceptions.ConfigurationException
 import homer.app.models.Agent
 import homer.app.models.RunnerFilter
 import homer.app.runners.external.ExternalRunnerDomain
+import homer.app.runners.local.LocalRunner
 import homer.app.runners.queue.QueuedRunner
 import homer.app.runners.queue.RegisteredRunner
 import homer.app.runners.queue.RunnerClaimQueue
@@ -83,10 +85,22 @@ class RunnerRegistry(
 
     override fun forAlias(alias: String): Runner = forAlias(alias, defaultClaimTimeout)
 
+    /**
+     * Fails at once with [ConfigurationException] for `local` when no local runner is
+     * registered (`server.localRunner.enabled: false`), rather than queueing a claim
+     * nothing can take.
+     */
     fun forAlias(
         alias: String,
         claimTimeout: Duration,
-    ): Runner = QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout)
+    ): Runner {
+        if (alias == LocalRunner.ALIAS && alias !in byAlias) {
+            throw ConfigurationException(
+                "runner '${LocalRunner.ALIAS}' is disabled (server.localRunner.enabled: false); route the agent to another runner",
+            )
+        }
+        return QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout)
+    }
 
     fun forAgent(agent: Agent): Runner {
         val timeout = agent.runnerClaimTimeoutSec?.seconds ?: defaultClaimTimeout

@@ -56,7 +56,7 @@ private fun externalRunnerDomains(
         }
     }
 
-/** The push-mode runners: the local one first, then each Kubernetes and SSH runner in config order. */
+/** The push-mode runners: the local one first (unless disabled), then each Kubernetes and SSH runner in config order. */
 private fun registeredRunners(
     appConfig: AppConfig,
     stateSink: RunnerStateSink,
@@ -67,15 +67,17 @@ private fun registeredRunners(
         // Local commands reach Homer's own API (homer-ask helper,
         // RunAgent) on the loopback unless the operator already
         // provides HMR_API_URL via globalEnv / agent env.
-        add(
-            RegisteredRunner(
-                LocalRunner(defaultApiUrl = "http://127.0.0.1:${appConfig.server.port}"),
-                tags =
-                    appConfig.server.localRunner.tags
-                        .toSet(),
-                concurrency = appConfig.server.localRunner.concurrency,
-            ),
-        )
+        if (appConfig.server.localRunner.enabled) {
+            add(
+                RegisteredRunner(
+                    LocalRunner(defaultApiUrl = "http://127.0.0.1:${appConfig.server.port}"),
+                    tags =
+                        appConfig.server.localRunner.tags
+                            .toSet(),
+                    concurrency = appConfig.server.localRunner.concurrency,
+                ),
+            )
+        }
         appConfig.runners.forEach { (alias, cfg) ->
             val secretNames = appConfig.sysEnvBackedRunnerEnvNames[alias] ?: emptySet()
             when (cfg) {

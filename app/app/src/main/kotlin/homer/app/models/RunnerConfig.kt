@@ -206,15 +206,20 @@ internal fun assertSafeRemoteRoot(
 /**
  * Facets of the built-in `local` runner as a claim-queue consumer
  * (`server.localRunner`). Same rules as `tags`/`concurrency` on `ssh` and
- * `kubernetes`. See ADR-0066.
+ * `kubernetes`. `enabled = false` registers no local runner, so no run executes
+ * in the server's own container. See ADR-0066.
  */
 @Serializable
 data class LocalRunnerConfig(
+    val enabled: Boolean = true,
     val tags: List<String> = emptyList(),
     val concurrency: Int? = null,
 ) {
     init {
         validateRunnerQueueFacets("server.localRunner", tags, concurrency)
+        require(enabled || (tags.isEmpty() && concurrency == null)) {
+            "server.localRunner.tags and .concurrency have no effect while server.localRunner.enabled is false; remove them"
+        }
     }
 }
 

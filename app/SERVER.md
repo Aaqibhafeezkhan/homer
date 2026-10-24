@@ -435,7 +435,7 @@ server:
 | `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
-| `localRunner` | `LocalRunnerConfig` | No | `{tags=[], concurrency=null}` | Claim-queue facets of the built-in `local` runner: `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). See [Runner claim queue](#runner-claim-queue). |
+| `localRunner` | `LocalRunnerConfig` | No | `{enabled=true, tags=[], concurrency=null}` | The built-in `local` runner: `enabled` (`false` registers none, so no run executes in the server's container), the `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). `tags` and `concurrency` are refused while `enabled` is `false`. See [Runner claim queue](#runner-claim-queue). |
 | `runnerClaimTimeoutSec` | `Int` | No | `300` | Seconds a run waits in the claim queue for a runner with a free permit before it fails; agents override with `runnerClaimTimeoutSec`. See [Runner claim queue](#runner-claim-queue). |
 | `maxPendingRunnerClaims` | `Int` | No | `1000` | Bound on runs waiting in the claim queue; a run arriving at the bound fails immediately. See [Runner claim queue](#runner-claim-queue). |
 | `maintenance` | `MaintenanceConfig` | No | `{maxQueuedStarts=500, maxQueuedStartsPerPrincipal=50, queueWaitSec=600, releaseConcurrency=4}` | Bounds of the admin maintenance-mode queue: how many starts may wait, how much of it one caller may hold, how long a start may wait, and how many are released at a time. See [Maintenance mode](#maintenance-mode). |
@@ -3291,6 +3291,24 @@ values such as `HMR_API_URL` take precedence over the runner's `env`.
 
 A configuration without `tags` or `concurrency` on any runner behaves exactly as
 it did before the queue existed.
+
+**Turning the local runner off.** `server.localRunner.enabled: false` registers
+no local runner, so no run executes in the server's own container. A run routed
+to `local` (an agent with neither `runner:` nor `runnerTags:`, one with
+`runner: local`, or a `runnerCmd` step targeting `local`) fails at once, before
+it is queued, with
+`Configuration error: runner 'local' is disabled (server.localRunner.enabled: false); route the agent to another runner`.
+Use it on a server whose agents all run on external, Kubernetes or SSH runners.
+`GET /api/v1/runners` then no longer lists `local`. The setting covers runs only:
+the server still runs `homer_langgraph inspect` and `state` itself for the
+console's LangGraph views (ADR-0027, ADR-0044), and those import the agent's
+graph module on the server host.
+
+```yaml
+server:
+  localRunner:
+    enabled: false                # every agent must name another runner or runnerTags
+```
 
 ### External runners (pull mode)
 
