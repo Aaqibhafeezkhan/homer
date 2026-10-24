@@ -6,7 +6,8 @@
 #   tools/release/notes.sh changelog VERSION [CHANGELOG]   the section, links made absolute at the
 #                                                           tag; fails when the version has none
 #   tools/release/notes.sh images TAG <LINES               the images section; LINES are
-#                                                           `IMAGE DIGEST`, one per image
+#                                                           `IMAGE DIGEST [SUFFIX]`, one per image,
+#                                                           SUFFIX a tag variant such as `-slim`
 #   tools/release/notes.sh merge BODY SECTION              BODY with SECTION in place of any
 #                                                           images section it already has
 # REPO (default livesport/homer) names the repository and the GHCR namespace.
@@ -45,11 +46,12 @@ case "${1:-}" in
     printf 'Signed with cosign (keyless) and carrying SLSA provenance and a CycloneDX SBOM ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
     printf '| Image | Digest |\n|---|---|\n'
     refs=
-    while read -r image digest; do
+    while read -r image digest suffix; do
       printf '%s\n' "$image" | grep -qxE '[a-z0-9-]+' || { echo "Bad image name: $image" >&2; exit 1; }
       printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "Bad digest for $image: $digest" >&2; exit 1; }
+      [ -z "$suffix" ] || printf '%s\n' "$suffix" | grep -qxE -- '-[a-z0-9]+' || { echo "Bad tag suffix for $image: $suffix" >&2; exit 1; }
       # shellcheck disable=SC2016 # Markdown backticks, not a command substitution
-      printf '| `ghcr.io/%s/%s:%s` | `%s` |\n' "$repo" "$image" "$tag" "$digest"
+      printf '| `ghcr.io/%s/%s:%s%s` | `%s` |\n' "$repo" "$image" "$tag" "$suffix" "$digest"
       refs="$refs ghcr.io/$repo/$image@$digest"
     done
     [ -n "$refs" ] || { echo "No image given" >&2; exit 1; }

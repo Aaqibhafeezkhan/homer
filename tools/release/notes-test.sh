@@ -74,6 +74,13 @@ if printf 'homer-app sha256:short\n' | "$notes" images 1.36.0 >/dev/null 2>&1; t
 if "$notes" images 1.36.0 </dev/null >/dev/null 2>&1; then fail "no image passed"; fi
 if printf 'homer_app %s\n' "$d1" | "$notes" images 1.36.0 >/dev/null 2>&1; then fail "a bad image name passed"; fi
 if printf 'homer-app %s\n' "$d1" | "$notes" images latest >/dev/null 2>&1; then fail "a tag that is no version passed"; fi
+printf 'homer-app %s\nhomer-app %s -slim\n' "$d1" "$d2" | "$notes" images 1.36.0 >"$scratch/s"
+has "$scratch/s" "| \`ghcr.io/livesport/homer/homer-app:1.36.0-slim\` | \`$d2\` |" "a tag variant's row"
+has "$scratch/s" "| \`ghcr.io/livesport/homer/homer-app:1.36.0\` | \`$d1\` |" "the plain tag beside its variant"
+has "$scratch/s" "cosign verify ghcr.io/livesport/homer/homer-app@$d2" "a verify command for the variant"
+for bad in slim -Slim '-slim;id' '-'; do
+  if printf 'homer-app %s %s\n' "$d1" "$bad" | "$notes" images 1.36.0 >/dev/null 2>&1; then fail "the tag suffix '$bad' passed"; fi
+done
 printf 'homer-app %s\n' "$d1" | REPO=acme/fork "$notes" images 1.36.0 >"$scratch/f"
 has "$scratch/f" "ghcr.io/acme/fork/homer-app:1.36.0" "REPO names the namespace"
 has "$scratch/f" "https://github.com/acme/fork/.github/workflows/release.yml@refs/tags/1.36.0" "REPO names the identity"
