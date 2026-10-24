@@ -65,6 +65,10 @@ has "$scratch/i" '<!-- release-images -->' "the marker"
 has "$scratch/i" "| \`ghcr.io/livesport/homer/homer-app:1.36.0\` | \`$d1\` |" "an image row"
 has "$scratch/i" "cosign verify ghcr.io/livesport/homer/homer-app@$d1" "the verify command"
 has "$scratch/i" "cosign verify ghcr.io/livesport/homer/homer-console@$d2" "a verify command per image"
+has "$scratch/i" '| Image | Digest |' "the table header"
+[ "$(grep -cx '```bash' "$scratch/i")" = 1 ] || fail "the opening fence"
+[ "$(grep -cx '```' "$scratch/i")" = 1 ] || fail "the closing fence"
+[ "$(tail -n 1 "$scratch/i")" = '```' ] || fail "the section ends at its closing fence"
 has "$scratch/i" '--certificate-identity https://github.com/livesport/homer/.github/workflows/release.yml@refs/tags/1.36.0' "the identity"
 if printf 'homer-app sha256:short\n' | "$notes" images 1.36.0 >/dev/null 2>&1; then fail "a bad digest passed"; fi
 if "$notes" images 1.36.0 </dev/null >/dev/null 2>&1; then fail "no image passed"; fi
