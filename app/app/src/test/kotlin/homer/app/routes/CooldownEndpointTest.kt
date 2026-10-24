@@ -164,6 +164,7 @@ class CooldownEndpointTest {
                 telemetryService = TestFixtures.mockTelemetryService(),
                 costMeter = mockk(relaxed = true),
                 agentInputResolver = AgentInputResolver(),
+                maintenanceGate = mockk(relaxed = true),
             )
         }
 
@@ -182,6 +183,7 @@ class CooldownEndpointTest {
                 telemetryService = TestFixtures.mockTelemetryService(),
                 costMeter = mockk(relaxed = true),
                 agentInputResolver = AgentInputResolver(),
+                maintenanceGate = mockk(relaxed = true),
             )
         }
 
@@ -195,6 +197,7 @@ class CooldownEndpointTest {
                 processExecutor = deps.executor,
                 processFactory = deps.processFactory,
                 telemetryService = TestFixtures.mockTelemetryService(),
+                maintenanceGate = mockk(relaxed = true),
             )
         }
 

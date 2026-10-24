@@ -27,6 +27,7 @@ import homer.app.services.AgentsService
 import homer.app.services.ContinuationSweepService
 import homer.app.services.CronSchedulerService
 import homer.app.services.DispatchSweepService
+import homer.app.services.MaintenanceModeService
 import homer.app.services.StartupReconciliation
 import homer.app.services.WorkspacePurgeService
 import homer.app.services.persistence.DatabaseService
@@ -439,6 +440,7 @@ private class BackgroundServices(
 ) {
     val runnerRegistry by app.inject<RunnerRegistry>()
     val cronSchedulerService by app.inject<CronSchedulerService>()
+    val maintenanceModeService by app.inject<MaintenanceModeService>()
     val workspacePurgeService by app.inject<WorkspacePurgeService>()
     val dispatchSweepService by app.inject<DispatchSweepService>()
     val continuationSweepService by app.inject<ContinuationSweepService>()
@@ -473,6 +475,9 @@ private fun Application.subscribeShutdownDrain(
         background.runnerRegistry.stop()
 
         background.cronSchedulerService.stop()
+        // Fail the parked maintenance-mode starts now: left alone, they would hold their
+        // requests until their own wait expires, burning the whole drain window. See ADR-0092.
+        background.maintenanceModeService.stop()
         background.workspacePurgeService.stop()
         background.dispatchSweepService.stop()
         background.continuationSweepService.stop()
@@ -549,6 +554,7 @@ private fun Application.apiDeps(
         artifactService = get(),
         fileOperations = get(),
         cronSchedulerService = background.cronSchedulerService,
+        maintenanceModeService = background.maintenanceModeService,
         workspacePurgeService = background.workspacePurgeService,
         processEventBroadcaster = get(),
         logTailService = get(),

@@ -39,6 +39,7 @@ class CronSchedulerServiceTest {
     private lateinit var agentsService: AgentsService
     private lateinit var agentRunStarter: AgentRunStarter
     private lateinit var agentInputResolver: AgentInputResolver
+    private lateinit var maintenanceMode: MaintenanceModeService
     private lateinit var service: CronSchedulerService
 
     @BeforeEach
@@ -46,11 +47,14 @@ class CronSchedulerServiceTest {
         agentsService = mockk()
         agentRunStarter = mockk()
         agentInputResolver = mockk()
+        // Relaxed: maintenance mode is off, which is what every pre-existing case assumes.
+        maintenanceMode = mockk(relaxed = true)
         service =
             CronSchedulerService(
                 agentsService = agentsService,
                 agentRunStarter = agentRunStarter,
                 agentInputResolver = agentInputResolver,
+                maintenanceMode = maintenanceMode,
                 logger = TestFixtures.mockLogger(),
             )
     }
@@ -355,6 +359,7 @@ class CronSchedulerServiceTest {
                     agentsService = agentsService,
                     agentRunStarter = agentRunStarter,
                     agentInputResolver = agentInputResolver,
+                    maintenanceMode = maintenanceMode,
                     logger = TestFixtures.mockLogger(),
                     now = { fixedNow },
                 )
@@ -387,6 +392,7 @@ class CronSchedulerServiceTest {
                     agentsService = agentsService,
                     agentRunStarter = agentRunStarter,
                     agentInputResolver = agentInputResolver,
+                    maintenanceMode = maintenanceMode,
                     logger = TestFixtures.mockLogger(),
                     now = { ZonedDateTime.of(2025, 1, 1, 12, 0, 0, 0, ZoneOffset.UTC) },
                 )
@@ -395,6 +401,62 @@ class CronSchedulerServiceTest {
             scheduled.fireNow(agent)
 
             assertNull(scheduled.getScheduleStatus(agent)?.lastRunProcessId)
+        }
+
+    // --- maintenance mode (ADR-0092) ---
+
+    @Test
+    fun `tick fires nothing while maintenance mode is on`() =
+        runTest {
+            val agent =
+                AgentFixtures.simpleAgent(name = "paused_agent").copy(
+                    cron = CronConfig(expression = "* * * * *"),
+                )
+            every { agentsService.agents } returns mapOf("paused_agent" to agent)
+            every { maintenanceMode.isEnabled() } returns true
+
+            service.tick(ZonedDateTime.now(ZoneId.of("UTC")))
+
+            coVerify(exactly = 0) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertNull(service.getScheduleStatus(agent)?.lastRunProcessId)
+        }
+
+    @Test
+    fun `a schedule missed while the mode was on is not replayed when it goes off`() =
+        runTest {
+            val agent =
+                AgentFixtures.simpleAgent(name = "paused_agent").copy(
+                    cron = CronConfig(expression = "30 12 * * *"),
+                )
+            every { agentsService.agents } returns mapOf("paused_agent" to agent)
+            coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
+
+            // The scheduled minute passes while the mode is on...
+            every { maintenanceMode.isEnabled() } returns true
+            service.tick(ZonedDateTime.of(2025, 1, 1, 12, 30, 0, 0, ZoneId.of("UTC")))
+            // ...and the next tick, once it is off, does not make it up.
+            every { maintenanceMode.isEnabled() } returns false
+            service.tick(ZonedDateTime.of(2025, 1, 1, 12, 31, 0, 0, ZoneId.of("UTC")))
+
+            coVerify(exactly = 0) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `fireNow still reaches the start path while the mode is on`() =
+        runTest {
+            val agent =
+                AgentFixtures.simpleAgent(name = "fire_now_agent").copy(
+                    cron = CronConfig(expression = "* * * * *"),
+                )
+            every { maintenanceMode.isEnabled() } returns true
+            coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 77
+
+            service.fireNow(agent)
+
+            // The operator's explicit Run queues at the gate rather than being skipped.
+            coVerify(
+                exactly = 1,
+            ) { agentRunStarter.start(agent, emptyList(), "cron", any(), any(), "system:cron", any(), any(), any(), any()) }
         }
 
     // --- getScheduleStatus ---
@@ -477,6 +539,7 @@ class CronSchedulerServiceTest {
                 agentsService = agentsService,
                 agentRunStarter = agentRunStarter,
                 agentInputResolver = agentInputResolver,
+                maintenanceMode = maintenanceMode,
                 logger = TestFixtures.mockLogger(),
                 scope = backgroundScope,
                 now = clock,
@@ -577,6 +640,7 @@ class CronSchedulerServiceTest {
                 agentsService = agentsService,
                 agentRunStarter = agentRunStarter,
                 agentInputResolver = agentInputResolver,
+                maintenanceMode = maintenanceMode,
                 logger = TestFixtures.mockLogger(),
                 now = { fixed },
             )
@@ -599,6 +663,7 @@ class CronSchedulerServiceTest {
                 agentsService = agentsService,
                 agentRunStarter = agentRunStarter,
                 agentInputResolver = agentInputResolver,
+                maintenanceMode = maintenanceMode,
                 logger = TestFixtures.mockLogger(),
                 scope = testScope,
             )

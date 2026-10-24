@@ -62,7 +62,14 @@ private fun Route.serverHealthRoutes(deps: ApiDeps) {
                         errors = snap.errors,
                     )
                 }
-            call.respond(HealthResponse(runners = runners, sweep = sweep))
+            call.respond(
+                HealthResponse(
+                    runners = runners,
+                    sweep = sweep,
+                    // The in-memory flag, so a console poll costs no database read (ADR-0092).
+                    maintenance = maintenanceModeService.isEnabled(),
+                ),
+            )
         }
     }
 }
