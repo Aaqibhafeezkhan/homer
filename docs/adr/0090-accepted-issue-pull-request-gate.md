@@ -79,3 +79,22 @@ Chosen option: **"C. A linked issue labelled `accepted`"**.
   so the gate takes effect when the repository goes public.
 - Neutral: a maintainer's own change also needs an accepted issue. The cost is
   one issue; the gain is that the rule has no exception to abuse.
+
+## Amendment (2026-10-24): the factory's release pull request
+
+A release is cut by a pull request that turns `CHANGELOG.md`'s `[Unreleased]`
+into the new version's section. The AIF factory opens that pull request after
+a maintainer approved the release, and no issue stands behind it: the
+maintainer's approval is the admission, and the merge is a second one. The
+`accepted-issue` check lets it through only as a whole:
+
+- the author is `homer-factory[bot]`, the factory App's login (the `[bot]`
+  suffix is reserved for Apps, as for Dependabot above);
+- the head branch is `aif/release-X.Y.Z` of this repository, not of a fork;
+- `CHANGELOG.md` is the only file the pull request changes, and it modifies
+  it in place (a rename onto it would delete another file).
+
+The facts come from the pull request event and GitHub's file list, never from
+the pull request's own files, and `tools/pr-policy/check.sh` runs from the base
+branch. Any other change by the factory still needs an accepted issue. The
+other required checks, review threads and the maintainer's merge all stay.

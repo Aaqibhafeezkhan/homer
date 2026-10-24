@@ -55,6 +55,11 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
           REPO: ${{ github.repository }}
+          # The release exemption's facts (tools/pr-policy/check.sh, ADR-0090 amendment), from the
+          # event, never from the pull request's files.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           # shellcheck disable=SC2016 # $owner, $name and $pr are GraphQL variables
           gh api graphql -F owner="$OWNER" -F name="$NAME" -F pr="$PR" -f query='
@@ -67,4 +72,5 @@ jobs:
                 }
               }
             }' >closing-issues.json
-          tools/pr-policy/check.sh "$REPO" <closing-issues.json
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[] | .status + " " + .filename' >pr-files.txt
+          PR_FILES=pr-files.txt tools/pr-policy/check.sh "$REPO" <closing-issues.json
