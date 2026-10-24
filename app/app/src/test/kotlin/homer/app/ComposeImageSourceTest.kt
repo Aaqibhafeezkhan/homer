@@ -163,20 +163,25 @@ class ComposeImageSourceTest {
         val pins =
             listOf(
                 // `.env.example` ships the pin commented out, so the `#` is optional.
-                ".env.example" to Regex("""^#?\s*HOMER_VERSION=(\d+\.\d+\.\d+)$""", RegexOption.MULTILINE),
+                Triple(
+                    ".env.example",
+                    Regex("""^#?\s*HOMER_VERSION=(\d+\.\d+\.\d+)$""", RegexOption.MULTILINE),
+                    1,
+                ),
                 // README.md's image-verification snippet.
-                "README.md" to Regex("""^version=(\d+\.\d+\.\d+)\b""", RegexOption.MULTILINE),
+                Triple("README.md", Regex("""^version=(\d+\.\d+\.\d+)\b""", RegexOption.MULTILINE), 1),
                 // DOCKER.md's `FROM …homer-app:<tag>` and `imagetools inspect …:<tag>` examples.
-                "DOCKER.md" to Regex("""ghcr\.io/livesport/homer/homer-app:(\d+\.\d+\.\d+)"""),
+                Triple("DOCKER.md", Regex("""ghcr\.io/livesport/homer/homer-app:(\d+\.\d+\.\d+)"""), 2),
             )
-        for ((name, pin) in pins) {
+        for ((name, pin, minMatches) in pins) {
             val file = File(repoRoot, name)
             assertTrue(file.isFile, "$name is missing; move this guard with the quick start rather than deleting it.")
             val named = pin.findAll(file.readText()).map { it.groupValues[1] }.toList()
             assertTrue(
-                named.isNotEmpty(),
-                "$name no longer names a release version this guard can read. A reworded pin stops being " +
-                    "checked silently, so keep the example in the shape the release bump updates.",
+                named.size >= minMatches,
+                "$name names ${named.size} of the $minMatches release version(s) this guard reads. A reworded " +
+                    "or dropped example stops being checked silently, so keep every one in the shape the " +
+                    "release bump updates.",
             )
             for (version in named) {
                 assertTrue(
