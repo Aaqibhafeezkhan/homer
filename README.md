@@ -173,10 +173,27 @@ machines.
 
 **Reach for something else** when:
 
-- one cron line on one box does the job — keep it, cron is great;
-- you need data pipelines with backfills and DAGs — Airflow or Dagster;
+- one cron line on one box does the job — keep it, cron is great
+  (see *Why not …?* below);
+- you need data pipelines with backfills and DAGs — Airflow or Dagster
+  (see *Why not …?* below);
 - you want a sandbox that contains hostile code on its own — Homer leaves
   isolation to the runner you send a run to (see below).
+
+## Why not …?
+
+Homer is not the only way to run something unattended. What each of the
+usual alternatives does better, and what Homer adds when the thing running
+is a coding agent:
+
+| Instead of | What it does better | What Homer adds |
+| --- | --- | --- |
+| **Temporal**, or another durable-execution engine | Durable workflows as a programming model: activities, timers, signals, replayable history. | Agents rather than services: a [workspace](https://livesport.github.io/homer/atlas/#core) and [lock key](https://livesport.github.io/homer/atlas/#concurrency) per run, a [cap that refuses a run before it spends](https://livesport.github.io/homer/atlas/#observability), [questions a run parks on](https://livesport.github.io/homer/atlas/#hitl). Not a sandbox — isolation is the [runner](https://livesport.github.io/homer/atlas/#runners)'s. |
+| **Airflow / Dagster / Prefect** | Data pipelines: backfills, partitioned assets, lineage, an operator for every cloud. | Steps that are LLM calls: [per-step budgets](https://livesport.github.io/homer/atlas/#llm), the [live Claude conversation and its cost](https://livesport.github.io/homer/atlas/#console), [human answers mid-run](https://livesport.github.io/homer/atlas/#hitl), an [OpenTelemetry span per command](https://livesport.github.io/homer/atlas/#observability). |
+| **n8n / Zapier-style automation** | Connectors and a visual editor: hundreds of SaaS integrations, no code. | Unattended agent runs: a [workspace](https://livesport.github.io/homer/atlas/#core) and [lock](https://livesport.github.io/homer/atlas/#concurrency) per run, a [cap checked before the run starts](https://livesport.github.io/homer/atlas/#observability), [runners](https://livesport.github.io/homer/atlas/#runners) on Kubernetes, ssh or a pull-mode host. Not a sandbox — isolation is the [runner](https://livesport.github.io/homer/atlas/#runners)'s. |
+| **GitHub Actions / GitLab CI** | CI is where the code and its secrets already are: hosted runners, per-job isolation, a marketplace. | Runs not tied to a push: [questions a run waits days for](https://livesport.github.io/homer/atlas/#hitl), [locks across runs](https://livesport.github.io/homer/atlas/#concurrency), [LLM spend caps](https://livesport.github.io/homer/atlas/#observability) not job minutes, the [live conversation](https://livesport.github.io/homer/atlas/#console). Not a sandbox — the isolation is the [runner](https://livesport.github.io/homer/atlas/#runners)'s. |
+| **LangGraph on its own, or LangGraph Platform** | The graph is the program: state machine, checkpointing and streaming, no orchestrator between. | The operations around it: a graph that [parks on a question and resumes from its checkpoint](https://livesport.github.io/homer/atlas/#langgraph), a [workspace](https://livesport.github.io/homer/atlas/#core) and [locks](https://livesport.github.io/homer/atlas/#concurrency) for the run, [traces](https://livesport.github.io/homer/atlas/#observability) of every step. |
+| **cron + shell scripts** | Nothing to install, nothing to learn: a crontab line and a script are already on the box. | What a script cannot do: [one run at a time per checkout](https://livesport.github.io/homer/atlas/#concurrency), [a cap that stops the bill first](https://livesport.github.io/homer/atlas/#observability), [a question the run waits on](https://livesport.github.io/homer/atlas/#hitl), [somewhere else to run it](https://livesport.github.io/homer/atlas/#runners), [what it cost and did](https://livesport.github.io/homer/atlas/#console). |
 
 ## Quick start
 
@@ -229,22 +246,50 @@ local `docker-compose.override.yml` (loaded automatically by the plain
 SBOM attestation included, is in
 [`DOCKER.md`](DOCKER.md) § *Verifying a published image*.
 
-Run the bundled `hello` example agent and check on it:
+Trigger the bundled `quickstart` agent — it is built only from `!<script>`
+steps, so it needs no LLM credentials:
 
 ```bash
 TOKEN=$(grep '^HOMER_ADMIN_TOKEN=.' .env | tail -n 1 | cut -d= -f2-)
 
 curl -X POST -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8080/api/v1/agent/hello?project_id=demo"
+  "http://localhost:8080/api/v1/agent/quickstart"
 # {"processId": 1}
-
-curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/status/1"
 ```
 
-The last step of `hello` calls the Claude CLI. That step fails until Claude
-credentials reach the command environment
-([`app/SERVER.md`](app/SERVER.md) § *Global Environment Variables*). Agents
-built only from `!<cmd>` and `!<script>` steps need no LLM at all.
+The run starts in the background and stops on a question. Open the console at
+<http://localhost:3000/processes/1> to watch its live logs, then answer **ship**
+in the **Questions** inbox (<http://localhost:3000/questions>). The run resumes,
+prints the artifact it wrote, and finishes:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/status/1"
+# ... "status": "FINISHED"
+```
+
+Answer **hold** on a later run instead and that step exits non-zero, so the run
+ends `FAILED` — the outcome follows your answer.
+
+The walkthrough runs on the built-in `local` runner, which is what the compose
+stack defaults to. The question flow is not local-only: Homer materializes the
+`.homer/bin` helpers into every run's workspace and uploads them with it, so an
+`ssh`, `kubernetes` or external runner gets them too — such a target only needs
+`curl` and `awk` plus a reachable `homerApiUrl`, from which the runner injects
+`HMR_API_URL` (see [`app/AGENT.md`](app/AGENT.md) § *Asking the operator
+questions*).
+
+### Next: add Claude
+
+The `hello` example agent (`example/agents/hello_world/agent.json`) ends in a
+`!<claude>` step, so it needs Claude credentials in the command environment —
+for the compose stack, put them in `globalEnv` in `example/config/config.json`
+([`app/SERVER.md`](app/SERVER.md) § *Global Environment Variables*), e.g.
+`"ANTHROPIC_API_KEY": "sk-ant-…"`:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/v1/agent/hello?project_id=demo"
+```
 
 To run without Docker, build and start the server JAR as described in
 [`app/README.md`](app/README.md). Use [`DOCKER.md`](DOCKER.md) for dev and
@@ -386,9 +431,10 @@ bundled skill and schema ride in the same release as the format).
 
 Contributions are welcome! [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the
 toolchain (JDK 25 for the backend, Node for the console), the verify commands,
-and the commit, changelog and ADR conventions. Everyone taking part follows the
-[Code of Conduct](CODE_OF_CONDUCT.md). The people behind Homer are in
-[`CONTRIBUTORS.md`](CONTRIBUTORS.md).
+and the commit, changelog and ADR conventions. Questions and help belong in
+[GitHub Discussions](https://github.com/livesport/homer/discussions/categories/q-a).
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). The
+people behind Homer are in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
 
 ## License
 

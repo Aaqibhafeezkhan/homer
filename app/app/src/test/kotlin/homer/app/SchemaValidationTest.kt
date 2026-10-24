@@ -8,6 +8,7 @@ import com.networknt.schema.SpecificationVersion
 import homer.app.config.AgentSchemaValidator
 import homer.app.fixtures.repoRoot
 import homer.app.models.Agent
+import homer.app.models.Command
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -88,6 +89,36 @@ class SchemaValidationTest {
             )
         }
         validate(schema, withRoot("/home/homer/ws"), "config-custom.json with remoteWorkspaceRoot=/home/homer/ws")
+    }
+
+    @Test
+    fun `no example agent opts into dangerouslySkipPermissions`() {
+        // Acceptance criterion (GH-7): a bundled example must not skip Claude's
+        // permission gate without a comment saying why. JSON has no comments at
+        // all, so no example sets the flag; an example that legitimately needs it
+        // relaxes this case to "YAML with an adjacent justification".
+        val agentsDir = File(repoRoot, "example/agents")
+        val offenders =
+            agentsDir
+                .walkTopDown()
+                .filter { it.isFile && (it.name == "agent.json" || it.name == "agent.yaml") }
+                .flatMap { fixture ->
+                    val agent =
+                        if (fixture.extension == "json") {
+                            json.decodeFromString(Agent.serializer(), fixture.readText())
+                        } else {
+                            Yaml.default.decodeFromString(Agent.serializer(), fixture.readText())
+                        }
+                    agent.commands
+                        .filterIsInstance<Command.Claude>()
+                        .filter { it.options.dangerouslySkipPermissions }
+                        .map { fixture.relativeTo(repoRoot).path }
+                }.toList()
+
+        assertTrue(
+            offenders.isEmpty(),
+            "These example agents skip the permission gate without a justification: $offenders",
+        )
     }
 
     @Test
