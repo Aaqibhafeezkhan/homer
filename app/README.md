@@ -399,7 +399,9 @@ live registered instances. See [ADR-0066](../docs/adr/0066-external-pull-runners
 ```
 
 `concurrency: null` means unbounded; `instances` is `null` on non-external
-rows. `lastSeenAt` / `registeredAt` are Unix epoch seconds.
+rows. `lastSeenAt` / `registeredAt` are Unix epoch seconds. The `local` row is
+absent when `server.localRunner.enabled` is `false` (see
+[ADR-0095](../docs/adr/0095-local-runner-can-be-turned-off.md)).
 
 ### `GET /api/v1/runners/queue`
 
