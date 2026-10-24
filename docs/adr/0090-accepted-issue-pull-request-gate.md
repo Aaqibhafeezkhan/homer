@@ -97,6 +97,10 @@ maintainer's approval is the admission, and the merge is a second one. The
   `.env.example`, `README.md` and `DOCKER.md`; each only modified in place (a
   rename onto one would delete another file). The changelog check and the
   version bump are the factory's; the AI review and the maintainer read them.
+  The gate allows those files whole, not just their pin lines: it sees
+  GitHub's file list, not the diff, and the factory writes the bump with a
+  fixed substitution of the old version by the new one. A change beyond the
+  pins is what the AI review and the maintainer's merge are there to catch.
 
 The facts come from the pull request event and GitHub's file list, never from
 the pull request's own files, and `tools/pr-policy/check.sh` runs from the base

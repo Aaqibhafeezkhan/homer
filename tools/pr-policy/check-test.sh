@@ -46,10 +46,10 @@ expect pass "one accepted issue among several" "livesport/homer:6:" "someone/hom
 # whole — the App's bot account, a release branch of this repository, the changelog and the
 # pinned version only.
 release() {
-  want=$1 name=$2 type=$3 id=$4 repo=$5 ref=$6 files=$7
+  want=$1 name=$2 type=$3 id=$4 repo=$5 ref=$6 files=$7 list=${8:-$scratch/files.txt}
   answer >"$scratch/answer.json"
   printf '%b' "$files" >"$scratch/files.txt"
-  if PR_AUTHOR_TYPE=$type PR_AUTHOR_ID=$id PR_HEAD_REPO=$repo PR_HEAD_REF=$ref PR_FILES="$scratch/files.txt" \
+  if PR_AUTHOR_TYPE=$type PR_AUTHOR_ID=$id PR_HEAD_REPO=$repo PR_HEAD_REF=$ref PR_FILES="$list" \
       "$check" livesport/homer <"$scratch/answer.json" >/dev/null; then got=pass; else got=fail; fi
   if [ "$got" != "$want" ]; then
     echo "FAIL: $name: expected $want, got $got"
@@ -78,6 +78,10 @@ release fail "a release file deleted" Bot "$app" livesport/homer "$rel" "$cl\nre
 release fail "a file listed twice" Bot "$app" livesport/homer "$rel" "$cl\n$cl"
 release fail "an empty line among the files" Bot "$app" livesport/homer "$rel" "$cl\n\nmodified README.md"
 release fail "a path with a space" Bot "$app" livesport/homer "$rel" "$cl\nmodified README.md DOCKER.md"
+release fail "a path that is a pattern for a release file" Bot "$app" livesport/homer "$rel" "$cl\nmodified README.m?"
+release fail "a bracket pattern for a release file" Bot "$app" livesport/homer "$rel" "$cl\nmodified README.m[!x]"
+release fail "a modified line without a path" Bot "$app" livesport/homer "$rel" "$cl\nmodified "
+release fail "a file list that is not a file" Bot "$app" livesport/homer "$rel" "$cl" /nonexistent/files.txt
 release fail "another file than the changelog" Bot "$app" livesport/homer "$rel" 'modified docs/CHANGELOG.md'
 release fail "a rename onto the changelog" Bot "$app" livesport/homer "$rel" 'renamed CHANGELOG.md'
 release fail "a new changelog" Bot "$app" livesport/homer "$rel" 'added CHANGELOG.md'

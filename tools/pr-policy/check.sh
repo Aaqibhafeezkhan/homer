@@ -16,19 +16,18 @@ set -eu
 repo=$1
 # The factory's GitHub App, by its bot account's user id (a login can be renamed).
 factory_app_user_id=346317994
-# What a release pull request may change, each file only in place: the changelog, and the
-# release's version where it is pinned for a fresh clone (ADR-0093).
-release_files='CHANGELOG.md docker-compose.yml .env.example README.md DOCKER.md'
-
-# True when PR_FILES lists only `modified` release files, each once, CHANGELOG.md among them.
+# True when PR_FILES lists only `modified` release files, each once, CHANGELOG.md among them:
+# the changelog, and the release's version where it is pinned for a fresh clone (ADR-0093).
 release_files_only() {
   [ -n "${PR_FILES:-}" ] && [ -f "$PR_FILES" ] && grep -qx 'modified CHANGELOG.md' "$PR_FILES" || return 1
   [ -z "$(sort "$PR_FILES" | uniq -d)" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in "modified "*) ;; *) return 1 ;; esac
-    path=${line#modified }
-    case "$path" in "" | *" "*) return 1 ;; esac
-    case " $release_files " in *" $path "*) ;; *) return 1 ;; esac
+    # Literal names: a path is never used as a pattern.
+    case "${line#modified }" in
+      CHANGELOG.md | docker-compose.yml | .env.example | README.md | DOCKER.md) ;;
+      *) return 1 ;;
+    esac
   done <"$PR_FILES"
 }
 
