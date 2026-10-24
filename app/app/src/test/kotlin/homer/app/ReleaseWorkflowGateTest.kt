@@ -36,7 +36,7 @@ class ReleaseWorkflowGateTest {
 
     @Test
     fun `release jobs run only on a protected ref`() {
-        for (job in listOf("ci", "docs", "images")) {
+        for (job in listOf("ci", "docs", "images", "release-notes")) {
             val condition = jobCondition(release, job)
             assertTrue(
                 condition != null && condition.contains("github.ref_protected"),

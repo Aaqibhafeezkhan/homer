@@ -45,6 +45,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The release's notes; a tag whose version has no CHANGELOG.md section fails here.
+      - name: Changelog section
+        run: tools/release/notes.sh changelog "$TAG" >release-notes.md
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -76,7 +79,7 @@ jobs:
             gh release upload "$TAG" homer-docs.tar.gz --repo "$REPO" --clobber
           else
             gh release create "$TAG" homer-docs.tar.gz --repo "$REPO" --verify-tag --title "$TAG" \
-              --notes "See [CHANGELOG.md](https://github.com/$REPO/blob/$TAG/CHANGELOG.md)."
+              --notes-file release-notes.md
           fi
           # A release made with GITHUB_TOKEN starts no workflow, so the site is rebuilt explicitly.
           gh workflow run pages.yml --repo "$REPO" --ref "$DEFAULT_BRANCH"
@@ -115,6 +118,12 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A release without its CHANGELOG.md section publishes nothing.
+      - name: Changelog section
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: tools/release/notes.sh changelog "$TAG" >/dev/null
       - name: Image tags
         id: tags
         env:
@@ -223,3 +232,43 @@ jobs:
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
             --predicate-type https://cyclonedx.org/bom >/dev/null
           echo "Verified the signature, provenance and SBOM of $IMAGE@$DIGEST"
+
+  # The release page says what was published and how to check it: the images' digests and the
+  # command that verifies them, below the changelog section. Each digest is read from GHCR and
+  # verified against this run's signing identity before it is listed. A re-run replaces the
+  # section (tools/release/notes.sh merge).
+  release-notes:
+    needs: [docs, images]
+    if: github.ref_protected && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Images
+        run: |
+          for image in homer-app homer-runner homer-console; do
+            digest=$(docker buildx imagetools inspect "ghcr.io/$REPO/$image:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+            printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "No digest for $image:$TAG"; exit 1; }
+            cosign verify "ghcr.io/$REPO/$image@$digest" \
+              --certificate-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+            printf '%s %s\n' "$image" "$digest"
+          done >digests.txt
+          tools/release/notes.sh images "$TAG" <digests.txt >images.md
+      - name: Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --repo "$REPO" --json body --jq .body >body.md
+          tools/release/notes.sh merge body.md images.md >notes.md
+          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
