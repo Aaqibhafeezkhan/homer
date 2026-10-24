@@ -41,14 +41,19 @@ class DockerImageTrimTest {
             },
             "app/Dockerfile no longer strips the non-musl SQLite natives from the image's jar (about 11 MB).",
         )
-        val froms = instructions.filter { it.startsWith("FROM ") }.map { it.removePrefix("FROM ").split(Regex("""\s+""")) }
+        // FROM [--platform=…] <image> [AS <name>]; stage names are case-insensitive.
+        val froms =
+            instructions
+                .filter { it.startsWith("FROM ", ignoreCase = true) }
+                .map { line -> line.split(Regex("""\s+""")).drop(1).filterNot { it.startsWith("--") } }
+                .map { parts -> parts[0] to parts.getOrNull(2)?.takeIf { parts[1].equals("AS", ignoreCase = true) }?.lowercase() }
         // A stage built FROM another stage of this file inherits that stage's base; every other base must be musl.
-        val stageNames = froms.mapNotNull { parts -> parts.getOrNull(2)?.takeIf { parts[1].equals("AS", ignoreCase = true) } }.toSet()
+        val stageNames = froms.mapNotNull { it.second }.toSet()
         val runtimeBases =
             froms
-                .filter { parts -> parts.getOrNull(2) != "builder" }
-                .map { it[0] }
-                .filter { it !in stageNames }
+                .filter { (_, name) -> name != "builder" }
+                .map { it.first }
+                .filter { it.lowercase() !in stageNames }
         assertTrue(
             runtimeBases.isNotEmpty() && runtimeBases.all { it.contains("alpine") },
             "the image's jar loads only the Linux-Musl SQLite library, so every runtime stage must stay on a musl " +
