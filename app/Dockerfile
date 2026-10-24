@@ -4,8 +4,8 @@ FROM eclipse-temurin:25-jdk-alpine@sha256:5ecfde8e5ecde5954ea3721155b345ef56c1d5
 
 WORKDIR /build
 
-# Install bash for Gradle wrapper
-RUN apk add --no-cache bash
+# Install bash for Gradle wrapper, zip to trim the fat jar
+RUN apk add --no-cache bash zip
 
 # Build context is the repo root (see docker-compose.yml / DOCKER.md): COPY
 # sources are prefixed with app/, but the in-image WORKDIR layout stays the same.
@@ -46,6 +46,10 @@ RUN --mount=type=secret,id=artifactory_url \
     export ARTIFACTORY_USER="$(cat /run/secrets/artifactory_user 2>/dev/null || true)" && \
     export ARTIFACTORY_TOKEN="$(cat /run/secrets/artifactory_token 2>/dev/null || true)" && \
     ./gradlew shadowJar --no-daemon
+
+# The runtime image is Alpine (musl), where sqlite-jdbc loads only its Linux-Musl
+# native library; drop the other platforms' copies. The jar stays portable outside Docker.
+RUN zip -q -d app/build/libs/homer-*-all.jar 'org/sqlite/native/*' -x 'org/sqlite/native/Linux-Musl/*'
 
 # Stage 2: Runtime image
 FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0 AS runner

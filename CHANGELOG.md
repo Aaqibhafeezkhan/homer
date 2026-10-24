@@ -4,7 +4,7 @@
 
 ### Homer
 
-- **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache, so the first pull is about 280 MB (a third) smaller.
+- **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
 
 ## [1.36.0] - 2026-10-24
 
