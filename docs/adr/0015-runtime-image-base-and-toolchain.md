@@ -95,6 +95,20 @@ capabilities, not slack.
 - Good: free ~48 MiB, no behavior change, preserves every relied-on tool.
 - Bad: no editor in the image for interactive debugging.
 
+## Amendment (2026-10-25): the image's jar is musl-only
+
+Two further trims, with no behavior change. The npm install step cleans npm's
+download cache in the same layer (about 280 MB compressed). The Docker build
+also deletes every SQLite native library from the fat jar except
+`org/sqlite/native/Linux-Musl`, the one sqlite-jdbc loads on this Alpine base
+(about 11 MB). The Gradle `shadowJar` keeps every platform, so a source-built
+jar still runs with `java -jar` on macOS or glibc Linux.
+
+Consequence: `/app/homer.jar` copied out of the image runs only on a musl
+system. Portability is the source build's job; a glibc-based image needs its
+own jar, built with `app/gradlew -p app :app:shadowJar`, not the one from
+`homer-app`.
+
 ## More Information
 
 - Audit item #36 (P3).

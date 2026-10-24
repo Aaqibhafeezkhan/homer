@@ -212,6 +212,9 @@ docker compose up -d
 The stack pulls the published release images
 (`ghcr.io/livesport/homer/homer-app` and `ghcr.io/livesport/homer/homer-console`),
 so nothing is built locally and no JDK or Maven Central access is needed.
+The first start downloads under 1 GB of images and needs under 3 GB of disk;
+the largest part is the Claude Code and Codex CLIs bundled in `homer-app`,
+about 270 MB of the download.
 `HOMER_VERSION` in `.env` selects the release and defaults to the pinned current
 one. To build from source instead, add the build overlay:
 

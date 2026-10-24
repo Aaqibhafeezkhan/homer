@@ -4,8 +4,8 @@ FROM eclipse-temurin:25-jdk-alpine@sha256:5ecfde8e5ecde5954ea3721155b345ef56c1d5
 
 WORKDIR /build
 
-# Install bash for Gradle wrapper
-RUN apk add --no-cache bash
+# Install bash for Gradle wrapper, zip to trim the fat jar
+RUN apk add --no-cache bash zip
 
 # Build context is the repo root (see docker-compose.yml / DOCKER.md): COPY
 # sources are prefixed with app/, but the in-image WORKDIR layout stays the same.
@@ -47,6 +47,11 @@ RUN --mount=type=secret,id=artifactory_url \
     export ARTIFACTORY_TOKEN="$(cat /run/secrets/artifactory_token 2>/dev/null || true)" && \
     ./gradlew shadowJar --no-daemon
 
+# The runtime image is Alpine (musl), where sqlite-jdbc loads only its Linux-Musl
+# native library; drop the other platforms' copies. Only the image's jar is musl-only:
+# a source build (gradlew shadowJar) keeps every platform. See ADR-0015.
+RUN zip -q -d app/build/libs/homer-*-all.jar 'org/sqlite/native/*' -x 'org/sqlite/native/Linux-Musl/*'
+
 # Stage 2: Runtime image
 FROM eclipse-temurin:25-jre-alpine@sha256:28db6fdf60e38945e43d840c0333aeaec66c15943070104f7586fd3c9d1665b0 AS runner
 
@@ -75,7 +80,9 @@ RUN apk add --no-cache \
 # (--build-arg CLAUDE_CODE_VERSION=x.y.z) for reproducible builds and to match
 # server.requireClaudeCodeVersion.
 ARG CLAUDE_CODE_VERSION=latest
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex
+# The npm cache is cleaned in the same layer: nothing reads it at run time.
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex && \
+    npm cache clean --force
 
 # Install the homer_langgraph Python runtime that backs the !<langgraph>
 # command type. --break-system-packages installs into the system site-packages
