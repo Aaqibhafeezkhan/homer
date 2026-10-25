@@ -1841,6 +1841,7 @@ inputs:
 ```
 
 **Optional number parameter:**
+<!-- legacy-syntax-example -->
 ```yaml
 queryParams:  # legacy alias
   - paramName: limit

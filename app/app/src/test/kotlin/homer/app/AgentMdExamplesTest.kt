@@ -26,6 +26,13 @@ import kotlin.test.fail
  *  - `resultEnvParam: { ... }` object form when the model expects an array.
  *  - Renamed/removed kaml tags after a `Command` sealed-class refactor.
  *
+ * A second test scans every yaml/json block (partial snippets included) and
+ * fails on the deprecated param types `STRING`/`NUMBER`/`ANY` and on the
+ * agent-level `queryParams` alias. A block that deliberately shows the legacy
+ * syntax opts out with `<!-- legacy-syntax-example -->` on the line before its
+ * fence. A `queryParams` nested under a `!<agent>` command is a different field
+ * and is not flagged.
+ *
  * Does NOT catch prose drift (wrong default values in field tables,
  * misdescribed validation semantics, missing rows). Per root §10 those
  * rely on reviewer discipline when changing the model.
@@ -73,6 +80,38 @@ class AgentMdExamplesTest {
             fail(
                 "AGENT.md drift detected (${failures.size} of ${blocks.size} blocks failed):\n\n" +
                     failures.joinToString("\n\n"),
+            )
+        }
+    }
+
+    @Test
+    fun `no AGENT md example uses the deprecated param syntax unless marked`() {
+        val legacyType = Regex("""^\s*(?:-\s*)?"?type"?\s*:\s*"?(STRING|NUMBER|ANY)"?\s*,?\s*(#.*)?$""")
+        val agentLevelQueryParams = Regex("""^(?:queryParams:| {2}"queryParams"\s*:)""")
+        val lines = agentMd.readText().lines()
+        val offenders = mutableListOf<String>()
+        var i = 0
+        while (i < lines.size) {
+            val lang = lines[i].trimEnd().removePrefix("```").takeIf { lines[i].startsWith("```") }
+            if (lang != "yaml" && lang != "json") {
+                i++
+                continue
+            }
+            val marked = i > 0 && lines[i - 1].trim() == "<!-- legacy-syntax-example -->"
+            val fenceLine = i + 1
+            i++
+            while (i < lines.size && lines[i].trimEnd() != "```") {
+                if (!marked && (legacyType.matches(lines[i]) || agentLevelQueryParams.containsMatchIn(lines[i]))) {
+                    offenders += "AGENT.md:$fenceLine (block) line ${i + 1}: ${lines[i].trim()}"
+                }
+                i++
+            }
+            i++
+        }
+        if (offenders.isNotEmpty()) {
+            fail(
+                "Deprecated param syntax in AGENT.md examples (use typed inputs, or mark a deliberate " +
+                    "legacy example with <!-- legacy-syntax-example -->):\n" + offenders.joinToString("\n"),
             )
         }
     }
