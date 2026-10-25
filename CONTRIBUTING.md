@@ -8,6 +8,10 @@
   architecture and conventions. Requires Node.
 - Questions and help go to
   [GitHub Discussions](https://github.com/livesport/homer/discussions/categories/q-a).
+- Looking for something to pick up? See the
+  [good first issues](https://github.com/livesport/homer/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)
+  and [help wanted](https://github.com/livesport/homer/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
+  issues, then follow [Submitting changes](#submitting-changes).
 
 ## Before submitting
 
