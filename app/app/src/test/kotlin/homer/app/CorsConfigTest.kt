@@ -150,7 +150,15 @@ class CorsConfigTest {
 
     // ---- resolveCorsOrigins (startup @SYSENV resolution, #29) ----
 
-    private val env = SysEnvResolver { mapOf("FRONTEND_PORT" to "13000", "BAD_PORT" to "13000/admin?secret=s3cr3t")[it] }
+    private val env =
+        SysEnvResolver {
+            mapOf(
+                "FRONTEND_PORT" to "13000",
+                "BAD_PORT" to "13000/admin?secret=s3cr3t",
+                "EMPTY" to "",
+                "ZERO" to "0",
+            )[it]
+        }
 
     @Test
     fun `resolveCorsOrigins completes an origin from the environment and keeps literal entries`() {
@@ -182,6 +190,23 @@ class CorsConfigTest {
         assertTrue(message.contains("'http://localhost:@SYSENV:BAD_PORT'"), message)
         assertTrue(message.contains("after @SYSENV resolution"), message)
         assertFalse(message.contains("s3cr3t"), "the resolved value must not reach the error: $message")
+    }
+
+    @Test
+    fun `resolveCorsOrigins refuses an empty entry, written or resolved`() {
+        for (entry in listOf("", "@SYSENV:EMPTY")) {
+            val ex = assertFailsWith<IllegalStateException>("entry '$entry'") { resolveCorsOrigins(listOf(entry), env) }
+            assertTrue(ex.message!!.contains("is not an origin"), ex.message)
+        }
+    }
+
+    @Test
+    fun `resolveCorsOrigins refuses a variable that resolves to port 0`() {
+        val ex =
+            assertFailsWith<IllegalStateException> {
+                resolveCorsOrigins(listOf("http://localhost:@SYSENV:ZERO"), env)
+            }
+        assertTrue(ex.message!!.contains("'http://localhost:@SYSENV:ZERO' is not an origin after @SYSENV resolution"), ex.message)
     }
 
     @Test

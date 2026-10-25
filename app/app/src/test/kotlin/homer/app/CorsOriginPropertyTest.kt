@@ -2,6 +2,8 @@ package homer.app
 
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.Codepoint
+import io.kotest.property.arbitrary.choice
+import io.kotest.property.arbitrary.constant
 import io.kotest.property.arbitrary.element
 import io.kotest.property.arbitrary.int
 import io.kotest.property.arbitrary.pattern
@@ -48,14 +50,30 @@ class CorsOriginPropertyTest {
                 val origin = "http://localhost:$value"
                 if (isCorsOrigin(origin)) {
                     assertEquals("localhost", URI(origin).host, "value '$value'")
-                    assertTrue(value.trimEnd('/').all(Char::isDigit), "value '$value'")
+                    assertTrue(value.trimEnd('/').toInt() in 1..65535, "value '$value'")
                 }
             }
         }
 
     @Test
-    fun `a port above 65535, an empty port and a non-http scheme are refused`() {
+    fun `a port outside 1 to 65535 is refused`() =
+        runTest {
+            val outside = Arb.choice(Arb.constant(0), Arb.int(65536..9_999_999))
+            checkAll(schemes, hosts, outside) { scheme, host, port ->
+                assertFalse(isCorsOrigin("$scheme://$host:$port"), "$scheme://$host:$port")
+            }
+        }
+
+    @Test
+    fun `scheme and host match case-insensitively`() {
+        assertTrue(isCorsOrigin("HTTPS://LocalHost:3000"))
+        assertTrue(isCorsOrigin("Http://Console.Example.com/"))
+    }
+
+    @Test
+    fun `a port above 65535, port 0, an empty port and a non-http scheme are refused`() {
         assertFalse(isCorsOrigin("http://localhost:65536"))
+        assertFalse(isCorsOrigin("http://localhost:0"))
         assertFalse(isCorsOrigin("http://localhost:"))
         assertFalse(isCorsOrigin("http://localhost:abc"))
         assertFalse(isCorsOrigin("ftp://localhost:21"))

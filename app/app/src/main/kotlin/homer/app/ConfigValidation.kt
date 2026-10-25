@@ -124,6 +124,9 @@ internal fun resolveCorsOrigins(
 private const val MAX_PORT = 65535
 private val ORIGIN_SCHEMES = setOf("http", "https")
 
+/** No port, or one a browser origin can carry: port 0 would be read as no port and allow the scheme default. */
+private fun hasOriginPort(uri: URI): Boolean = uri.port == -1 || uri.port in 1..MAX_PORT
+
 /** True when [value] is exactly `scheme://host[:port]` (an optional trailing `/` allowed), scheme http or https. */
 internal fun isCorsOrigin(value: String): Boolean {
     val uri =
@@ -133,7 +136,7 @@ internal fun isCorsOrigin(value: String): Boolean {
             return false
         }
     val scheme = uri.scheme?.lowercase()
-    if (scheme !in ORIGIN_SCHEMES || uri.host == null || uri.port > MAX_PORT) return false
+    if (scheme !in ORIGIN_SCHEMES || uri.host == null || !hasOriginPort(uri)) return false
     val port = if (uri.port == -1) "" else ":${uri.port}"
     // Rebuilding the origin from its parts rejects userinfo, a path, a query and a fragment.
     return value.removeSuffix("/").equals("$scheme://${uri.host}$port", ignoreCase = true)
