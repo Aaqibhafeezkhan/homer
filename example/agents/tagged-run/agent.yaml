@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: tagged-run
+description: Demonstrates subject tags resolved from inputs and one runtime tag key
+tags:
+  fromInputs: [projectId, mr] # resolved from these inputs at start
+  runtime: [decision] # keys the run may declare later via homer-tag
+inputs:
+  - paramName: projectId # numeric project id; becomes the projectId tag
+    envName: PROJECT_ID
+    type: integer
+  - paramName: mr # merge-request iid; becomes the mr tag
+    envName: MR_IID
+    type: integer
+commands:
+  - !<script>
+    content: |
+      echo "projectId=${PROJECT_ID} mr=${MR_IID}"
+      homer-tag decision:approved
