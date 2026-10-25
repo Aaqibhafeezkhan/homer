@@ -461,13 +461,16 @@ base image into a clear per-run error instead of silent version drift.
 
 ### Verifying a published image
 
-Every release image on GHCR is signed with cosign and carries SLSA build
-provenance and a CycloneDX SBOM, all bound to the image digest
-([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
+Every release image on GHCR is a multi-arch index of a `linux/amd64` and a
+`linux/arm64` image, so Docker pulls the one that matches the host. The index
+is signed with cosign and carries SLSA provenance of the release run that
+assembled it and the CycloneDX SBOM of each platform, all bound to the index
+digest; each platform image carries its own signature, SLSA build provenance
+and SBOM ([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
 image by digest before deploying it. The stack pulls by tag
 (`HOMER_VERSION`), so resolve the digest first —
 `docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.36.0 --format '{{.Manifest.Digest}}'`
-— and pin that digest in your own override (see [Best Practices → Security](#security)):
+prints the index digest — and pin that digest in your own override (see [Best Practices → Security](#security)):
 
 ```bash
 image=ghcr.io/livesport/homer/homer-app@sha256:<digest>
@@ -481,6 +484,14 @@ gh attestation verify "oci://$image" --repo livesport/homer \
   --signer-workflow livesport/homer/.github/workflows/release.yml \
   --predicate-type https://cyclonedx.org/bom
 ```
+
+The provenance on the index records the release run that assembled and signed
+it, not a build: the build provenance of what you run is on the platform
+images. The index lists each of them by its own digest
+(`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.36.0`
+shows them), and each is signed and attested the same way, so the same
+commands verify a platform digest: run them on the one for your host to check
+how it was built, or if you pin it instead of the index.
 
 ### Frontend Variables
 

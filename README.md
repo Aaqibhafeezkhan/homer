@@ -222,8 +222,9 @@ one. To build from source instead, add the build overlay:
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
 ```
 
-To verify the images before the first pull — every release is signed with
-cosign and carries SLSA provenance and a CycloneDX SBOM (ADR-0086) — run:
+To verify the images before the first pull — every release image is a
+multi-arch index (`linux/amd64` and `linux/arm64`), signed with cosign and
+carrying SLSA provenance and a CycloneDX SBOM (ADR-0086) — run:
 
 ```bash
 version=1.36.0   # keep in step with HOMER_VERSION in .env

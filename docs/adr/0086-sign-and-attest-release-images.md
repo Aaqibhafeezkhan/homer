@@ -111,3 +111,50 @@ image list is the `images` job's matrix; `ReleaseWorkflowGateTest` keeps the two
 `tools/release/notes.sh` writes the section and puts it in place of an earlier one, so a rerun,
 which pushes and signs new digests, lists the new ones. The release's notes above it are the
 version's `CHANGELOG.md` section; a tag whose version has none fails before any image is pushed.
+
+## Amendment (2026-10-25): multi-arch images
+
+Every release image is now an index of a `linux/amd64` and a `linux/arm64` image, so an arm64
+host, an Apple Silicon laptop among them, runs it natively instead of under emulation.
+
+Each platform is built on a native GitHub-hosted runner of that platform: `ubuntu-latest` and
+`ubuntu-24.04-arm`. Building both on one amd64 runner under QEMU was rejected: the Gradle build
+and the console's Next.js build run several times slower under emulation, and the release would
+wait on the slowest of them. The base images are pinned to multi-arch index digests, so each
+platform resolves its own base manifest; the bundled tools have arm64 musl builds (the Claude Code
+CLI's `linux-arm64-musl` package, the Codex CLI's static `linux-arm64` binary, the sqlite-jdbc
+`Linux-Musl/aarch64` library the image's jar keeps, musllinux wheels for `homer_langgraph`).
+
+The `images` job is split in three. `image-tags` computes the run's tags once. `image-builds`
+builds each image for each platform with buildx and pushes it by digest only, with no tag and no
+BuildKit provenance, then generates that platform's SBOM, signs the platform digest and attests
+its provenance and SBOM, exactly as the steps above do. The console's license gate scans a local
+build of each platform before that push, which rebuilds from the builder's cache, so the gate
+still runs before anything is conveyed. `images` then joins each image's platform digests into
+one index with `docker buildx imagetools create`, under the same tags as before. It takes each
+digest from the artifact named for its platform and image (the image last, so no image's
+download pattern matches another's), checks that the digest's image labels carry this image's
+name and version, tag suffix included, so a slim build cannot pass for the full one, and checks
+that the index lists exactly those digests. It then signs the index digest, attests provenance
+to it, and attests both platform SBOMs to it, since an SBOM describes one platform's file system.
+Its verify step checks the index and every platform digest the way a consumer does.
+
+The two provenance attestations say different things. A platform digest's provenance records the
+workflow run that built that image. The index's provenance records the run that assembled and
+signed the index; `imagetools create` builds nothing, so it is not build provenance of the
+platform images. Both name the same workflow, tag and commit, which is what a consumer checks.
+A consumer who wants build provenance verifies the platform digests the index lists.
+
+Consequences:
+
+- The index digest is what the release page lists and what the documentation tells a consumer to
+  verify and pin; it names each platform digest by content, and each of those carries its own
+  signature, build provenance and SBOM.
+- A failed platform build skips every index, so no release tag names an image that lacks a
+  platform; the platform digests already pushed stay untagged until pruned.
+- `timeout-minutes` bounds a build, not the wait for a runner: GitHub does not count queue time,
+  and documents no queue limit for GitHub-hosted runners. If no arm64 runner is available, the
+  release waits in the queue instead of failing.
+- arm64 standard runners are free for public repositories. In a private repository, a private
+  fork for instance, they count against the plan's minutes and have two vCPUs instead of four, so
+  the arm64 builds are slower there.
