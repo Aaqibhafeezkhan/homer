@@ -1733,7 +1733,7 @@ The `inputs` field on the agent defines parameters the caller supplies. Each `Pa
 inputs:
   - paramName: userId
     envName: USER_ID
-    type: NUMBER
+    type: integer
     required: true
     transformer: !<pass> {}
 ```
@@ -1747,7 +1747,7 @@ inputs:
     {
       "paramName": "userId",
       "envName": "USER_ID",
-      "type": "NUMBER",
+      "type": "integer",
       "required": true,
       "transformer": {
         "type": "pass"
@@ -1836,7 +1836,7 @@ transformer: !<jsonPath>
 inputs:
   - paramName: name
     envName: USER_NAME
-    type: STRING
+    type: string
     required: true
 ```
 
@@ -1851,10 +1851,10 @@ queryParams:  # legacy alias
 
 **JSON parameter with extraction:**
 ```yaml
-queryParams:
+inputs:
   - paramName: config
     envName: API_KEY
-    type: ANY
+    type: string
     required: true
     transformer: !<jsonPath>
       path: "$.apiKey"
@@ -1878,7 +1878,7 @@ inputs:
   - paramName: user
     envName: USER_NAME
     src: body
-    type: STRING
+    type: string
 ```
 ```bash
 curl -X POST "http://localhost:8080/api/v1/agent/body-input" \
@@ -1892,7 +1892,7 @@ inputs:
   - paramName: payload
     envName: SERVICE_ID
     src: body
-    type: ANY
+    type: string
     transformer: !<jsonPath>
       path: "$.service.id"
 ```
@@ -2065,7 +2065,7 @@ commands:
 inputs:
   - paramName: service
     src: body
-    type: STRING
+    type: string
 inputSchema:
   type: object
   required: [service, version]
@@ -2090,7 +2090,7 @@ inputSchema:
     { "type": "cmd", "cmd": ["echo", "deploying"], "timeout": 60 }
   ],
   "inputs": [
-    { "paramName": "service", "src": "body", "type": "STRING" }
+    { "paramName": "service", "src": "body", "type": "string" }
   ],
   "inputSchema": {
     "type": "object",
@@ -2147,7 +2147,7 @@ inputs:
   - paramName: name
     envName: NAME
     src: query
-    type: STRING
+    type: string
     required: true
 mcp:
   enabled: true
@@ -2164,7 +2164,7 @@ mcp:
     { "type": "script", "content": "echo \"Hello $NAME\"" }
   ],
   "inputs": [
-    { "paramName": "name", "envName": "NAME", "src": "query", "type": "STRING", "required": true }
+    { "paramName": "name", "envName": "NAME", "src": "query", "type": "string", "required": true }
   ],
   "mcp": {
     "enabled": true
