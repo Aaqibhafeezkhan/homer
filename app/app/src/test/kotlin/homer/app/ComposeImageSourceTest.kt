@@ -1,6 +1,10 @@
 package homer.app
 
 import homer.app.fixtures.repoRoot
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertTrue
@@ -318,11 +322,7 @@ class ComposeImageSourceTest {
     fun `the quick start enables console token sign-in`() {
         // The example backend is bearer-only: a console started without these two settings runs
         // unauthenticated and every API call it makes gets a 401 (issue #26).
-        val lines = File(repoRoot, "docker-compose.yml").readLines()
-        val frontend = service(lines, "frontend")
-        assertTrue(frontend >= 0, "docker-compose.yml no longer defines a `frontend` service.")
-        val environment = childKey(lines, frontend, "environment")
-        val entries = if (environment < 0) emptyList() else nestedBlock(lines, environment).map { it.trim().removePrefix("- ") }
+        val entries = environmentOf("frontend")
         for (entry in listOf("CONSOLE_AUTH_ENABLED=\${AUTH_ENABLED:-false}", "CONSOLE_ALLOW_BEARER=\${CONSOLE_ALLOW_BEARER:-false}")) {
             assertTrue(
                 entry in entries,
@@ -337,6 +337,48 @@ class ComposeImageSourceTest {
                 setting in env,
                 ".env.example no longer sets `$setting`: the quick start's console shows no sign-in, or no " +
                     "Token tab, so the example bearer-only backend answers every console call with a 401 (issue #26).",
+            )
+        }
+    }
+
+    /** The `- KEY=value` entries of service [name]'s `environment:` list in docker-compose.yml. */
+    private fun environmentOf(name: String): List<String> {
+        val lines = File(repoRoot, "docker-compose.yml").readLines()
+        val index = service(lines, name)
+        assertTrue(index >= 0, "docker-compose.yml no longer defines a `$name` service.")
+        val environment = childKey(lines, index, "environment")
+        return if (environment < 0) emptyList() else nestedBlock(lines, environment).map { it.trim().removePrefix("- ") }
+    }
+
+    @Test
+    fun `the console origin and API URL follow the published ports`() {
+        // Changing FRONTEND_PORT or BACKEND_PORT alone must leave a working console (issue #29): the backend
+        // learns the console's port to allow its origin, and the console calls the backend's published port.
+        assertTrue(
+            "FRONTEND_PORT=\${FRONTEND_PORT:-3000}" in environmentOf("backend"),
+            "docker-compose.yml: the `backend` environment lost `FRONTEND_PORT=\${FRONTEND_PORT:-3000}`, so the " +
+                "example config's `@SYSENV:FRONTEND_PORT` CORS origin cannot resolve and the backend refuses to " +
+                "start (issue #29).",
+        )
+        assertTrue(
+            "CONSOLE_HOMER_API_URL=\${CONSOLE_HOMER_API_URL:-http://localhost:\${BACKEND_PORT:-8080}}" in environmentOf("frontend"),
+            "docker-compose.yml: the `frontend` API URL no longer defaults to the backend's published " +
+                "`BACKEND_PORT`, so moving the backend leaves the console calling a port nothing listens on (issue #29).",
+        )
+        val expected = listOf("http://localhost:@SYSENV:FRONTEND_PORT", "http://127.0.0.1:@SYSENV:FRONTEND_PORT")
+        for (name in listOf("config.json", "config-local.json", "config-custom.json")) {
+            val origins =
+                Json
+                    .parseToJsonElement(File(repoRoot, "example/config/$name").readText())
+                    .jsonObject["server"]
+                    ?.jsonObject
+                    ?.get("corsAllowedOrigins")
+                    ?.jsonArray
+                    ?.map { it.jsonPrimitive.content }
+            assertTrue(
+                origins == expected,
+                "example/config/$name allows the CORS origins $origins instead of $expected: a console moved off " +
+                    "port 3000 with FRONTEND_PORT then fails every API call's preflight (issue #29).",
             )
         }
     }

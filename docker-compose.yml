@@ -19,6 +19,9 @@ services:
       # Resolved into the admin bearer token by @SYSENV in example/config/config.json.
       # No default: startup fails if it is unset, so no working credential ever ships.
       - HOMER_ADMIN_TOKEN=${HOMER_ADMIN_TOKEN:?set HOMER_ADMIN_TOKEN in .env before starting}
+      # The console's published port: the example configs allow its origin through
+      # @SYSENV:FRONTEND_PORT, so moving the console needs no config edit (#29).
+      - FRONTEND_PORT=${FRONTEND_PORT:-3000}
     networks:
       - homer-network
     # no-new-privileges is safe with the entrypoint's root->homer su-exec drop
@@ -43,7 +46,8 @@ services:
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     environment:
-      - CONSOLE_HOMER_API_URL=${CONSOLE_HOMER_API_URL:-http://localhost:8080}
+      # The browser calls the API at the backend's published port unless overridden.
+      - CONSOLE_HOMER_API_URL=${CONSOLE_HOMER_API_URL:-http://localhost:${BACKEND_PORT:-8080}}
       - CONSOLE_AUTH_ENABLED=${AUTH_ENABLED:-false}
       - CONSOLE_ALLOW_BEARER=${CONSOLE_ALLOW_BEARER:-false}
       - CONSOLE_PLUGINS=${CONSOLE_PLUGINS:-}

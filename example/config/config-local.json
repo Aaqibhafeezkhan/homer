@@ -4,7 +4,7 @@
     "apiAuth": {
       "type": "unsecured"
     },
-    "corsAllowedOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+    "corsAllowedOrigins": ["http://localhost:@SYSENV:FRONTEND_PORT", "http://127.0.0.1:@SYSENV:FRONTEND_PORT"]
   },
   "agentsSearchPath": "/app/agents",
   "workspaceRootPath": "/app/workspace/runs",

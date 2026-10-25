@@ -7,6 +7,7 @@
 - **Fixed: agentdebug param types** — `validate` and `show-commands` now print each param type as written in agent files (`string`, `integer`) instead of the internal enum name.
 - **Added: `@SYSENV:` placeholders in `server.corsAllowedOrigins`** — An entry such as `http://localhost:@SYSENV:FRONTEND_PORT` is resolved at startup.
 - **BREAKING: `server.corsAllowedOrigins` entries must be bare origins** — An entry with a path, query, fragment, credentials or port 0, previously accepted with that part ignored, now fails startup; use `http(s)://host[:port]` with a port of 1–65535.
+- **Fixed: changing `FRONTEND_PORT` or `BACKEND_PORT` broke the compose console** — The example configs allow the console origin on `FRONTEND_PORT`, and the console's API URL follows `BACKEND_PORT`, so a port change in `.env` is the only step.
 - **Fixed: bundled example agents use typed inputs** — The example agents no longer log deprecation warnings at startup; they use `inputs:` and typed params, and the `hello` example's `project_id` now accepts only letters, digits, `_` and `-`.
 - **Added: slim `homer-app:<version>-slim` image** — A server image without the agent CLIs (Claude Code, Codex, Node.js, git), for deployments whose agents run on pull runners. See [ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md).
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
