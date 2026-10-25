@@ -199,3 +199,21 @@ edits to `Application.kt` / `SessionAuth.kt` must keep them:
   Combined / Unsecured. `Password` joins that family.
 - Reference: `SERVER.md` § Password Authentication.
 - Reference: `app/README.md` § Authentication (Endpoints table).
+
+## Amendment (2026-10-25): the Compose quick start signs in with the admin token
+
+The Docker Compose quick start (`.env.example`) now sets `AUTH_ENABLED=true` and
+`CONSOLE_ALLOW_BEARER=true`, so the console offers the legacy Token tab and the
+browser keeps `HOMER_ADMIN_TOKEN` in `localStorage`, the exposure this ADR
+removed. Before, the console ran unauthenticated against the bearer-only example
+backend and every API call got a 401. The release image ships no tool that
+produces the bcrypt hash a `password` scheme needs (agentdebug's
+`hash-password` exists only in `HOMER_DEBUG=1` builds), so cookie sign-in cannot
+be set up from the quick start alone.
+
+Rejected: shipping a hash tool in the release image, or defaulting to a
+`password` or combined scheme with a generated hash (more surface and a second
+secret to manage in a first run); and the unsecured `config-local.json`, which
+stays opt-in. This is acceptable because the stack binds to `127.0.0.1` and the
+setting is documented as a quick-start one. Cookie sign-in with
+`CONSOLE_ALLOW_BEARER` off remains the recommendation for any real deployment.
