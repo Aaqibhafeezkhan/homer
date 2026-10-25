@@ -2313,8 +2313,8 @@ commands: [ !&lt;langgraph&gt; { module: g.flow, inputEnv: GRAPH_INPUT } ]</code
 
         <article class="f">
           <h3>Local runner <span class="where">default</span></h3>
-          <p>Runs on Homer's own host, inheriting the allowlisted host env. Its claim-queue facets
-            (<code>tags</code>, <code>concurrency</code>) are set under <code>server.localRunner</code>; nothing else to configure.
+          <p>Runs on Homer's own host, inheriting the allowlisted host env. <code>server.localRunner</code> holds
+            its claim-queue facets (<code>tags</code>, <code>concurrency</code>) and an <code>enabled</code> switch;
             <code>enabled: false</code> turns it off, so a run routed to <code>local</code> fails at once and no run
             executes in the server's container; the server still runs <code>homer_langgraph inspect</code> and
             <code>state</code> itself, which import the agent's graph module.</p>
