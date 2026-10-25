@@ -3,10 +3,12 @@ description: |
   Demonstrates the `when:` predicate. Each command runs only if its predicate
   evaluates to true. Predicates use bash test syntax; exit 0 = true, 1 = false,
   ≥2 = eval error (fails the agent). Per-expression timeout is 5 s.
-queryParams:
+inputs:
   - paramName: region
+    type: string
     required: false
   - paramName: env
+    type: string
     required: false
 commands:
   - !<script>

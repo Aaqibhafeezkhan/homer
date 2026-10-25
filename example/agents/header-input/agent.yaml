@@ -8,10 +8,10 @@ inputs:
   - paramName: X-Trace-Id
     envName: TRACE_ID
     src: header
-    type: ANY
+    type: string
     required: true
   - paramName: X-Request-Id
     envName: REQ_ID
     src: header
-    type: ANY
+    type: string
     required: false
