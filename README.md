@@ -23,6 +23,10 @@
   <a href="https://livesport.github.io/homer/">Documentation</a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/quickstart.gif" alt="The Quick start in six steps: an agent is triggered over HTTP, runs in the background, stops on the question Ship it? in the Homer console, the operator answers ship, and the run resumes and finishes" width="800">
+</p>
+
 ---
 
 ## Why Homer?
@@ -113,19 +117,23 @@ running — when the answer arrives, the graph resumes from its checkpoint, righ
 where it stopped.
 
 ```python
-def run_tests(state):   # a Homer sub-agent, running in parallel with security_scan
-    return {"tests": homer_fanout("run-tests", result_jsonpath="$.summary", group="checks")}
+def tests(state):    # a Homer sub-agent, running in parallel with lint
+    return {"tests": homer_fanout("langgraph_demo_check", params={"check": "tests"},
+                                  result_jsonpath="$.ok", group="checks")}
 
-def approve(state):     # parks the graph until the operator answers
-    return {"decision": homer_interrupt("Ship **1.34.0**?", options=["ship it", "hold"])}
+def approve(state):  # parks the graph until the operator answers
+    return {"decision": homer_interrupt(f"{state['summary']}. Ship it?",
+                                        options=["approve", "reject"])}
 ```
 
 The console draws the graph and shows how far each run got. Green is the path
 taken — the two checks ran side by side as sub-agents — and orange is where the
-run waits for the operator:
+run waits for the operator. This is the bundled `langgraph_demo` agent
+([`example/agents/langgraph_demo`](example/agents/langgraph_demo)), which you can
+run yourself after the [Quick start](#next-a-durable-langgraph-workflow):
 
 <p align="center">
-  <img src="docs/assets/console-langgraph.png" alt="A LangGraph release workflow in the Homer console: the checks ran in parallel, release notes are drafted, and the run is parked at the approval step waiting for the operator" width="900">
+  <img src="docs/assets/console-langgraph.gif" alt="The langgraph_demo graph in the Homer console: the tests and lint checks fan out as parallel sub-agents, the graph parks on the approve step, the operator answers approve in the Questions inbox, and the graph resumes from its checkpoint along the ship path" width="800">
 </p>
 
 ## What's in the box
@@ -283,6 +291,23 @@ stack defaults to. The question flow is not local-only: Homer materializes the
 `curl` and `awk` plus a reachable `homerApiUrl`, from which the runner injects
 `HMR_API_URL` (see [`app/AGENT.md`](app/AGENT.md) § *Asking the operator
 questions*).
+
+### Next: a durable LangGraph workflow
+
+The bundled `langgraph_demo` agent is a small [LangGraph](https://www.langchain.com/langgraph)
+graph, and it needs no LLM credentials either. It fans out two checks as
+parallel sub-agents, summarizes them, and parks on an approval question:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/v1/agent/langgraph_demo"
+```
+
+Open the run in the console's **Processes** list and expand its `langgraph`
+step under **Executions** to see the graph: the checks are green, `approve` is
+orange. The run itself already shows `Finished` — a parked graph keeps no
+process running. Answer **approve** in the **Questions** inbox, and Homer starts
+a new run that resumes the graph from its checkpoint and takes the `ship` path.
 
 ### Next: add Claude
 
