@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
+
 ### Console
 
 - **Fixed: the Last Command column named a skipped command** — A run's last command is now the last one that actually ran, not a trailing step skipped by its `when:` condition; a run whose every command was skipped shows an empty cell.
