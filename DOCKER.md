@@ -308,7 +308,7 @@ waits for it to be healthy):
 docker compose up frontend
 ```
 
-**Note**: The console calls the backend from the browser, so the URL in `CONSOLE_HOMER_API_URL` (default: `http://localhost:8080`) must be reachable from the browser, not just from the container.
+**Note**: The console calls the backend from the browser, so the URL in `CONSOLE_HOMER_API_URL` (default: `http://localhost:<BACKEND_PORT>`) must be reachable from the browser, not just from the container.
 
 Access the console at http://localhost:3000
 
@@ -334,7 +334,8 @@ docker run -p 127.0.0.1:8080:8080 \
 > **Bind to `127.0.0.1`, as above.** A bare `-p 8080:8080` publishes on all
 > interfaces, and Homer runs arbitrary shell/Claude by design. `example/config/config.json`
 > does require a bearer token (`@SYSENV:HOMER_ADMIN_TOKEN`, so add
-> `-e HOMER_ADMIN_TOKEN=...` or startup fails), but an explicit
+> `-e HOMER_ADMIN_TOKEN=...` or startup fails; its CORS origins likewise need
+> `-e FRONTEND_PORT=3000`, the console's port), but an explicit
 > `"apiAuth": {"type": "unsecured"}` **opts out of every check** — swap in a
 > config that sets it, such as `example/config/config-custom.json`, and a bare `-p` publishes
 > unauthenticated remote code execution. Keep the loopback bind and put a
@@ -357,6 +358,7 @@ docker run -p 3000:3000 \
 |----------|---------|-------------|
 | `BACKEND_PORT` | 8080 | Host port for the backend (published on `127.0.0.1` only) |
 | `HOMER_ADMIN_TOKEN` | _(required)_ | Admin API bearer token; resolved by `@SYSENV` in the example config. Startup fails if empty or unset. |
+| `FRONTEND_PORT` | 3000 | Compose passes the console's port to the backend too: the example configs allow the console origin `http://localhost:<FRONTEND_PORT>` (and `127.0.0.1`) via `@SYSENV:FRONTEND_PORT`. Startup fails if unset |
 | `JAVA_OPTS` | `-Xmx512m -Xms256m` | JVM options |
 | `CONFIG_PATH` | `config/config.json` | Path to config file in container |
 
@@ -498,7 +500,7 @@ how it was built, or if you pin it instead of the index.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FRONTEND_PORT` | 3000 | Host port for the console (published on `127.0.0.1` only) |
-| `CONSOLE_HOMER_API_URL` | `http://localhost:8080` | Backend API URL, as reached from the browser (`docker-compose.dev.yml` pins the default) |
+| `CONSOLE_HOMER_API_URL` | `http://localhost:<BACKEND_PORT>` | Backend API URL, as reached from the browser (`docker-compose.dev.yml` pins the default) |
 | `AUTH_ENABLED` | false (`.env.example`: true) | Passed to the console as `CONSOLE_AUTH_ENABLED`: turns on console sign-in |
 | `CONSOLE_ALLOW_BEARER` | false (`.env.example`: true) | Offers Token sign-in on the console's login screen; off means cookie (password) sign-in only. A bearer token is kept in the browser's `localStorage`, so leave it off outside a loopback setup |
 | `CONSOLE_PLUGINS` | *(unset)* | Comma-separated plugin entries — a same-origin module path under `public/`, optionally `@<requirement>` (`/plugins/costs.js@admin`). See [Console plugins in the image](#console-plugins-in-the-image) |
@@ -687,7 +689,7 @@ docker compose config
 
 **Important**: The frontend makes API calls from the browser (client-side), not from the Docker container. This means:
 
-- **Development mode**: Use `http://localhost:8080` (already configured in docker-compose.dev.yml)
+- **Development mode**: Use `http://localhost:<BACKEND_PORT>` (already configured in docker-compose.dev.yml)
 - **Production mode**: Use your actual backend URL accessible from the browser
 
 If you see errors like "Failed to fetch" or "backend: not found":
@@ -707,19 +709,20 @@ docker compose exec frontend env | grep CONSOLE_HOMER_API_URL
 ### CORS Errors in the Browser Console
 
 Because the console calls the API cross-origin (port 3000 → port 8080), the
-**backend's** CORS policy must allow the console origin. If the browser
-console shows errors like "blocked by CORS policy", set
-`server.corsAllowedOrigins` in the backend config to the exact console
-origin(s):
+**backend's** CORS policy must allow the console origin. The example configs
+take the port from `FRONTEND_PORT`, which compose passes to the backend:
 
 ```json
-"corsAllowedOrigins": ["http://localhost:3000"]
+"corsAllowedOrigins": ["http://localhost:@SYSENV:FRONTEND_PORT", "http://127.0.0.1:@SYSENV:FRONTEND_PORT"]
 ```
 
-The example config already pins the default local origins. An empty list
-answers with a wildcard origin, which browsers reject for the console's
-credentialed (cookie-mode) requests. See `app/SERVER.md` ("Cross-origin /
-multi-instance consoles") for details.
+If the browser console shows errors like "blocked by CORS policy", the console
+is served from an origin that list does not name — another host name, or a config of your own.
+Set `server.corsAllowedOrigins` to the exact console origin(s), e.g.
+`["https://console.example.com"]`. An empty list answers with a wildcard
+origin, which browsers reject for the console's credentialed (cookie-mode)
+requests. See `app/SERVER.md` ("Cross-origin / multi-instance consoles") for
+details.
 
 ### Backend Config Not Found
 
@@ -742,12 +745,16 @@ chmod -R 755 example/workspace
 
 ### Port Already in Use
 
-Change port in `.env` file:
+Change the port in the `.env` file and restart; nothing else needs editing:
 ```bash
 echo "BACKEND_PORT=8081" >> .env
 echo "FRONTEND_PORT=3001" >> .env
 docker compose up -d
 ```
+
+The console's API URL follows `BACKEND_PORT` and the backend's allowed CORS
+origin follows `FRONTEND_PORT`, unless `.env` sets `CONSOLE_HOMER_API_URL`
+or `CONFIG_PATH` points at a config with literal origins.
 
 ### Build Failures
 
