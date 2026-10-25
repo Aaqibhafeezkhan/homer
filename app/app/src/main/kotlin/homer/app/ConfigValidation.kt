@@ -13,6 +13,8 @@ import homer.app.models.ParamSource
 import homer.app.models.RunnerConfig
 import homer.app.models.flattenAuthSchemes
 import org.slf4j.LoggerFactory
+import java.net.URI
+import java.net.URISyntaxException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -98,6 +100,44 @@ internal fun resolveRunnerEnvs(
             }
         }
     }
+
+/**
+ * Resolves `@SYSENV:VAR` placeholders in `server.corsAllowedOrigins` and refuses
+ * an entry that does not resolve to a bare `http(s)://host[:port]` origin, so a
+ * variable can complete an origin but never add a path, credentials or another
+ * host. Not a secret: no name set is recorded. The error names the raw entry,
+ * never the resolved value.
+ */
+internal fun resolveCorsOrigins(
+    origins: List<String>,
+    sysEnvResolver: SysEnvResolver,
+): List<String> =
+    origins.map { raw ->
+        sysEnvResolver.resolve(raw).also { resolved ->
+            check(isCorsOrigin(resolved)) {
+                val via = if (resolved == raw) "" else " after @SYSENV resolution"
+                "server.corsAllowedOrigins entry '$raw' is not an origin$via: expected http(s)://host[:port]"
+            }
+        }
+    }
+
+private const val MAX_PORT = 65535
+private val ORIGIN_SCHEMES = setOf("http", "https")
+
+/** True when [value] is exactly `scheme://host[:port]` (an optional trailing `/` allowed), scheme http or https. */
+internal fun isCorsOrigin(value: String): Boolean {
+    val uri =
+        try {
+            URI(value)
+        } catch (_: URISyntaxException) {
+            return false
+        }
+    val scheme = uri.scheme?.lowercase()
+    if (scheme !in ORIGIN_SCHEMES || uri.host == null || uri.port > MAX_PORT) return false
+    val port = if (uri.port == -1) "" else ":${uri.port}"
+    // Rebuilding the origin from its parts rejects userinfo, a path, a query and a fragment.
+    return value.removeSuffix("/").equals("$scheme://${uri.host}$port", ignoreCase = true)
+}
 
 /**
  * Fail-fast on the removed `endpoints` path allowlist (ADR-0037). Each principal

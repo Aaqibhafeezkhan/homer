@@ -418,7 +418,7 @@ server:
 | `rateLimit` | `RateLimitConfig` | No | `{limit=1000, refillPeriod=60}` | Global API rate limiting: a server-wide ceiling, one bucket shared by every request; the `/livez` and `/readyz` probes are exempt and never answer `429` (see [Liveness & readiness probes](#liveness--readiness-probes)), and `POST /api/v1/auth/login` and runner requests carrying a valid domain token use their own buckets; the same size also caps all logins together (see [Rate Limiting](#rate-limiting)) |
 | `perCallerRateLimit` | `RateLimitConfig` | No | `{limit=300, refillPeriod=60}` | Per-caller rate limit on the secured `/api/v1` routes, keyed on the authenticated identity so each token/key/user gets its own bucket. Layered *under* `rateLimit` (both apply). Raise `limit` to effectively disable. See [Rate Limiting](#rate-limiting) and [ADR-0014](../docs/adr/0014-per-caller-rate-limiting.md). |
 | `loginRateLimit` | `RateLimitConfig` | No | `{limit=5, refillPeriod=60}` | Stricter per-IP cap on `POST /api/v1/auth/login` to slow brute-force guessing. Keyed on the direct TCP peer — behind a reverse proxy that peer is the proxy, so it becomes one shared bucket for all clients; raise `limit` for a busy multi-user or proxied deployment. See [Rate Limiting](#rate-limiting). |
-| `corsAllowedOrigins` | `List<String>` | No | `[]` | Allowed CORS origins (e.g. `["http://console.example.com"]`). Empty list = any host **without** credential reflection (development default; a `*` response can never carry cookies). Pinned origins enable credentialed CORS. Under a `Password` (cookie) auth scheme an empty list is a **startup error** — cookie auth needs credentialed CORS, so explicit origins are required. See [ADR-0016](../docs/adr/0016-cookie-auth-csrf-protection.md). |
+| `corsAllowedOrigins` | `List<String>` | No | `[]` | Allowed CORS origins, each `http(s)://host[:port]` with no path (e.g. `["http://console.example.com"]`). An entry may contain `@SYSENV:VAR` placeholders, resolved at startup like the auth secrets, so the console's port can come from the environment: `"http://localhost:@SYSENV:FRONTEND_PORT"`. An unset variable, or an entry that does not resolve to an origin, is a **startup error**. Unlike `globalEnv`, a placeholder here does not mark the value secret. Empty list = any host **without** credential reflection (development default; a `*` response can never carry cookies). Pinned origins enable credentialed CORS. Under a `Password` (cookie) auth scheme an empty list is a **startup error** — cookie auth needs credentialed CORS, so explicit origins are required. See [ADR-0016](../docs/adr/0016-cookie-auth-csrf-protection.md). |
 | `maxProcesses` | `Int` | No | `10000` | Maximum number of process rows retained. At the cap a new run evicts the oldest **terminal** row (and deletes its workspace); if none can be evicted the run is refused with `503`. This is the hard ceiling on retention — raising an agent's `workspace.retain.recordFor` only keeps records until this cap forces them out, so raise both together if you want a long record history. |
 | `maxAgentInvocationDepth` | `Int` | No | `5` | Maximum allowed depth of nested `runAgent` invocations. A root run counts as depth 1; an agent that runs another makes that child depth 2, and so on. When a `runAgent` command would exceed the limit, the child run is refused and the command fails (exit 255). Cycles are also refused: if the target agent name already appears in the upstream chain, it is rejected even when depth is below the cap (so `A → B → A` does not waste retries on a guaranteed-loop). The chain is threaded from parent to child by `runAgent`'s in-process dispatch and exposed inside the called process as `HMR_INVOCATION_CHAIN`. Direct external API calls always start a fresh chain at depth 1. See [ADR-0008](../docs/adr/0008-recursion-guard-via-invocation-chain-header.md) and [ADR-0030](../docs/adr/0030-runagent-in-process-dispatch.md). |
 | `shutdownDrainSec` | `Int` | No | `30` | Seconds to wait for in-flight `ProcessExecutor` jobs (agent executions already running when SIGTERM arrives) and background LLM cost settlements to finish before the Ktor engine stops — see [`server.shutdownDrainSec`](#servershutdowndrainsec), and [LLM price](#llm-price) for the higher floor a configured `llmPrice.sessionSpend.callsPath` (or request-window keys) needs. |
@@ -1757,6 +1757,7 @@ with an `Error loading agent from …` load error while the server keeps running
 - `langfuse.publicKey` and `langfuse.secretKey` (not `langfuse.serverUrl`)
 - bearer token values, HMAC key `secret`s, password users' `passwordHash`, and `sessionSecret` / `sessionSecretPrevious`
 - `llmPrice.sessionSpend.headers` values
+- `server.corsAllowedOrigins` entries — each must still resolve to an `http(s)://host[:port]` origin, and is not treated as a secret
 
 Anywhere else the string is taken literally.
 
@@ -1772,6 +1773,10 @@ server:
       admin:
         token: "@SYSENV:HOMER_SECRET_TOKEN"
         role: admin
+  # The console's port comes from the environment (FRONTEND_PORT in the compose stack).
+  corsAllowedOrigins:
+    - "http://localhost:@SYSENV:FRONTEND_PORT"
+    - "http://127.0.0.1:@SYSENV:FRONTEND_PORT"
 ```
 
 **System Environment Variables:**

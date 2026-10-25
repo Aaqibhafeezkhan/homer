@@ -1,6 +1,7 @@
 package homer.app
 
 import homer.app.exceptions.ConfigurationException
+import homer.app.infra.SysEnvResolver
 import homer.app.models.AppConfig
 import homer.app.models.AuthConfig
 import homer.app.models.LangfuseConfig
@@ -19,6 +20,7 @@ import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -145,4 +147,52 @@ class CorsConfigTest {
                 "pinned origins keep credentialed CORS for cookie auth",
             )
         }
+
+    // ---- resolveCorsOrigins (startup @SYSENV resolution, #29) ----
+
+    private val env = SysEnvResolver { mapOf("FRONTEND_PORT" to "13000", "BAD_PORT" to "13000/admin?secret=s3cr3t")[it] }
+
+    @Test
+    fun `resolveCorsOrigins completes an origin from the environment and keeps literal entries`() {
+        assertEquals(
+            listOf("http://localhost:13000", "http://127.0.0.1:13000", "https://console.example.com"),
+            resolveCorsOrigins(
+                listOf("http://localhost:@SYSENV:FRONTEND_PORT", "http://127.0.0.1:@SYSENV:FRONTEND_PORT", "https://console.example.com"),
+                env,
+            ),
+        )
+    }
+
+    @Test
+    fun `resolveCorsOrigins fails when the referenced variable is unset`() {
+        val ex =
+            assertFailsWith<IllegalStateException> {
+                resolveCorsOrigins(listOf("http://localhost:@SYSENV:UNSET_PORT"), env)
+            }
+        assertTrue(ex.message!!.contains("UNSET_PORT"))
+    }
+
+    @Test
+    fun `resolveCorsOrigins refuses a resolved value that is not an origin and does not echo it`() {
+        val ex =
+            assertFailsWith<IllegalStateException> {
+                resolveCorsOrigins(listOf("http://localhost:@SYSENV:BAD_PORT"), env)
+            }
+        val message = ex.message!!
+        assertTrue(message.contains("'http://localhost:@SYSENV:BAD_PORT'"), message)
+        assertTrue(message.contains("after @SYSENV resolution"), message)
+        assertFalse(message.contains("s3cr3t"), "the resolved value must not reach the error: $message")
+    }
+
+    @Test
+    fun `resolveCorsOrigins refuses a literal entry with a path`() {
+        val ex =
+            assertFailsWith<IllegalStateException> {
+                resolveCorsOrigins(listOf("https://console.example.com/app"), env)
+            }
+        assertEquals(
+            "server.corsAllowedOrigins entry 'https://console.example.com/app' is not an origin: expected http(s)://host[:port]",
+            ex.message,
+        )
+    }
 }
