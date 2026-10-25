@@ -111,14 +111,14 @@ export function useFlowSummary(rootProcessId: number, limit: number) {
 
 // Same 30 s safety net; stops once the status is terminal.
 export function useProcess(id: number, enabled = true) {
-  const { data } = useQuery({
+  const { data, error } = useQuery({
     queryKey: queryKeys.process(id),
     queryFn: () => homerApi.getProcess(id),
     enabled,
     refetchInterval: (query) => (isTerminalStatus(query.state.data?.status) ? false : 30_000),
   });
 
-  return { data };
+  return { data, error };
 }
 
 // Agents Query

@@ -843,6 +843,17 @@ describe('process hooks', () => {
     expect(homerApi.getProcess).toHaveBeenCalledTimes(2);
   });
 
+  it('useProcess exposes the failure, so the page can say why nothing loaded', async () => {
+    const failure = new Error('Failed to fetch');
+    vi.mocked(homerApi.getProcess).mockRejectedValue(failure);
+
+    const { result } = renderHook(() => useProcess(7), { wrapper: wrapper(client) });
+    await flush();
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error).toBe(failure);
+  });
+
   it.each<ProcessStatus>(['FINISHED', 'FAILED', 'KILLED', 'UNKNOWN'])(
     'useProcess stops polling once the process is %s',
     async (status) => {

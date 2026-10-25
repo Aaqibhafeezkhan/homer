@@ -204,6 +204,7 @@ private fun resolveStartupConfig(
             server =
                 config.server.copy(
                     apiAuth = resolvedApiAuth,
+                    corsAllowedOrigins = resolveCorsOrigins(config.server.corsAllowedOrigins, sysEnvResolver),
                 ),
             langfuse = resolvedLangfuse,
             databasePath = sysEnvResolver.resolve(config.databasePath),

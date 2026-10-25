@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import { toArtifactApiPath } from '@/lib/utils/download';
+import { HomerApiError } from '@/lib/api/client';
 import ProcessDetailPage from './page';
 import type { ProcessInfo } from '@/types/homer';
 
@@ -374,5 +375,38 @@ describe('ProcessDetailPage artifact download', () => {
     });
     expect(error).toHaveBeenCalledWith('Download failed:', expect.any(Error));
     error.mockRestore();
+  });
+});
+
+describe('ProcessDetailPage before the process loads', () => {
+  beforeEach(() => {
+    useProcessesMock.mockReturnValue({ data: { processes: [], total: 0, offset: 0, limit: 20 } });
+    flowUseProcessesMock.mockReturnValue({ data: undefined });
+  });
+
+  it('shows the loading line while the query is pending', () => {
+    useProcessMock.mockReturnValue({ data: undefined, error: null });
+    render(<ProcessDetailPage params={fulfilledParams('7')} />);
+    expect(screen.getByText('Loading process details...')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['an auth rejection', new HomerApiError('x', 401, 'Unauthorized'), /The API rejected the request — sign in/],
+    ['an unreachable or CORS-blocked API', Object.assign(new HomerApiError('Failed to fetch'), { failure: 'unreachable' as const }), /Cannot reach the Homer API at .* corsAllowedOrigins/],
+    ['a missing process', new HomerApiError('x', 404, 'Not Found'), /Process 7 does not exist, or you cannot see it\./],
+    ['a server error', new HomerApiError('x', 500, 'Internal Server Error'), /HTTP 500 Internal Server Error/],
+  ])('shows why instead of loading forever on %s', (_case, error, message) => {
+    useProcessMock.mockReturnValue({ data: undefined, error });
+    render(<ProcessDetailPage params={fulfilledParams('7')} />);
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText('Loading process details...')).not.toBeInTheDocument();
+  });
+
+  it('keeps showing a loaded process when a later refetch fails', () => {
+    useProcessMock.mockReturnValue({ data: runningProcess, error: new HomerApiError('Failed to fetch') });
+    render(<ProcessDetailPage params={fulfilledParams('7')} />);
+    expect(screen.getByText('first-cmd')).toBeInTheDocument();
+    expect(screen.queryByText(/Cannot reach the Homer API/)).not.toBeInTheDocument();
   });
 });

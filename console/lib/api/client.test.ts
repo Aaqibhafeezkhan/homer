@@ -584,10 +584,28 @@ describe('HomerApiClient — auth headers and error mapping', () => {
 
   it('maps an aborted request to a timeout error', async () => {
     fetchMock().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-    await expect(homerApi.listAgentFiles('a')).rejects.toMatchObject({ message: 'Request timeout' });
+    await expect(homerApi.listAgentFiles('a')).rejects.toMatchObject({ message: 'Request timeout', failure: 'timeout' });
     await expect(homerApi.downloadArtifact(1, 'out.txt')).rejects.toMatchObject({
       message: 'Request timeout',
     });
+  });
+
+  it('tags a rejected fetch as unreachable: no response, so down or blocked by CORS', async () => {
+    fetchMock().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(homerApi.listAgentFiles('a')).rejects.toMatchObject({ status: undefined, failure: 'unreachable' });
+  });
+
+  it('tags a response that cannot be read as an invalid response, not as unreachable', async () => {
+    fetchMock().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers(),
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    });
+    await expect(homerApi.listAgentFiles('a')).rejects.toMatchObject({ status: undefined, failure: 'invalid-response' });
   });
 
   it('aborts a request that outlives the client timeout', async () => {

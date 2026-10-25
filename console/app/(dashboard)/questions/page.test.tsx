@@ -1,10 +1,16 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { HomerApiError } from '@/lib/api/client';
 
 let mockQuestions: unknown[] = [];
 let mockTotal: number | undefined;
+let mockFailure: { data: undefined; error: Error } | undefined;
 vi.mock('@/lib/api/queries', () => ({
-  useQuestions: () => ({ data: { questions: mockQuestions, total: mockTotal ?? mockQuestions.length, offset: 0, limit: 100 } }),
+  useQuestions: () =>
+    mockFailure ?? {
+      data: { questions: mockQuestions, total: mockTotal ?? mockQuestions.length, offset: 0, limit: 100 },
+      error: null,
+    },
   useAnswerQuestion: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
   useCancelDispatch: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false, error: null }),
 }));
@@ -12,6 +18,10 @@ vi.mock('@/lib/api/queries', () => ({
 import QuestionsPage from './page';
 
 describe('QuestionsPage', () => {
+  beforeEach(() => {
+    mockFailure = undefined;
+  });
+
   it('lists open questions with dispatch annotation', () => {
     mockQuestions = [
       {
@@ -48,5 +58,20 @@ describe('QuestionsPage', () => {
     mockTotal = undefined;
     render(<QuestionsPage />);
     expect(screen.getByText('No open questions.')).toBeInTheDocument();
+  });
+
+  it('shows why the inbox could not load instead of an empty inbox', () => {
+    mockFailure = { data: undefined, error: new HomerApiError('x', 403, 'Forbidden') };
+    render(<QuestionsPage />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Failed to load questions: The API rejected the request — sign in, or check the console/backend auth configuration.',
+    );
+    expect(screen.queryByText('No open questions.')).not.toBeInTheDocument();
+  });
+
+  it('names the API URL when the API cannot be reached', () => {
+    mockFailure = { data: undefined, error: Object.assign(new HomerApiError('Failed to fetch'), { failure: 'unreachable' as const }) };
+    render(<QuestionsPage />);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Cannot reach the Homer API at .* corsAllowedOrigins/);
   });
 });

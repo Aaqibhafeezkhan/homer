@@ -1,5 +1,6 @@
 package homer.app
 
+import homer.app.infra.SysEnvResolver
 import homer.app.models.RunnerConfig
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -122,5 +123,39 @@ class LoadStartupConfigTest {
             )
 
         assertNull(loadStartupConfig(arrayOf(config)))
+    }
+
+    private fun corsConfig(vararg origins: String): String =
+        file(
+            "config.json",
+            """{"agentsSearchPath": "a", "workspaceRootPath": "w", "databasePath": "d",
+               "server": {"corsAllowedOrigins": [${origins.joinToString { "\"$it\"" }}]}}""",
+        )
+
+    private val frontendPortEnv = SysEnvResolver { mapOf("FRONTEND_PORT" to "13000", "NOT_A_PORT" to "13000@evil.example")[it] }
+
+    @Test
+    fun `a SYSENV placeholder inside a CORS origin is resolved at startup`() {
+        val config = corsConfig("http://localhost:@SYSENV:FRONTEND_PORT", "https://console.example.com")
+
+        val resolved = assertNotNull(loadStartupConfig(arrayOf(config), frontendPortEnv))
+
+        assertEquals(listOf("http://localhost:13000", "https://console.example.com"), resolved.server.corsAllowedOrigins)
+        assertTrue(resolved.sysEnvBackedGlobalEnvNames.none { it == "FRONTEND_PORT" }, "a CORS origin is not a secret")
+    }
+
+    @Test
+    fun `a CORS origin referencing an unset variable refuses to start`() {
+        val config = corsConfig("http://localhost:@SYSENV:HOMER_TEST_VARIABLE_THAT_IS_NEVER_SET")
+
+        assertNull(loadStartupConfig(arrayOf(config), frontendPortEnv))
+    }
+
+    @Test
+    fun `a CORS origin that resolves to something other than an origin refuses to start`() {
+        // The variable would turn localhost into userinfo and evil.example into the allowed host.
+        val config = corsConfig("http://localhost:@SYSENV:NOT_A_PORT")
+
+        assertNull(loadStartupConfig(arrayOf(config), frontendPortEnv))
     }
 }

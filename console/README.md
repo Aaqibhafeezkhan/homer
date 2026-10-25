@@ -16,7 +16,7 @@ A modern, self-hosted web application for monitoring and managing Homer processe
 - **Maintenance banner**: A red alert bar across every dashboard page while the backend's maintenance mode is on — scheduled runs are skipped and new runs wait in a queue until an admin turns it off. See [Maintenance banner](#maintenance-banner).
 - **Collapsible sidebar**: A toggle at the bottom of the sidebar collapses it to icons only (the name stays as a tooltip and `aria-label`) so the page gets more room; the choice is saved in `localStorage` and restored on the next visit. The Questions and Continuations badges stay visible on the icon when collapsed.
 - **Responsive Design**: Works on desktop, tablet, and mobile devices
-- **Resilient Error Handling**: A render error in one dashboard page shows a recoverable error card in the content area while the header and sidebar stay usable; a last-resort boundary catches anything that would otherwise blank the whole app.
+- **Resilient Error Handling**: A render error in one dashboard page shows a recoverable error card in the content area while the header and sidebar stay usable; a last-resort boundary catches anything that would otherwise blank the whole app. When the API query a page renders from fails (the process list and detail, the Questions inbox), the page shows an alert naming the cause instead of loading forever or showing an empty list: the API rejected the request (sign in, or check the auth configuration); the API could not be reached (down, or its `corsAllowedOrigins` does not allow this console's origin), did not answer in time, or sent a response the console cannot read; the process was not found; or the HTTP status of any other failure.
 
 ## Accessibility
 

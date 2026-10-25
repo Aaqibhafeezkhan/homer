@@ -5,12 +5,18 @@
 ### Homer
 
 - **Fixed: agentdebug param types** — `validate` and `show-commands` now print each param type as written in agent files (`string`, `integer`) instead of the internal enum name.
+- **Added: `@SYSENV:` placeholders in `server.corsAllowedOrigins`** — An entry such as `http://localhost:@SYSENV:FRONTEND_PORT` is resolved at startup.
+- **BREAKING: `server.corsAllowedOrigins` entries must be bare origins** — An entry with a path, query, fragment, credentials or port 0, previously accepted with that part ignored, now fails startup; use `http(s)://host[:port]` with a port of 1–65535.
 - **Fixed: bundled example agents use typed inputs** — The example agents no longer log deprecation warnings at startup; they use `inputs:` and typed params, and the `hello` example's `project_id` now accepts only letters, digits, `_` and `-`.
 - **Added: slim `homer-app:<version>-slim` image** — A server image without the agent CLIs (Claude Code, Codex, Node.js, git), for deployments whose agents run on pull runners. See [ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md).
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
 - **Added: `server.localRunner.enabled` config** — `false` registers no local runner, so a run routed to `local` fails at once instead of executing in the server's container. See [ADR-0095](docs/adr/0095-local-runner-can-be-turned-off.md).
 - **Fixed: quick-start console sign-in** — The Docker Compose quick start now enables console sign-in with the admin token, instead of leaving the console unauthenticated against a bearer-only backend. See [ADR-0011](docs/adr/0011-cookie-based-console-auth.md).
 - **Added: linux/arm64 release images** — Every release image is published for `linux/amd64` and `linux/arm64`, so it runs natively on arm64 hosts such as Apple Silicon. See [ADR-0086](docs/adr/0086-sign-and-attest-release-images.md).
+
+### Console
+
+- **Fixed: an unreachable or rejecting API no longer leaves the console loading forever** — The process detail, process list and questions pages say whether the API rejected the request, cannot be reached (down or blocked by CORS), or has no such process.
 
 ## [1.36.0] - 2026-10-24
 

@@ -155,8 +155,11 @@
         "loginRateLimit": { "$ref": "#/$defs/RateLimitConfig" },
         "corsAllowedOrigins": {
           "type": "array",
-          "description": "Allowed CORS origins (full URLs with scheme). Empty = any host but WITHOUT credential reflection; pinned origins enable credentialed CORS. Under a Password (cookie) auth scheme an empty list is a startup error — explicit origins are required (ADR-0016).",
-          "items": { "type": "string", "format": "uri" }
+          "description": "Allowed CORS origins, each `http(s)://host[:port]` with no path and a port of 1–65535 if any. An entry may contain `@SYSENV:VAR` placeholders (e.g. `http://localhost:@SYSENV:FRONTEND_PORT`), resolved at startup; an unset variable, or an entry that does not resolve to an origin, fails startup. Empty = any host but WITHOUT credential reflection; pinned origins enable credentialed CORS. Under a Password (cookie) auth scheme an empty list is a startup error — explicit origins are required (ADR-0016).",
+          "items": {
+            "type": "string",
+            "anyOf": [{ "format": "uri" }, { "pattern": "@SYSENV:[A-Za-z_][A-Za-z0-9_]*" }]
+          }
         },
         "maxProcesses": {
           "type": "integer",

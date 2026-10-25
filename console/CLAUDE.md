@@ -45,7 +45,7 @@ app/
 components/
   ui/                               # shadcn primitives — do not edit, re-generate via CLI
   auth/                             # login form parts: EndpointField, AuthModeToggle
-  layout/                           # Header, Sidebar, VersionBadge, InstanceSwitcher, ThemeSwitcher, BackButton
+  layout/                           # Header, Sidebar, VersionBadge, InstanceSwitcher, ThemeSwitcher, BackButton, ApiErrorAlert
   processes/                        # ProcessTable, StatusBadge, ArtifactPickerDialog, ArtifactOutputTabs, LlmConversationView
   agents/                           # AgentCard, RunAgentDialog, NewAgentDialog, WorkflowGraph (dagre LangGraph renderer, ADR-0073/0075), WorkflowGraphCard
   continuations/                    # ContinuationItem
@@ -55,6 +55,7 @@ components/
   plugins/                          # PluginHost — mounts a runtime plugin into a DOM node
 lib/
   api/client.ts                     # HomerApiClient singleton + HomerApiError
+  api/errors.ts                     # describeApiError: a failed query's cause in one sentence (auth / unreachable / 404 / status)
   api/queries.ts                    # React Query hooks + queryKeys registry
   api/sse.ts                        # openStream(path, handlers) SSE primitive
   api/streams.ts                    # useProcessStatusStream / useAgentReloadStream / useProcessLogStream / useLlmEventStream

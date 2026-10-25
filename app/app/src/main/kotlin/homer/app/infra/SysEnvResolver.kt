@@ -1,12 +1,15 @@
 package homer.app.infra
 
-class SysEnvResolver {
+/** Resolves `@SYSENV:VAR` placeholders against [env], the host environment by default. */
+class SysEnvResolver(
+    private val env: (String) -> String? = System::getenv,
+) {
     private val pattern = Regex("@SYSENV:([A-Za-z_][A-Za-z0-9_]*)")
 
     fun resolve(value: String): String =
         pattern.replace(value) { matchResult ->
             val varName = matchResult.groupValues[1]
-            System.getenv(varName)
+            env(varName)
                 ?: error("System environment variable '$varName' not found (referenced as '@SYSENV:$varName')")
         }
 
