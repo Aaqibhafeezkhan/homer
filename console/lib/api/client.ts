@@ -593,7 +593,6 @@ function appendTags(params: URLSearchParams, tags: string[] | undefined): void {
   }
 }
 
-/** Wraps a thrown value from a fetch path in a {@link HomerApiError}. */
 /** Wraps a non-HTTP failure; [responded] = the fetch resolved, so `read` threw. */
 function toHomerApiError(error: unknown, responded: boolean): HomerApiError {
   if (error instanceof HomerApiError) return error;
