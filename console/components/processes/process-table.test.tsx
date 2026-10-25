@@ -42,6 +42,18 @@ function makeExecution(overrides: Partial<ProcessExecution> = {}): ProcessExecut
   };
 }
 
+/** A command recorded as an execution but never run: `when:` said no. */
+function skippedExecution(label: string): ProcessExecution {
+  return makeExecution({
+    label,
+    resultCode: -1,
+    skipped: true,
+    stdOut: null,
+    stdErr: null,
+    errMsg: 'when.all expression #1 false: false-expr',
+  });
+}
+
 function makeProcess(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
   return {
     id: 42,
@@ -64,25 +76,26 @@ describe('ProcessTable', () => {
     mockCan();
   });
 
-  it('renders the Skipped icon when the last execution was skipped', () => {
+  it('names the last command that ran, not a trailing skipped one', () => {
+    // A quickstart run answered `ship`: `hold` and `unexpected-answer` were
+    // skipped by their `when:` conditions after `ship` ran.
     const process = makeProcess({
       executions: [
-        makeExecution({
-          label: 'cmd-skipped',
-          resultCode: -1,
-          skipped: true,
-          stdOut: null,
-          stdErr: null,
-          errMsg: 'when.all expression #1 false: false-expr',
-        }),
+        makeExecution({ label: 'write-report', resultCode: 0 }),
+        makeExecution({ label: 'ask-ship-it', resultCode: 0 }),
+        makeExecution({ label: 'ship', resultCode: 0 }),
+        skippedExecution('hold'),
+        skippedExecution('unexpected-answer'),
       ],
     });
 
     render(<ProcessTable processes={[process]} />);
 
-    // Desktop table + mobile card must both expose the Skipped aria-label
-    // so users on either surface see the same status affordance.
-    expect(screen.getAllByLabelText('Skipped')).toHaveLength(2);
+    // Desktop row + mobile card both name the command that ran.
+    expect(screen.getAllByText('ship')).toHaveLength(2);
+    expect(screen.queryByText('unexpected-answer')).not.toBeInTheDocument();
+    expect(screen.queryByText('hold')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
   });
 
   it('renders the success icon for a successful last execution', () => {
@@ -95,27 +108,22 @@ describe('ProcessTable', () => {
     expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
   });
 
-  it('shows the last command label alongside the skipped icon', () => {
+  it('falls back to the empty cell when every execution was skipped', () => {
     const process = makeProcess({
-      executions: [
-        makeExecution({
-          label: 'deploy-eu',
-          skipped: true,
-          resultCode: -1,
-          stdOut: null,
-          stdErr: null,
-          errMsg: 'when.all expression #1 false: [ "$REGION" = "eu" ]',
-        }),
-      ],
+      executions: [skippedExecution('deploy-eu')],
     });
 
     render(<ProcessTable processes={[process]} />);
 
-    // Desktop table renders the label inside the row alongside the icon.
-    const rows = screen.getAllByRole('row');
-    const dataRow = rows.find((r) => within(r).queryByText('deploy-eu')) ?? null;
-    expect(dataRow).not.toBeNull();
-    expect(within(dataRow!).getByLabelText('Skipped')).toBeInTheDocument();
+    const lastCommandIndex = screen
+      .getAllByRole('columnheader')
+      .findIndex((cell) => cell.textContent === 'Last Command');
+    const dataRow = screen.getAllByRole('row')[1];
+    expect(within(dataRow).getAllByRole('cell')[lastCommandIndex]).toHaveTextContent('-');
+    // Neither surface names a skipped command, and the mobile card renders nothing.
+    expect(screen.queryByText('deploy-eu')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
+    expect(screen.queryByText('Last:')).not.toBeInTheDocument();
   });
 
   it('shows a waiting-for-input badge when the process has open questions', () => {

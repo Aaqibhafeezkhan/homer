@@ -1,4 +1,4 @@
-import type { ProcessInfo, ProcessStatus } from '@/types/homer';
+import type { ProcessExecution, ProcessInfo, ProcessStatus } from '@/types/homer';
 import { formatTimestamp } from './format';
 import { splitCommaList } from './list';
 
@@ -12,7 +12,7 @@ export function isRetryableStatus(status: ProcessStatus): boolean {
   return status === 'FINISHED' || status === 'FAILED' || status === 'KILLED';
 }
 
-export type LastCommandStatus = 'success' | 'running' | 'skipped' | 'failed';
+export type LastCommandStatus = 'success' | 'running' | 'failed';
 
 export interface LastCommand {
   status: LastCommandStatus | null;
@@ -20,30 +20,38 @@ export interface LastCommand {
 }
 
 /**
+ * The last execution that actually ran, or undefined when every one of
+ * them was skipped by its `when:` condition.
+ */
+function lastRanExecution(executions: ProcessExecution[]): ProcessExecution | undefined {
+  for (let i = executions.length - 1; i >= 0; i--) {
+    if (!executions[i].skipped) return executions[i];
+  }
+  return undefined;
+}
+
+/**
  * Derives the "last command" status and label shown for a process.
  *
  * A WORKING process with a current command reports that command as
- * `running`; otherwise the most recent execution is classified as
- * `skipped`, `success` (resultCode 0), or `failed`. A process with no
- * executions reports null status and label.
+ * `running`; otherwise the most recent execution that ran is classified
+ * as `success` (resultCode 0) or `failed`. A skipped command never ran,
+ * so trailing skips are walked past. A process with no execution that
+ * ran reports null status and label.
  */
 export function getLastCommand(process: ProcessInfo): LastCommand {
   if (process.status === 'WORKING' && process.currentCommand) {
     return { status: 'running', label: process.currentCommand };
   }
 
-  if (!process.executions || process.executions.length === 0) {
+  const lastRan = lastRanExecution(process.executions ?? []);
+  if (!lastRan) {
     return { status: null, label: null };
   }
 
-  const lastExecution = process.executions[process.executions.length - 1];
   return {
-    status: lastExecution.skipped
-      ? 'skipped'
-      : lastExecution.resultCode === 0
-        ? 'success'
-        : 'failed',
-    label: lastExecution.label,
+    status: lastRan.resultCode === 0 ? 'success' : 'failed',
+    label: lastRan.label,
   };
 }
 
