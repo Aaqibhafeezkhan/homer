@@ -8,12 +8,12 @@ inputs:
   - paramName: user
     envName: USER_NAME
     src: body
-    type: STRING
+    type: string
     required: true
   - paramName: service
     envName: SERVICE_ID
     src: body
-    type: ANY
+    type: string
     required: false
     transformer: !<jsonPath>
       path: "$.id"

@@ -5,7 +5,7 @@
     { "type": "script", "content": "echo $project_id" },
     { "type": "claude",  "prompt":  {"type": "prompt","prompt": "Say a short, friendly one-line hello to project {{project_id}}."}, "options": {"model":  "haiku"}}
   ],
-  "queryParams": [
-    {"paramName": "project_id"}
+  "inputs": [
+    {"paramName": "project_id", "type": "string", "pattern": "^[A-Za-z0-9_-]+$"}
   ]
 }

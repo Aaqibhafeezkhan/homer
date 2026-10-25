@@ -226,7 +226,7 @@ Agent: hello
 ✓ Command[0] script: valid
 ✓ Command[1] claude: valid
 ✓ Inputs: 1 params
-  project_id (STRING, required) -> env: project_id
+  project_id (STR, required) -> env: project_id
 ✓ Schema: valid
 Validation passed.
 ```

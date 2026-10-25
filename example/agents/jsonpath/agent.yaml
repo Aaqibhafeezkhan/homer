@@ -3,10 +3,10 @@ name: jsonpath
 commands:
   - !<script>
     content: echo $VALUE
-queryParams:
+inputs:
   - paramName: json
     envName: VALUE
-    type: NUMBER
+    type: integer
     required: true
     transformer:
       !<jsonPath>
