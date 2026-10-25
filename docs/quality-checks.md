@@ -15,20 +15,26 @@ Every check writes the same three files into its own report directory:
 
 - `<check>-summary.txt`, whose first line is the count, `findings=<n>`. The `crap` check writes `violations=<n>` instead, and the gate reads either;
 - `<check>-report.txt`, which lists one `path:line message` per finding;
-- `gl-code-quality-<check>.json`, which feeds the merge request's Code Quality widget.
+- `gl-code-quality-<check>.json`, a Code Climate-style list of the findings. The format is a GitLab-era leftover: GitHub renders no such file, so it only reaches the `quality-gate` artifact (below).
 
 A check exits non-zero only on a real error, such as missing input or a tool
 crash. Findings alone never fail it.
 
 The CI job **`quality-gate`** reads every check listed in `checks.json`. It
-prints a table with the top findings, merges the Code Quality files into one
-report, and exits with one of three codes:
+prints a table with the top findings in the job's log, merges the Code Quality files into one
+`code-quality.json`, and exits with one of three codes:
 
-| Exit | Meaning | Pipeline |
+| Exit | Meaning | CI run |
 | --- | --- | --- |
 | 0 | no findings | passes |
-| 3 | findings only in `warn` checks | passes with a warning |
+| 3 | findings only in `warn` checks | passes; the job adds a warning annotation to the run |
 | 1 | findings in a `required` check, or a report missing, broken or written for another threshold (a missing report of an `optional` check does not fail it; it shows as `not run`) | fails |
+
+The job uploads the `quality-gate` artifact (7 days): the report directories under the root
+`reports/quality/` and the merged `code-quality.json`. The console checks write under
+`console/reports/quality/` and `crap` under `app/*/build/reports/crap` and `console/coverage/crap`;
+those findings reach the artifact only merged into `code-quality.json`. GitHub shows no per-line coverage
+annotations in a pull request's diff; the coverage reports only feed `diff-coverage` and `crap`.
 
 A new check starts in `warn` mode, its findings get fixed, and then it is set
 to `required`, which is one-way (ADR-0082). It can start as `required` straight away when the change that
@@ -64,7 +70,7 @@ backend and console suites. It prints one table like the gate's, then each findi
   in the `build` row.
 - **`crap` and `diff-coverage`** judge only the changed functions and lines, because the
   coverage comes from the related tests alone. A Kotlin file no test relates to is listed
-  as *not measured*, and the merge request's full run decides it. A console file no test
+  as *not measured*, and the pull request's full CI run decides it. A console file no test
   imports is a `diff-coverage` finding.
 - **Every other check** reads the whole project and reports everything it finds. Main has
   no findings in a required check, so each finding comes from the change, even one in a
@@ -74,7 +80,7 @@ backend and console suites. It prints one table like the gate's, then each findi
   check`). The e2e and architecture modules' own code is not measured. Build-script-only
   changes run no backend check. `mutation-console` runs only when `--only` names it.
 
-The diff mode is an approximation for the loop. The merge request pipeline still runs every
+The diff mode is an approximation for the loop. The pull request's CI run still runs every
 check in full.
 
 ## Checks in the gate
@@ -89,12 +95,12 @@ check in full.
 | `unused-console` | required | unused files, exports and dependencies | knip | `cd console && npm run quality:report` |
 | `size-console` | required | console files over 600 lines and functions over 60 lines | ESLint `max-lines*`, a separate run | `cd console && npm run quality:report` |
 | `dto-contract` | required | drift between backend DTOs and their hand-written mirrors in `console/types/homer.ts`: missing or extra fields, nullability, coarse types, enum values, sealed variants | `DtoContractTest` (kotlinx.serialization descriptors) + TypeScript compiler API | `app/gradlew -p app :app:test`, `cd console && npm run quality:dto-types`, `node tools/quality/dto-contract.mjs` |
-| `diff-coverage` | required | a merge request's added or changed lines are less than 80% covered in a file | Kover XML + V8 coverage vs `git diff` | `node tools/quality/diff-coverage.mjs origin/main` (after coverage runs) |
+| `diff-coverage` | required | a pull request's added or changed lines are less than 80% covered in a file | Kover XML + V8 coverage vs `git diff` | `node tools/quality/diff-coverage.mjs origin/main` (after coverage runs) |
 | `duplication` | required | copy-pasted blocks in production code of both stacks; import and package lines are not counted. Repetition a contract fixes (a `@Serializable` variant restating its base's fields, an interface override's signature) may be wrapped in `// jscpd:ignore-start` … `// jscpd:ignore-end` with a one-line reason above it | jscpd | `node tools/quality/duplication.mjs` |
 | `detekt` | required | defects in code bodies that Konsist reads only as text: coroutine misuse (`GlobalScope`, a swallowed `CancellationException`, a suspending cleanup in `finally` outside `NonCancellable`, `Thread.sleep` in `suspend`), exception handling (a swallowed cause, a too generic throw), likely bugs (`!!`, `exitProcess` outside `main`). Only the coroutines, exceptions and potential-bugs rule sets; complexity, size, naming and style are other checks' job | detekt 2.0 (alpha, K2 Analysis API) with type resolution, `app/config/detekt/detekt.yml`. detekt does not run the kotlinx.serialization compiler plugin, so it logs the generated `serializer()` calls as unresolved; a rule reading those expressions can miss a finding there | `app/gradlew -p app detektMain -Dorg.gradle.jvmargs="-XX:MaxMetaspaceSize=1g"`, then `node tools/quality/detekt.mjs` |
 | `query-plans` | required | a full scan (`SCAN` without an index) of a table that grows with use (the list in SQLite rule 1, `app/CLAUDE.md`) in any SQL statement production code runs during `:app:test`. An unfiltered primary-key page (`ORDER BY id LIMIT n`) is no finding; a statement the planner cannot prepare is one, and an empty capture fails the report. A query no test runs is not checked | `QueryPlanCapture` (a test-only Exposed `GlobalStatementInterceptor`) records each statement and its source line; `QueryPlanReport` plans them with `EXPLAIN QUERY PLAN` on a freshly migrated schema without `sqlite_stat1` | `app/gradlew -p app :app:queryPlanReport`, then `node tools/quality/query-plans.mjs` |
 | `query-repeats` | required | a statement production code runs three or more times in one transaction during `:app:test`: a query or write per row in a loop (SQLite rule 2). A read is major, a write minor; a JDBC batch counts once. Deliberate repeats are listed with their reason in `tools/quality/query-repeats.mjs` | the same `QueryPlanCapture`, counting statements per transaction | `app/gradlew -p app :app:queryPlanReport`, then `node tools/quality/query-repeats.mjs` |
-| `mutation-console` | warn, optional (its job runs only in merge-request pipelines; a missing report does not fail the gate) | surviving mutants on the console lines a merge request changes, i.e. tests that run code without asserting it | Stryker (Vitest runner) | `cd console && MUTATE_BASE=origin/main npm run mutation:changed` |
+| `mutation-console` | warn, optional (its job runs only on pull requests; a missing report does not fail the gate) | surviving mutants on the console lines a pull request changes, i.e. tests that run code without asserting it | Stryker (Vitest runner) | `cd console && MUTATE_BASE=origin/main npm run mutation:changed` |
 
 Fixing a `crap` finding in the console: V8 counts JSX inside `cond && <X/>` as
 covered even when it never renders. After moving such a block into its own
@@ -121,11 +127,10 @@ table CI does, once the reports exist.
 | Documentation site: generator tests, and a build that fails on a link to a file the repository does not hold or a dead link between pages (ADR-0087) | `docs-site` | `cd site && npm ci && npm test && npm run docs:build` |
 | LangGraph Python runtime tests | `homer-python-tests` | `cd clients/python && .venv/bin/python -m pytest` |
 | Black-box E2E suite against the production backend image (also proves `app/Dockerfile` builds) | `homer-e2e` | see [`app/e2e/README.md`](../app/e2e/README.md) |
-| Known CVEs in backend dependencies (OWASP dependency-check, NVD data from the dependency-check project's daily mirror) | `dependency-check`: gates scheduled pipelines, manual on merge requests | `app/gradlew -p app :app:dependencyCheckAnalyze :homer-runner:dependencyCheckAnalyze` |
-| Console image must not ship LGPL-3.0 `libvips` | `build-homer-console` | — |
-| Backend mutation-testing pilot (PIT, `homer.app.config`) | `homer-app-mutation`: scheduled, manual on merge requests | `app/gradlew -p app :app:pitest` |
-| Full console mutation run (~7,500 mutants) | `homer-console-mutation-full`: manual | `cd console && npm run mutation` |
-| Line-by-line coverage annotations in the merge request diff | `homer-app-tests` (JaCoCo), `homer-console-tests` (Cobertura) | — |
+| Known CVEs in backend dependencies (OWASP dependency-check, NVD data from the dependency-check project's daily mirror) | `dependency-check` (Nightly workflow): scheduled once the repository is public, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:dependencyCheckAnalyze :homer-runner:dependencyCheckAnalyze` |
+| Console image must not ship LGPL-3.0 `libvips` | `images` job of the Release workflow (tags, and `workflow_dispatch` builds of a protected branch) | — |
+| Backend mutation-testing pilot (PIT, `homer.app.config`) | `backend-mutation` (Nightly workflow): scheduled once the repository is public, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:pitest` |
+| Full console mutation run (~7,500 mutants) | `console-mutation-full` (Nightly workflow): manual, `workflow_dispatch` with `full-console-mutation` | `cd console && npm run mutation` |
 
 ## Conventions the checks back up
 
@@ -140,8 +145,6 @@ table CI does, once the reports exist.
 - **Security by design (root `CLAUDE.md` §12).** Denial-path tests for every
   gate. Every secured handler's explicit `Authorizer` call is enforced by the
   required route rule.
-- **AI code review.** Every merge request is reviewed by the Homer AI review
-  bot. After fixing its findings, request a new round with `@homer review`.
 - **AI review of GitHub pull requests ([ADR-0091](adr/0091-ai-review-of-github-pull-requests.md)).**
   The `main` ruleset requires the `homer-ai-review` status, which is `success`
   when no blocker or major finding is open.
@@ -162,6 +165,6 @@ The counts below are a snapshot, last refreshed when `detekt` became required (2
 | Item | State | Next step |
 | --- | --- | --- |
 | `crap.threshold` | 8 (the target), required | keep it: new and changed functions stay at CRAP ≤ 8 (in practice cc ≤ 7) |
-| `mutation-console` | per merge request | raise test strength; full runs need sharding before they can be scheduled |
+| `mutation-console` | per pull request | raise test strength; full runs need sharding before they can be scheduled |
 | detekt 2.0 stable | `detekt` runs on 2.0.0-alpha.6 | move to 2.0 stable once it ships |
 | Backend mutation testing | pilot | exclude `*$$serializer` classes, widen the scope, decide on the numbers |

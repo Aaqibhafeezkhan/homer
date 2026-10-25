@@ -30,7 +30,7 @@ Run the relevant verification command and make sure it's green:
   section for the stack and layout.
 - Every pull request runs the quality checks listed in
   [`docs/quality-checks.md`](docs/quality-checks.md); `required` ones
-  fail the pipeline. `node tools/quality/changed.mjs` runs them locally
+  fail the CI run. `node tools/quality/changed.mjs` runs them locally
   against your change since `origin/main` (uncommitted edits included),
   with only the related tests.
 - One logical change per commit; imperative subject, body explains why.
