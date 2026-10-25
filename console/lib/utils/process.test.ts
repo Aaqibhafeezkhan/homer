@@ -24,6 +24,18 @@ function makeExecution(overrides: Partial<ProcessExecution> = {}): ProcessExecut
   };
 }
 
+/** A command recorded as an execution but never run: `when:` said no. */
+function skipped(label: string): ProcessExecution {
+  return makeExecution({
+    label,
+    resultCode: -1,
+    skipped: true,
+    stdOut: null,
+    stdErr: null,
+    errMsg: 'when.all expression #1 false: false-expr',
+  });
+}
+
 function makeProcess(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
   return {
     id: 42,
@@ -54,11 +66,50 @@ describe('getLastCommand', () => {
     expect(getLastCommand(process)).toEqual({ status: 'failed', label: 'boom' });
   });
 
-  it('classifies a skipped last execution regardless of resultCode', () => {
+  it('ignores a skipped last execution and names the one before it', () => {
     const process = makeProcess({
-      executions: [makeExecution({ label: 'skip', resultCode: -1, skipped: true })],
+      executions: [makeExecution({ label: 'ran', resultCode: 0 }), skipped('skip')],
     });
-    expect(getLastCommand(process)).toEqual({ status: 'skipped', label: 'skip' });
+    expect(getLastCommand(process)).toEqual({ status: 'success', label: 'ran' });
+  });
+
+  it('names the last command that ran when trailing commands were skipped', () => {
+    // A quickstart run answered `ship`: `hold` and `unexpected-answer` were
+    // skipped by their `when:` conditions after `ship` ran.
+    const process = makeProcess({
+      executions: [
+        makeExecution({ label: 'write-report', resultCode: 0 }),
+        makeExecution({ label: 'ask-ship-it', resultCode: 0 }),
+        makeExecution({ label: 'ship', resultCode: 0 }),
+        skipped('hold'),
+        skipped('unexpected-answer'),
+      ],
+    });
+    expect(getLastCommand(process)).toEqual({ status: 'success', label: 'ship' });
+  });
+
+  it('names `hold` for a run answered hold', () => {
+    const process = makeProcess({
+      executions: [
+        makeExecution({ label: 'ask-ship-it', resultCode: 0 }),
+        makeExecution({ label: 'hold', resultCode: 0 }),
+        skipped('ship'),
+        skipped('unexpected-answer'),
+      ],
+    });
+    expect(getLastCommand(process)).toEqual({ status: 'success', label: 'hold' });
+  });
+
+  it('reports a failed last-ran command even when skips follow it', () => {
+    const process = makeProcess({
+      executions: [makeExecution({ label: 'boom', resultCode: 2 }), skipped('skip')],
+    });
+    expect(getLastCommand(process)).toEqual({ status: 'failed', label: 'boom' });
+  });
+
+  it('returns null status/label when every execution was skipped', () => {
+    const process = makeProcess({ executions: [skipped('a'), skipped('b')] });
+    expect(getLastCommand(process)).toEqual({ status: null, label: null });
   });
 
   it('uses the last execution when there are several', () => {
@@ -83,6 +134,33 @@ describe('getLastCommand', () => {
       executions: [makeExecution({ label: 'done', resultCode: 0 })],
     });
     expect(getLastCommand(process)).toEqual({ status: 'success', label: 'done' });
+  });
+});
+
+describe('getLastCommand (property-based)', () => {
+  const execution = fc.record({
+    label: fc.string({ minLength: 1, maxLength: 12 }),
+    resultCode: fc.integer({ min: -1, max: 5 }),
+    skipped: fc.option(fc.boolean(), { nil: undefined }),
+  });
+
+  it('never names a skipped command, and names none only when none ran', () => {
+    fc.assert(
+      fc.property(fc.array(execution, { maxLength: 12 }), (executions) => {
+        const last = getLastCommand(
+          makeProcess({ executions: executions.map((e) => makeExecution(e)) }),
+        );
+        const ran = executions.filter((e) => !e.skipped);
+
+        if (ran.length === 0) {
+          expect(last).toEqual({ status: null, label: null });
+          return;
+        }
+        const expected = ran[ran.length - 1];
+        expect(last.label).toBe(expected.label);
+        expect(last.status).toBe(expected.resultCode === 0 ? 'success' : 'failed');
+      }),
+    );
   });
 });
 

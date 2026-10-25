@@ -12,7 +12,7 @@ export function isRetryableStatus(status: ProcessStatus): boolean {
   return status === 'FINISHED' || status === 'FAILED' || status === 'KILLED';
 }
 
-export type LastCommandStatus = 'success' | 'running' | 'skipped' | 'failed';
+export type LastCommandStatus = 'success' | 'running' | 'failed';
 
 export interface LastCommand {
   status: LastCommandStatus | null;
@@ -23,27 +23,25 @@ export interface LastCommand {
  * Derives the "last command" status and label shown for a process.
  *
  * A WORKING process with a current command reports that command as
- * `running`; otherwise the most recent execution is classified as
- * `skipped`, `success` (resultCode 0), or `failed`. A process with no
- * executions reports null status and label.
+ * `running`; otherwise the most recent execution that actually ran is
+ * classified as `success` (resultCode 0) or `failed` — a command skipped
+ * by its `when:` condition never ran, so the trailing skips are passed
+ * over. A process with no execution that ran reports null status and
+ * label.
  */
 export function getLastCommand(process: ProcessInfo): LastCommand {
   if (process.status === 'WORKING' && process.currentCommand) {
     return { status: 'running', label: process.currentCommand };
   }
 
-  if (!process.executions || process.executions.length === 0) {
+  const lastRan = (process.executions ?? []).findLast((e) => !e.skipped);
+  if (!lastRan) {
     return { status: null, label: null };
   }
 
-  const lastExecution = process.executions[process.executions.length - 1];
   return {
-    status: lastExecution.skipped
-      ? 'skipped'
-      : lastExecution.resultCode === 0
-        ? 'success'
-        : 'failed',
-    label: lastExecution.label,
+    status: lastRan.resultCode === 0 ? 'success' : 'failed',
+    label: lastRan.label,
   };
 }
 
