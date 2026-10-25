@@ -91,4 +91,6 @@ before it is queued**.
 
 ## More Information
 
-- Issue #33. The slim server image (ADR-0094) is the deployment this switch is for.
+- Issue #33. The slim server image
+  ([ADR-0094](0094-slim-server-image-for-pull-runner-deployments.md)) is the
+  deployment this switch is for.
