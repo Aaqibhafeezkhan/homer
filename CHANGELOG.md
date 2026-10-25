@@ -9,6 +9,7 @@
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
 - **Added: `server.localRunner.enabled` config** — `false` registers no local runner, so a run routed to `local` fails at once instead of executing in the server's container. See [ADR-0095](docs/adr/0095-local-runner-can-be-turned-off.md).
 - **Fixed: quick-start console sign-in** — The Docker Compose quick start now enables console sign-in with the admin token, instead of leaving the console unauthenticated against a bearer-only backend. See [ADR-0011](docs/adr/0011-cookie-based-console-auth.md).
+- **Added: linux/arm64 release images** — Every release image is published for `linux/amd64` and `linux/arm64`, so it runs natively on arm64 hosts such as Apple Silicon. See [ADR-0086](docs/adr/0086-sign-and-attest-release-images.md).
 
 ## [1.36.0] - 2026-10-24
 

@@ -43,7 +43,7 @@ case "${1:-}" in
     semver "$tag"
     identity="https://github.com/$repo/.github/workflows/release.yml@refs/tags/$tag"
     printf '%s\n### Images\n\n' "$marker"
-    printf 'Signed with cosign (keyless) and carrying SLSA provenance and a CycloneDX SBOM ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
+    printf 'Each digest is a multi-arch index (linux/amd64 and linux/arm64), signed with cosign (keyless) and carrying SLSA provenance and a CycloneDX SBOM of each platform ([ADR-0086](https://github.com/%s/blob/%s/docs/adr/0086-sign-and-attest-release-images.md)).\n\n' "$repo" "$tag"
     printf '| Image | Digest |\n|---|---|\n'
     refs=
     while read -r image digest suffix; do
