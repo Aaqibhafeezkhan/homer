@@ -15,7 +15,7 @@ import {
   isRetryableStatus,
   type LastCommandStatus,
 } from '@/lib/utils/process';
-import { X, Check, Loader2, MessageCircleQuestion, MinusCircle, RotateCcw } from 'lucide-react';
+import { X, Check, Loader2, MessageCircleQuestion, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import type { PodPhase } from '@/types/homer';
 import {
@@ -58,8 +58,6 @@ function renderLastCommandIcon(status: LastCommandStatus) {
       return <Check className="h-3 w-3 text-green-500" aria-hidden="true" />;
     case 'running':
       return <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden="true" />;
-    case 'skipped':
-      return <MinusCircle className="h-3 w-3 text-muted-foreground" aria-label="Skipped" />;
     case 'failed':
       return <X className="h-3 w-3 text-red-500" aria-hidden="true" />;
   }

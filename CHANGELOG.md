@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Console
+
+- **Fixed: the Last Command column named a skipped command** — A run's last command is now the last one that actually ran, not a trailing step skipped by its `when:` condition; a run whose every command was skipped shows an empty cell.
+
 ## [1.37.0] - 2026-10-25
 
 ### Homer
