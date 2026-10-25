@@ -341,11 +341,14 @@ class ComposeImageSourceTest {
         }
     }
 
-    /** The `- KEY=value` entries of service [name]'s `environment:` list in docker-compose.yml. */
-    private fun environmentOf(name: String): List<String> {
-        val lines = File(repoRoot, "docker-compose.yml").readLines()
+    /** The `- KEY=value` entries of service [name]'s `environment:` list in compose [file]. */
+    private fun environmentOf(
+        name: String,
+        file: String = "docker-compose.yml",
+    ): List<String> {
+        val lines = File(repoRoot, file).readLines()
         val index = service(lines, name)
-        assertTrue(index >= 0, "docker-compose.yml no longer defines a `$name` service.")
+        assertTrue(index >= 0, "$file no longer defines a `$name` service.")
         val environment = childKey(lines, index, "environment")
         return if (environment < 0) emptyList() else nestedBlock(lines, environment).map { it.trim().removePrefix("- ") }
     }
@@ -364,6 +367,11 @@ class ComposeImageSourceTest {
             "CONSOLE_HOMER_API_URL=\${CONSOLE_HOMER_API_URL:-http://localhost:\${BACKEND_PORT:-8080}}" in environmentOf("frontend"),
             "docker-compose.yml: the `frontend` API URL no longer defaults to the backend's published " +
                 "`BACKEND_PORT`, so moving the backend leaves the console calling a port nothing listens on (issue #29).",
+        )
+        assertTrue(
+            "CONSOLE_HOMER_API_URL=http://localhost:\${BACKEND_PORT:-8080}" in environmentOf("frontend", "docker-compose.dev.yml"),
+            "docker-compose.dev.yml: the dev `frontend` API URL no longer follows `BACKEND_PORT`, so a dev stack " +
+                "with the backend moved leaves the console calling a port nothing listens on (issue #29).",
         )
         val expected = listOf("http://localhost:@SYSENV:FRONTEND_PORT", "http://127.0.0.1:@SYSENV:FRONTEND_PORT")
         for (name in listOf("config.json", "config-local.json", "config-custom.json")) {

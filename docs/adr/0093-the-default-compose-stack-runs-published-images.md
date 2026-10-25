@@ -93,3 +93,27 @@ the working tree, which is exactly what a pulled image cannot.
 - Neutral: the repo convention of pinning compose `image:` by digest
   (`renovate.json`) does not apply to the two Homer services, which track a
   release tag on purpose; base images and any digest-pinned override still do.
+
+## Amendment (2026-10-25): the console origin follows `FRONTEND_PORT`, with no fallback
+
+Moving the console off port 3000 left it unable to load, because the example
+configs allowed only the `:3000` origin (issue #29). The three example configs
+now take the console's origin from the environment,
+`"http://localhost:@SYSENV:FRONTEND_PORT"` (and `127.0.0.1`), and compose passes
+`FRONTEND_PORT=${FRONTEND_PORT:-3000}` to the backend. The console's API URL
+defaults to `http://localhost:${BACKEND_PORT:-8080}` in the same way.
+
+The placeholder has no default on purpose: an unset `FRONTEND_PORT` is a
+startup error, as an unset `HOMER_ADMIN_TOKEN` already is. Inside compose it is
+always set. A standalone `docker run` with the stock config must now pass
+`-e FRONTEND_PORT=3000` as well, and `DOCKER.md` says so.
+
+Rejected:
+
+- **A `@SYSENV:VAR:-default` fallback syntax.** It would be a new placeholder
+  grammar for every `@SYSENV` consumer, secrets included. A default there turns
+  a missing secret into a silent fallback instead of a startup error.
+- **A separate backend-only example config with literal origins.** That is a
+  fourth config to keep in step with the other three, for the one setup that
+  doesn't serve the console from compose. One documented extra `-e` costs less.
+
