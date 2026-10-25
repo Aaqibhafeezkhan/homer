@@ -11,13 +11,13 @@ trivial tasks, use judgment — except under §12, which does not scale
 down with task size.
 
 **Everything this repository produces is written in English.** Code,
-comments, commit messages, CHANGELOG entries, docs, ADRs, merge-request
+comments, commit messages, CHANGELOG entries, docs, ADRs, pull-request
 titles and descriptions, code-review comments, and issue-tracker comments
 about repository work — all of it, without exception.
 
 This holds **regardless of the language the task was asked in, and
-regardless of the language of the ticket or MR being answered**. Match the
-repository, not the thread: replying in Czech to a Czech merge request is
+regardless of the language of the ticket or PR being answered**. Match the
+repository, not the thread: replying in Czech to a Czech pull request is
 the easy mistake, and it is still wrong. If the audience needs another
 language, that is a separate translation next to the English, never
 instead of it.
@@ -129,11 +129,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Quality reports** ([`docs/quality-checks.md`](docs/quality-checks.md)
   lists every check). CI job `quality-gate` lists every check's findings
   (CRAP, compiler and lint warnings, architecture rules, unused and
-  duplicated code, diff coverage, mutation results), and the merge request
-  shows them in its Code Quality widget. Checks in `warn` mode
+  duplicated code, diff coverage, mutation results) in its output; a
+  warn-mode finding adds a warning annotation to the run, and the full
+  report is uploaded as the job's `quality-gate` artifact. Checks in `warn` mode
   ([`tools/quality/checks.json`](tools/quality/checks.json)) do not block;
   still, add no new finding in code you touch. `required` checks fail the
-  pipeline — among them `diff-coverage`: the lines a merge request adds or
+  CI run — among them `diff-coverage`: the lines a pull request adds or
   changes must be at least 80% covered in every file. Write new and changed
   functions for a CRAP score of at most 8, the `crap` threshold
   (ADR-0081): in practice cc ≤ 7, since a cc-8 function fails on any
@@ -143,7 +144,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **While you work, run the checks on your change:** `node tools/quality/changed.mjs`
   runs the quality checks against the working tree's change since `origin/main`, with
   only the related tests, in seconds to a minute. Fix what it reports before you commit.
-  It is an approximation: the verify step above and the merge request's full run still
+  It is an approximation: the verify step above and the pull request's full CI run still
   decide ([`docs/quality-checks.md`](docs/quality-checks.md) § Diff mode).
 - Don't bypass hooks (`--no-verify`) or skip tests to "unblock" a commit.
 
