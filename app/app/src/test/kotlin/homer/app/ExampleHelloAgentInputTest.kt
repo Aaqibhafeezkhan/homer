@@ -35,4 +35,14 @@ class ExampleHelloAgentInputTest {
     fun `rejects a command substitution`() {
         assertIs<ParamValidation.Invalid>(validator.validate("\$(id)", projectId))
     }
+
+    @Test
+    fun `rejects a dotted or slashed project id`() {
+        assertIs<ParamValidation.Invalid>(validator.validate("a.b/c", projectId))
+    }
+
+    @Test
+    fun `rejects an empty project id`() {
+        assertIs<ParamValidation.Invalid>(validator.validate("", projectId))
+    }
 }

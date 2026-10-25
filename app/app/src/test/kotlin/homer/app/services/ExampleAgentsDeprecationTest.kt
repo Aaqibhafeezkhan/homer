@@ -60,13 +60,22 @@ class ExampleAgentsDeprecationTest {
         assertTrue(warnings.isEmpty(), "example agents use deprecated syntax:\n${warnings.joinToString("\n")}")
     }
 
-    @Test
-    fun `a deliberately deprecated agent does log the warning`() {
+    private fun warningsFor(agentYaml: String): List<String> {
         val root = Files.createTempDirectory("deprecated-agents")
         try {
             val agentDir = Files.createDirectories(root.resolve("legacy"))
-            Files.writeString(
-                agentDir.resolve("agent.yaml"),
+            Files.writeString(agentDir.resolve("agent.yaml"), agentYaml.trimIndent())
+            AgentsService(root.toString(), logger)
+            return deprecationWarnings()
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a deprecated queryParams alias does log its warning`() {
+        val warnings =
+            warningsFor(
                 """
                 name: legacy
                 commands:
@@ -74,19 +83,30 @@ class ExampleAgentsDeprecationTest {
                     cmd: "echo hi"
                 queryParams:
                   - paramName: n
+                    type: string
+                    required: false
+                """,
+            )
+
+        assertTrue(warnings.any { it.contains("deprecated 'queryParams' alias") }, "saw $warnings")
+    }
+
+    @Test
+    fun `a deprecated param type does log its warning`() {
+        val warnings =
+            warningsFor(
+                """
+                name: legacy
+                commands:
+                  - !<cmd>
+                    cmd: "echo hi"
+                inputs:
+                  - paramName: n
                     type: STRING
                     required: false
-                """.trimIndent(),
+                """,
             )
 
-            AgentsService(root.toString(), logger)
-
-            assertTrue(
-                deprecationWarnings().isNotEmpty(),
-                "capture must see the deprecation WARN; saw ${appender.list.map { it.formattedMessage }}",
-            )
-        } finally {
-            root.toFile().deleteRecursively()
-        }
+        assertTrue(warnings.any { it.contains("deprecated param types") }, "saw $warnings")
     }
 }

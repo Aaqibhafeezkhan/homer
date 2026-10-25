@@ -156,8 +156,8 @@ tasks.test {
     }
     ciConfig?.let { systemProperty("homer.ciConfig", it.absolutePath) }
 
-    // ArtifactoryTransportTest, ArtifactorySecretExposureTest, ReleaseWorkflowGateTest and
-    // ExampleAgentsDeprecationTest read repo files
+    // ArtifactoryTransportTest, ArtifactorySecretExposureTest, ReleaseWorkflowGateTest,
+    // ExampleAgentsDeprecationTest and ExampleHelloAgentInputTest read repo files
     // that are not otherwise inputs of this task. Undeclared, they leave the cache
     // key unchanged, so editing a Dockerfile or a compose file replays a cached
     // pass and the guard never runs -- precisely when it is meant to fire.
