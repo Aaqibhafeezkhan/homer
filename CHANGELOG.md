@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Fixed: agentdebug param types** — `validate` and `show-commands` now print each param type as written in agent files (`string`, `integer`) instead of the internal enum name.
 - **Fixed: bundled example agents use typed inputs** — The example agents no longer log deprecation warnings at startup; they use `inputs:` and typed params, and the `hello` example's `project_id` now accepts only letters, digits, `_` and `-`.
 - **Added: slim `homer-app:<version>-slim` image** — A server image without the agent CLIs (Claude Code, Codex, Node.js, git), for deployments whose agents run on pull runners. See [ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md).
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.

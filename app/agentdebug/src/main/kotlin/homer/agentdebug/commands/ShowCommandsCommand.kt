@@ -33,7 +33,7 @@ class ShowCommandsCommand(
             println("Inputs:")
             params.forEach { p ->
                 val req = if (p.required) "required" else "optional"
-                println("  ${p.paramName.padEnd(14)} ${p.type.name.padEnd(8)} $req  -> env: ${p.envName}")
+                println("  ${p.paramName.padEnd(14)} ${p.type.wireName.padEnd(8)} $req  -> env: ${p.envName}")
             }
         }
     }
