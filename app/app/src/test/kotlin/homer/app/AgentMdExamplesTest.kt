@@ -26,6 +26,14 @@ import kotlin.test.fail
  *  - `resultEnvParam: { ... }` object form when the model expects an array.
  *  - Renamed/removed kaml tags after a `Command` sealed-class refactor.
  *
+ * A second test (scan in `DeprecatedSyntaxScan.kt`) scans every yaml/json block (partial snippets included, any
+ * indent, flow style too) and fails on a `type` of `STRING`/`NUMBER`/`ANY` and on
+ * a `queryParams` key that does not belong to a `!<agent>` / `"type": "agent"`
+ * command (that one is a different, non-deprecated field; it is recognised by
+ * nesting deeper than the nearest preceding command header). A block that
+ * deliberately shows the legacy syntax opts out with
+ * `<!-- legacy-syntax-example -->` on the line before its fence.
+ *
  * Does NOT catch prose drift (wrong default values in field tables,
  * misdescribed validation semantics, missing rows). Per root §10 those
  * rely on reviewer discipline when changing the model.
@@ -73,6 +81,19 @@ class AgentMdExamplesTest {
             fail(
                 "AGENT.md drift detected (${failures.size} of ${blocks.size} blocks failed):\n\n" +
                     failures.joinToString("\n\n"),
+            )
+        }
+    }
+
+    @Test
+    fun `no AGENT md example uses the deprecated param syntax unless marked`() {
+        val scan = scanDeprecatedSyntax(agentMd.readText())
+        assertTrue(scan.blocks > 0, "No yaml/json blocks scanned in AGENT.md — scanner regression?")
+        assertTrue(scan.markedBlocks > 0, "No <!-- legacy-syntax-example --> block found — opt-out path unpinned?")
+        if (scan.offenders.isNotEmpty()) {
+            fail(
+                "Deprecated param syntax in AGENT.md examples (use typed inputs, or mark a deliberate " +
+                    "legacy example with <!-- legacy-syntax-example -->):\n" + scan.offenders.joinToString("\n"),
             )
         }
     }
