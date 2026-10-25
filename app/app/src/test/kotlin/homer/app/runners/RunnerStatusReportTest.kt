@@ -2,6 +2,7 @@ package homer.app.runners
 
 import homer.app.fixtures.TestFixtures
 import homer.app.models.AppConfig
+import homer.app.models.LocalRunnerConfig
 import homer.app.models.RunnerConfig
 import homer.app.models.RunnerFilter
 import homer.app.models.RunnerFilterView
@@ -66,6 +67,19 @@ class RunnerStatusReportTest {
         val workers = status.runners.first { it.alias == "workers" }
         assertEquals(null, workers.concurrency)
         assertEquals(emptyList(), workers.tags)
+    }
+
+    @Test
+    fun `a disabled local runner is not listed`() {
+        val config =
+            appConfig(mapOf("ssh-a" to sshRunnerConfig())).let {
+                it.copy(server = it.server.copy(localRunner = LocalRunnerConfig(enabled = false)))
+            }
+        val registry = RunnerRegistry(entries = emptyList(), queue = RunnerClaimQueue(maxPending = 10))
+
+        val status = runnersStatus(config, registry)
+
+        assertEquals(listOf("ssh-a"), status.runners.map { it.alias })
     }
 
     @Test

@@ -57,7 +57,10 @@ ADR-0033.
 Every run reaches a runner through the claim queue (ADR-0066):
 `RunnerRegistry.forAgent(agent)` returns a `QueuedRunner` whose
 `openSession` enqueues a `ClaimRequest` (filter = alias or tag set) into
-`RunnerClaimQueue` and awaits it under the claim TTL. One
+`RunnerClaimQueue` and awaits it under the claim TTL. The one exception:
+with `server.localRunner.enabled: false` no local consumer exists and
+`forAlias("local")` throws a `ConfigurationException` before anything is
+queued, rather than letting the claim wait out its TTL (ADR-0095). One
 `StaticRunnerConsumer` per configured runner (started once from
 `Application` on the application scope, and stopped via
 `RunnerRegistry.stop()` right after the handler flips `isDraining`,

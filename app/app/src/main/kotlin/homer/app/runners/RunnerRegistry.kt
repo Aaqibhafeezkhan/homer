@@ -1,8 +1,10 @@
 package homer.app.runners
 
+import homer.app.exceptions.ConfigurationException
 import homer.app.models.Agent
 import homer.app.models.RunnerFilter
 import homer.app.runners.external.ExternalRunnerDomain
+import homer.app.runners.local.LocalRunner
 import homer.app.runners.queue.QueuedRunner
 import homer.app.runners.queue.RegisteredRunner
 import homer.app.runners.queue.RunnerClaimQueue
@@ -29,6 +31,8 @@ class RunnerRegistry(
     val queue: RunnerClaimQueue = RunnerClaimQueue(maxPending = 1000),
     private val defaultClaimTimeout: Duration = 300.seconds,
     private val sweepInterval: Duration = 5.seconds,
+    // server.localRunner.enabled: false, as RunnerWiring read it; see ADR-0095.
+    private val localRunnerDisabled: Boolean = false,
 ) : RunnerLookup,
     ConfiguredRunners {
     constructor(runners: List<Runner>) : this(runners.map { RegisteredRunner(it) })
@@ -83,10 +87,21 @@ class RunnerRegistry(
 
     override fun forAlias(alias: String): Runner = forAlias(alias, defaultClaimTimeout)
 
+    /**
+     * Fails at once with [ConfigurationException] for `local` when the wiring turned the
+     * local runner off, rather than queueing a claim nothing can take. See ADR-0095.
+     */
     fun forAlias(
         alias: String,
         claimTimeout: Duration,
-    ): Runner = QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout)
+    ): Runner {
+        if (localRunnerDisabled && alias == LocalRunner.ALIAS) {
+            throw ConfigurationException(
+                "runner '${LocalRunner.ALIAS}' is disabled (server.localRunner.enabled: false); route the agent to another runner",
+            )
+        }
+        return QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout)
+    }
 
     fun forAgent(agent: Agent): Runner {
         val timeout = agent.runnerClaimTimeoutSec?.seconds ?: defaultClaimTimeout

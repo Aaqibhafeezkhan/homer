@@ -1,5 +1,6 @@
 package homer.app.runners
 
+import homer.app.exceptions.ConfigurationException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
 import homer.app.models.RunnerConfig
@@ -52,6 +53,23 @@ class RunnerRegistryTest {
 
         val ex = assertThrows<IllegalStateException> { registry.get("missing") }
         assertEquals(true, ex.message!!.contains("Unknown runner 'missing'"))
+    }
+
+    @Test
+    fun `a registry told the local runner is off refuses it by name, before any claim`() {
+        val registry = RunnerRegistry(entries = listOf(RegisteredRunner(stubRunner("k8s"))), localRunnerDisabled = true)
+
+        val ex = assertThrows<ConfigurationException> { registry.forAlias("local") }
+        assertEquals(true, ex.message!!.contains("server.localRunner.enabled: false"))
+        assertEquals("k8s", registry.forAlias("k8s").alias)
+    }
+
+    @Test
+    fun `a registry merely missing local does not claim it was disabled`() {
+        val registry = RunnerRegistry(listOf(stubRunner("k8s")))
+
+        val ex = assertThrows<IllegalStateException> { registry.forAlias("local") }
+        assertEquals(true, ex.message!!.contains("Unknown runner 'local'"))
     }
 
     @Test

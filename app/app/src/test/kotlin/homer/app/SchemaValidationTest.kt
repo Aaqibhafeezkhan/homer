@@ -92,6 +92,26 @@ class SchemaValidationTest {
     }
 
     @Test
+    fun `homer-config schema refuses tags and concurrency on a disabled local runner`() {
+        // Pins the if/then that mirrors LocalRunnerConfig's init: every example fixture keeps
+        // the local runner enabled, so the `then` branch never runs without this.
+        val schema = loadSchema("homer-config.schema.json")
+        val base = Json.parseToJsonElement(File(repoRoot, "example/config/config-custom.json").readText()).jsonObject
+        val server = base["server"]?.jsonObject ?: JsonObject(emptyMap())
+
+        fun withLocalRunner(localRunner: String): String {
+            val newServer = JsonObject(server + ("localRunner" to Json.parseToJsonElement(localRunner)))
+            return JsonObject(base + ("server" to newServer)).toString()
+        }
+        for (bad in listOf("""{"enabled": false, "tags": ["linux"]}""", """{"enabled": false, "concurrency": 2}""")) {
+            val errors = schema.validate(withLocalRunner(bad), InputFormat.JSON)
+            assertTrue(errors.isNotEmpty(), "schema accepted localRunner $bad")
+        }
+        validate(schema, withLocalRunner("""{"enabled": false}"""), "config-custom.json with localRunner disabled")
+        validate(schema, withLocalRunner("""{"tags": ["linux"], "concurrency": 2}"""), "config-custom.json with local tags")
+    }
+
+    @Test
     fun `no example agent opts into dangerouslySkipPermissions`() {
         // Acceptance criterion (GH-7): a bundled example must not skip Claude's
         // permission gate without a comment saying why. JSON has no comments at

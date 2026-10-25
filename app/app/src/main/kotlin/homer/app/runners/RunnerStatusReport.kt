@@ -46,15 +46,17 @@ fun runnersStatus(
     val local = config.server.localRunner
     val rows =
         buildList {
-            add(
-                RunnerStatus(
-                    LocalRunner.ALIAS,
-                    runnerType(config, LocalRunner.ALIAS),
-                    local.tags.sorted(),
-                    local.concurrency,
-                    inUse[LocalRunner.ALIAS] ?: 0,
-                ),
-            )
+            if (local.enabled) {
+                add(
+                    RunnerStatus(
+                        LocalRunner.ALIAS,
+                        runnerType(config, LocalRunner.ALIAS),
+                        local.tags.sorted(),
+                        local.concurrency,
+                        inUse[LocalRunner.ALIAS] ?: 0,
+                    ),
+                )
+            }
             config.runners.forEach { (alias, cfg) ->
                 add(
                     when (cfg) {

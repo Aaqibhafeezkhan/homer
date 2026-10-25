@@ -686,8 +686,13 @@
     "LocalRunnerConfig": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Claim-queue facets of the built-in local runner: the tags it serves and how many runs it serves at once. See ADR-0066.",
+      "description": "The built-in local runner: whether it exists, the tags it serves and how many runs it serves at once. See ADR-0066.",
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "false registers no local runner: a run routed to 'local' fails at once and no run executes in the server's container. tags and concurrency must then be absent."
+        },
         "tags": {
           "type": "array",
           "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$" },
@@ -695,7 +700,9 @@
           "uniqueItems": true
         },
         "concurrency": { "type": ["integer", "null"], "minimum": 1, "default": null }
-      }
+      },
+      "if": { "properties": { "enabled": { "const": false } }, "required": ["enabled"] },
+      "then": { "properties": { "tags": { "maxItems": 0 }, "concurrency": { "type": "null" } } }
     },
     "KubernetesRunner": {
       "type": "object",

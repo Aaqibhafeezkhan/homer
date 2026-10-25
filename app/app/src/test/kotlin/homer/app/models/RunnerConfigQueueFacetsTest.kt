@@ -99,4 +99,18 @@ $extra""",
         assertTrue(ex.message!!.contains("server.localRunner"), ex.message)
         assertThrows<IllegalArgumentException> { LocalRunnerConfig(tags = listOf("no spaces")) }
     }
+
+    @Test
+    fun `the local runner is enabled unless the config turns it off`() {
+        assertTrue(LocalRunnerConfig().enabled)
+        val off = yaml.decodeFromString(LocalRunnerConfig.serializer(), "enabled: false")
+        assertEquals(LocalRunnerConfig(enabled = false), off)
+    }
+
+    @Test
+    fun `a disabled local runner refuses tags and concurrency it would never use`() {
+        val withTags = assertThrows<IllegalArgumentException> { LocalRunnerConfig(enabled = false, tags = listOf("linux")) }
+        assertTrue(withTags.message!!.contains("server.localRunner.enabled is false"), withTags.message)
+        assertThrows<IllegalArgumentException> { LocalRunnerConfig(enabled = false, concurrency = 2) }
+    }
 }
