@@ -509,6 +509,8 @@ name fail the test.
 
 ## Gotchas
 
+- **A test that reads a repo file outside `:app` must declare it in `guardedRepoFiles`** in
+  `app/app/build.gradle.kts` — otherwise the build cache replays a pass when only that file changes.
 - **A new Gradle module needs an empty-dir stub in both Dockerfiles** — `app/Dockerfile` and
   `app/e2e/Dockerfile` copy only the modules they build, and Gradle refuses an included project
   whose directory is missing, so `settings.gradle.kts` and their `mkdir -p` lists move together.
