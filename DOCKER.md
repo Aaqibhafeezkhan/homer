@@ -463,9 +463,10 @@ base image into a clear per-run error instead of silent version drift.
 
 Every release image on GHCR is a multi-arch index of a `linux/amd64` and a
 `linux/arm64` image, so Docker pulls the one that matches the host. The index
-is signed with cosign and carries SLSA build provenance and a CycloneDX SBOM
-of each platform, all bound to the index digest
-([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
+is signed with cosign and carries SLSA provenance of the release run that
+assembled it and the CycloneDX SBOM of each platform, all bound to the index
+digest; each platform image carries its own signature, SLSA build provenance
+and SBOM ([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
 image by digest before deploying it. The stack pulls by tag
 (`HOMER_VERSION`), so resolve the digest first —
 `docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.36.0 --format '{{.Manifest.Digest}}'`

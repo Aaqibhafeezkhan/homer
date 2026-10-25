@@ -83,6 +83,9 @@ class ReleaseWorkflowGateTest {
                 "-name \"@img\" -o -name \"sharp\" -o -name \"libvips*\"",
                 "refusing to push",
                 "- name: Push",
+                // The labels job `images` checks to bind each digest to its entry.
+                "--label \"org.opencontainers.image.title=\$TITLE\"",
+                "--label \"org.opencontainers.image.version=\$VERSION\"",
                 "push-by-digest=true",
                 "format: cyclonedx-json",
                 "cosign sign --yes \"\$IMAGE@\$DIGEST\"",
@@ -95,6 +98,15 @@ class ReleaseWorkflowGateTest {
         assertSupplyChain(
             "images",
             listOf(
+                // Each platform digest must be this entry's build for that platform.
+                "TITLE: \${{ matrix.image }}",
+                "found=\$(find platform -name 'digest-*' | wc -l)",
+                "[ \"\$found\" -eq 2 ]",
+                "for arch in amd64 arm64; do",
+                "digest=\$(cat \"platform/platform--\$arch--\$ENTRY/digest-\$arch\")",
+                "[ \"\$(jq -r '.architecture' <<<\"\$config\")\" = \"\$arch\" ] &&",
+                "[ \"\$(jq -r '.config.Labels[\"org.opencontainers.image.title\"]' <<<\"\$config\")\" = \"\$TITLE\" ] &&",
+                "[ \"\$(jq -r '.config.Labels[\"org.opencontainers.image.version\"]' <<<\"\$config\")\" = \"\$VERSION\$SUFFIX\" ] ||",
                 "docker buildx imagetools create",
                 "cosign sign --yes \"\$IMAGE@\$DIGEST\"",
                 "- name: Attest provenance",
@@ -170,6 +182,12 @@ class ReleaseWorkflowGateTest {
     @Test
     fun `every image is built for linux amd64 and linux arm64 on native runners`() {
         val builds = jobLines(release, "image-builds").map { it.trim() }
+        assertTrue(
+            "TITLE: \${{ matrix.build.image }}" in builds &&
+                "VERSION: \${{ needs.image-tags.outputs.version }}\${{ matrix.build.tag-suffix }}" in builds,
+            "$release job `image-builds` no longer labels each platform image with its entry's image name and " +
+                "version, tag suffix included; job `images` relies on them to refuse another entry's digest.",
+        )
         for ((platform, runner) in listOf("linux/amd64" to "ubuntu-latest", "linux/arm64" to "ubuntu-24.04-arm")) {
             val at = builds.indexOf("- name: $platform")
             assertTrue(
@@ -185,11 +203,9 @@ class ReleaseWorkflowGateTest {
         )
         val index = jobLines(release, "images").map { it.trim() }
         assertTrue(
-            "needs: [image-tags, image-builds]" in index && "for arch in amd64 arm64; do" in index &&
-                index.any { it.contains("org.opencontainers.image.version") && it.contains("\"\$VERSION\$SUFFIX\"") },
-            "$release job `images` must wait for every platform build and join this entry's amd64 and arm64 " +
-                "digests, checked by their version label, into the index; a release tag must not name an image " +
-                "that lacks a platform or another entry's build.",
+            "needs: [image-tags, image-builds]" in index && "for arch in amd64 arm64; do" in index,
+            "$release job `images` must wait for every platform build and join the amd64 and arm64 digests into " +
+                "the index; a release tag must not name an image that lacks a platform.",
         )
     }
 
