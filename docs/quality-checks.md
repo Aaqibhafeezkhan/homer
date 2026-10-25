@@ -30,8 +30,10 @@ prints a table with the top findings in the job's log, merges the Code Quality f
 | 3 | findings only in `warn` checks | passes; the job adds a warning annotation to the run |
 | 1 | findings in a `required` check, or a report missing, broken or written for another threshold (a missing report of an `optional` check does not fail it; it shows as `not run`) | fails |
 
-The job uploads the `quality-gate` artifact (7 days): every check's report directory under
-`reports/quality/` and the merged `code-quality.json`. GitHub shows no per-line coverage
+The job uploads the `quality-gate` artifact (7 days): the report directories under the root
+`reports/quality/` and the merged `code-quality.json`. The console checks write under
+`console/reports/quality/` and `crap` under `app/*/build/reports/crap` and `console/coverage/crap`;
+those findings reach the artifact only merged into `code-quality.json`. GitHub shows no per-line coverage
 annotations in a pull request's diff; the coverage reports only feed `diff-coverage` and `crap`.
 
 A new check starts in `warn` mode, its findings get fixed, and then it is set
@@ -126,7 +128,7 @@ table CI does, once the reports exist.
 | LangGraph Python runtime tests | `homer-python-tests` | `cd clients/python && .venv/bin/python -m pytest` |
 | Black-box E2E suite against the production backend image (also proves `app/Dockerfile` builds) | `homer-e2e` | see [`app/e2e/README.md`](../app/e2e/README.md) |
 | Known CVEs in backend dependencies (OWASP dependency-check, NVD data from the dependency-check project's daily mirror) | `dependency-check` (Nightly workflow): scheduled once the repository is public, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:dependencyCheckAnalyze :homer-runner:dependencyCheckAnalyze` |
-| Console image must not ship LGPL-3.0 `libvips` | `images` job of the Release workflow (tags) | — |
+| Console image must not ship LGPL-3.0 `libvips` | `images` job of the Release workflow (tags, and `workflow_dispatch` builds of a protected branch) | — |
 | Backend mutation-testing pilot (PIT, `homer.app.config`) | `backend-mutation` (Nightly workflow): scheduled once the repository is public, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:pitest` |
 | Full console mutation run (~7,500 mutants) | `console-mutation-full` (Nightly workflow): manual, `workflow_dispatch` with `full-console-mutation` | `cd console && npm run mutation` |
 
