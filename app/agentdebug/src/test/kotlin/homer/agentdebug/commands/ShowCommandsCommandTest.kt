@@ -139,4 +139,39 @@ class ShowCommandsCommandTest {
         assertContains(out, "      module: graphs.flow  (python: python3)  [SKIPPED in debug mode]")
         assertContains(out, "      runner: local  [SKIPPED in debug mode]")
     }
+
+    @Test
+    fun `param types print as written in agent files`(
+        @TempDir tempDir: Path,
+    ) {
+        val agentDir = tempDir.resolve("typed").createDirectories()
+        agentDir.resolve("agent.yaml").writeText(
+            """
+            name: typed
+            commands:
+              - !<cmd>
+                cmd: "echo hi"
+            inputs:
+              - paramName: count
+                envName: COUNT
+                src: query
+                type: integer
+              - paramName: legacy
+                envName: LEGACY
+                src: query
+                type: ANY
+            """.trimIndent(),
+        )
+        val appConfig =
+            AppConfig(
+                agentsSearchPath = tempDir.toString(),
+                workspaceRootPath = tempDir.resolve("workspace").toString(),
+                databasePath = tempDir.resolve("db.sqlite").toString(),
+            )
+
+        val out = capture { ShowCommandsCommand(appConfig, "typed").run() }
+
+        assertContains(out, "count          integer  required")
+        assertContains(out, "legacy         ANY      required")
+    }
 }

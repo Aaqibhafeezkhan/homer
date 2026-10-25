@@ -177,4 +177,39 @@ class ValidateCommandTest {
         assertContains(out, "✗ Agent 'missing' not found in $tempDir")
         assertContains(out, "  Available: every-kind")
     }
+
+    @Test
+    fun `param types print as written in agent files`(
+        @TempDir tempDir: Path,
+    ) {
+        val agentDir = tempDir.resolve("typed").createDirectories()
+        agentDir.resolve("agent.yaml").writeText(
+            """
+            name: typed
+            commands:
+              - !<cmd>
+                cmd: "echo hi"
+            inputs:
+              - paramName: count
+                envName: COUNT
+                src: query
+                type: integer
+              - paramName: legacy
+                envName: LEGACY
+                src: query
+                type: ANY
+            """.trimIndent(),
+        )
+        val appConfig =
+            AppConfig(
+                agentsSearchPath = tempDir.toString(),
+                workspaceRootPath = tempDir.resolve("workspace").toString(),
+                databasePath = tempDir.resolve("db.sqlite").toString(),
+            )
+
+        val out = capture { ValidateCommand(appConfig, "typed", "config.yaml").run() }
+
+        assertContains(out, "count (integer, required)")
+        assertContains(out, "legacy (ANY, required)")
+    }
 }

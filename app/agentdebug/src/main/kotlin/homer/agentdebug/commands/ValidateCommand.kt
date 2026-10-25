@@ -60,7 +60,7 @@ class ValidateCommand(
             println("✓ Inputs: ${params.size} params")
             params.forEach { p ->
                 val req = if (p.required) "required" else "optional"
-                println("  ${p.paramName} (${p.type.name}, $req) -> env: ${p.envName}")
+                println("  ${p.paramName} (${p.type.wireName}, $req) -> env: ${p.envName}")
             }
         }
     }
