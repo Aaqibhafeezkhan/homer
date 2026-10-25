@@ -26,7 +26,7 @@ import kotlin.test.fail
  *  - `resultEnvParam: { ... }` object form when the model expects an array.
  *  - Renamed/removed kaml tags after a `Command` sealed-class refactor.
  *
- * A second test scans every yaml/json block (partial snippets included, any
+ * A second test (scan in `DeprecatedSyntaxScan.kt`) scans every yaml/json block (partial snippets included, any
  * indent, flow style too) and fails on a `type` of `STRING`/`NUMBER`/`ANY` and on
  * a `queryParams` key that does not belong to a `!<agent>` / `"type": "agent"`
  * command (that one is a different, non-deprecated field; it is recognised by
@@ -87,58 +87,13 @@ class AgentMdExamplesTest {
 
     @Test
     fun `no AGENT md example uses the deprecated param syntax unless marked`() {
-        val legacyType = Regex("""\btype"?\s*:\s*"?(STRING|NUMBER|ANY)\b""")
-        val queryParams = Regex("""^(\s*)\{?\s*"?queryParams"?\s*:""")
-        val yamlCommand = Regex("""^(\s*)-\s*!<(\w+)>""")
-        val jsonCommand = Regex("""^(\s*)\{?\s*"type"\s*:\s*"(agent|cmd|script|claude|codex|langgraph|runnerCmd)"""")
-        val lines = agentMd.readText().lines()
-        val offenders = mutableListOf<String>()
-        var blocks = 0
-        var markedBlocks = 0
-        var i = 0
-        while (i < lines.size) {
-            val lang = lines[i].trimEnd().removePrefix("```").takeIf { lines[i].startsWith("```") }
-            if (lang != "yaml" && lang != "json") {
-                i++
-                continue
-            }
-            val marked = i > 0 && lines[i - 1].trim() == "<!-- legacy-syntax-example -->"
-            blocks++
-            if (marked) markedBlocks++
-            val fenceLine = i + 1
-            i++
-            var inAgentCommand = false
-            var commandIndent = 0
-            while (i < lines.size && lines[i].trimEnd() != "```") {
-                val line = lines[i]
-                val yaml = yamlCommand.find(line)
-                val json = jsonCommand.find(line)
-                val qp = queryParams.find(line)
-                if (qp != null && !(inAgentCommand && qp.groupValues[1].length > commandIndent) &&
-                    !(json != null && json.groupValues[2] == "agent")
-                ) {
-                    // agent-level alias: not nested under a `!<agent>` / `"type": "agent"` command
-                    if (!marked) offenders += "AGENT.md:$fenceLine (block) line ${i + 1}: ${line.trim()}"
-                } else if (!marked && legacyType.containsMatchIn(line)) {
-                    offenders += "AGENT.md:$fenceLine (block) line ${i + 1}: ${line.trim()}"
-                }
-                if (yaml != null) {
-                    inAgentCommand = yaml.groupValues[2] == "agent"
-                    commandIndent = yaml.groupValues[1].length
-                } else if (json != null) {
-                    inAgentCommand = json.groupValues[2] == "agent"
-                    commandIndent = json.groupValues[1].length - 1
-                }
-                i++
-            }
-            i++
-        }
-        assertTrue(blocks > 0, "No yaml/json blocks scanned in AGENT.md — scanner regression?")
-        assertTrue(markedBlocks > 0, "No <!-- legacy-syntax-example --> block found — opt-out path unpinned?")
-        if (offenders.isNotEmpty()) {
+        val scan = scanDeprecatedSyntax(agentMd.readText())
+        assertTrue(scan.blocks > 0, "No yaml/json blocks scanned in AGENT.md — scanner regression?")
+        assertTrue(scan.markedBlocks > 0, "No <!-- legacy-syntax-example --> block found — opt-out path unpinned?")
+        if (scan.offenders.isNotEmpty()) {
             fail(
                 "Deprecated param syntax in AGENT.md examples (use typed inputs, or mark a deliberate " +
-                    "legacy example with <!-- legacy-syntax-example -->):\n" + offenders.joinToString("\n"),
+                    "legacy example with <!-- legacy-syntax-example -->):\n" + scan.offenders.joinToString("\n"),
             )
         }
     }
