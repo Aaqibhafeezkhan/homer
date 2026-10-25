@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.37.0] - 2026-10-25
+
 ### Homer
 
 - **Fixed: agentdebug param types** — `validate` and `show-commands` now print each param type as written in agent files (`string`, `integer`) instead of the internal enum name.
