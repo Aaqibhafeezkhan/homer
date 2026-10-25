@@ -526,9 +526,12 @@ toggle when `CONSOLE_ALLOW_BEARER=true`:
   clients are the supported audience for bearer.
 
 Opening a console page without a session sends you to the login screen with
-the page you asked for and a neutral "Sign in to continue" prompt; the "Your
-session expired" banner appears only when a session actually existed and was
-rejected. Signing in returns to that page — the return path is accepted only
+the page you asked for and a neutral "Sign in to continue" prompt. The "Your
+session expired" banner is reached only when the console itself redirected
+for a rejected session — the only thing that puts `?expired=1` on the login
+URL. The flag is part of the address, so typing or bookmarking it shows the
+banner with no session behind it; it changes the wording, nothing else.
+Signing in returns to that page — the return path is accepted only
 as a same-origin relative console path, so an absolute or protocol-relative
 value is ignored rather than followed. `CONSOLE_ALLOW_BEARER=true` also makes
 **Token** the mode the form opens in, because it marks a bearer-only backend;

@@ -4,6 +4,13 @@
  * credentials are accepted — an open redirect unless the value is constrained
  * to a same-origin relative path (ADR-0047). Validated at the point of use, in
  * the login form, not only when the URL is read.
+ *
+ * The value is accepted path-only: `?` and `#` are rejected outright, though
+ * only a `/login` target could abuse an `endpoint=`/`mode=` ride-along, because
+ * both producers hand `usePathname()`, which never carries either — query state
+ * does not survive a sign-in round trip. Carrying a query would need a second
+ * validation shape per target; the default view of the destination is the
+ * accepted cost.
  */
 
 /** Where sign-in lands when there is no acceptable return path. */

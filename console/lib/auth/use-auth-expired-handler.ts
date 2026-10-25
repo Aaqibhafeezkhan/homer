@@ -60,8 +60,15 @@ export function useAuthExpiredHandler(status: AuthStatus): RefObject<boolean> {
       if (pathname?.startsWith('/login')) return;
       handled.current = true;
       // Read the credential before clearing it: it is what separates an expired
-      // session from a session-less first visit.
-      const hadSession = sessionExisted(wasAuthed.current);
+      // session from a session-less first visit. Both of its storage reads
+      // throw when storage is denied, like `removeActiveToken` below — treat
+      // that as "no session" so the recovery still reaches the redirect.
+      let hadSession = false;
+      try {
+        hadSession = sessionExisted(wasAuthed.current);
+      } catch {
+        /* SSR or denied storage; ignore */
+      }
       try {
         removeActiveToken();
       } catch {

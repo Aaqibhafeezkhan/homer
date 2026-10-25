@@ -376,7 +376,10 @@ describe('LoginPage', () => {
 
   it('preselects Token when bearer is the deployment default', () => {
     appConfigMock.auth.allowBearer = true;
-    setActiveInstanceMode('bearer');
+    // No saved mode resolves (no active instance), so the `?? 'bearer'`
+    // deployment default alone decides — a saved mode has the sibling test
+    // above.
+    instancesMock.instances = [];
     renderPage();
     expect(screen.getByRole('radio', { name: /token/i })).toBeChecked();
     expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();

@@ -86,6 +86,23 @@ describe('useAuthExpiredHandler', () => {
     expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses');
   });
 
+  it('still reaches the redirect when storage denies the credential read', () => {
+    // With storage blocked (denied cookie/storage), both reads inside
+    // sessionExisted throw. The recovery must treat that as "no session" and
+    // carry on — like removeActiveToken — instead of stranding the reader on
+    // a dead page with stale per-user caches.
+    activateBearerInstance();
+    localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
+    const getItem = vi.spyOn(localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('storage denied');
+    });
+    renderHarness(new QueryClient(), 'loading');
+    act(() => notifyAuthExpired('http-401'));
+    getItem.mockRestore();
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses');
+    expect(localStorage.getItem(ACTIVE_TOKEN_KEY)).toBeNull();
+  });
+
   it('ignores a stored bearer token while the active instance is in cookie mode', () => {
     // The default instance is cookie-mode here, so a leftover token is not the
     // credential this request carried.
