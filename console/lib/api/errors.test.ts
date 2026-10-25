@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
-import { HomerApiError } from '@/lib/api/client';
+import { HomerApiError, type TransportFailure } from '@/lib/api/client';
 import { describeApiError } from './errors';
 
 vi.mock('@/lib/instances/store', async (importOriginal) => ({
@@ -15,9 +15,29 @@ describe('describeApiError', () => {
     );
   });
 
-  it('names the API URL and CORS when no response arrived (network failure or CORS block)', () => {
-    expect(describeApiError(new HomerApiError('Failed to fetch'))).toBe(
+  const transport = (failure?: TransportFailure) => Object.assign(new HomerApiError('x'), { failure });
+
+  it('names the API URL and CORS when the fetch itself failed (network failure or CORS block)', () => {
+    expect(describeApiError(transport('unreachable'))).toBe(
       "Cannot reach the Homer API at http://localhost:18080 — check that it is running and that its corsAllowedOrigins allows this console's origin.",
+    );
+  });
+
+  it('reports a client timeout without blaming CORS', () => {
+    expect(describeApiError(transport('timeout'))).toBe(
+      'The Homer API at http://localhost:18080 did not answer in time — check that it is running and reachable.',
+    );
+  });
+
+  it('reports an unreadable response as such, pointing at a proxy rather than CORS', () => {
+    expect(describeApiError(transport('invalid-response'))).toBe(
+      'The Homer API at http://localhost:18080 sent a response the console cannot read — check for a proxy in between.',
+    );
+  });
+
+  it('lists the possible causes when a status-less failure is untagged', () => {
+    expect(describeApiError(transport())).toBe(
+      'The Homer API at http://localhost:18080 did not answer correctly — it may be down, blocked by CORS (check corsAllowedOrigins), or returning an invalid response.',
     );
   });
 

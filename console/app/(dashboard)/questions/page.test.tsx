@@ -70,7 +70,7 @@ describe('QuestionsPage', () => {
   });
 
   it('names the API URL when the API cannot be reached', () => {
-    mockFailure = { data: undefined, error: new HomerApiError('Failed to fetch') };
+    mockFailure = { data: undefined, error: Object.assign(new HomerApiError('Failed to fetch'), { failure: 'unreachable' as const }) };
     render(<QuestionsPage />);
     expect(screen.getByRole('alert')).toHaveTextContent(/Cannot reach the Homer API at .* corsAllowedOrigins/);
   });

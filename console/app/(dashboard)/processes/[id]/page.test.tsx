@@ -393,7 +393,7 @@ describe('ProcessDetailPage before the process loads', () => {
 
   it.each([
     ['an auth rejection', new HomerApiError('x', 401, 'Unauthorized'), /The API rejected the request — sign in/],
-    ['an unreachable or CORS-blocked API', new HomerApiError('Failed to fetch'), /Cannot reach the Homer API at .* corsAllowedOrigins/],
+    ['an unreachable or CORS-blocked API', Object.assign(new HomerApiError('Failed to fetch'), { failure: 'unreachable' as const }), /Cannot reach the Homer API at .* corsAllowedOrigins/],
     ['a missing process', new HomerApiError('x', 404, 'Not Found'), /Process 7 does not exist, or you cannot see it\./],
     ['a server error', new HomerApiError('x', 500, 'Internal Server Error'), /HTTP 500 Internal Server Error/],
   ])('shows why instead of loading forever on %s', (_case, error, message) => {

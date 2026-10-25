@@ -82,7 +82,16 @@ export interface ArtifactListing {
   files: ArtifactEntry[];
 }
 
+/**
+ * Why a request failed without an HTTP status: the client timeout fired, the
+ * fetch itself was rejected (down, unreachable, or blocked by CORS — the browser
+ * does not say which), or a response arrived that could not be read.
+ */
+export type TransportFailure = 'timeout' | 'unreachable' | 'invalid-response';
+
 class HomerApiError extends Error {
+  public failure?: TransportFailure;
+
   constructor(
     message: string,
     public status?: number,
@@ -222,6 +231,7 @@ class HomerApiClient {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    let responded = false;
 
     try {
       const response = await fetch(url, {
@@ -232,11 +242,12 @@ class HomerApiClient {
       });
 
       clearTimeout(timeoutId);
+      responded = true;
 
       return await read(response);
     } catch (error) {
       clearTimeout(timeoutId);
-      throw toHomerApiError(error);
+      throw toHomerApiError(error, responded);
     }
   }
 
@@ -583,12 +594,15 @@ function appendTags(params: URLSearchParams, tags: string[] | undefined): void {
 }
 
 /** Wraps a thrown value from a fetch path in a {@link HomerApiError}. */
-function toHomerApiError(error: unknown): HomerApiError {
+/** Wraps a non-HTTP failure; [responded] = the fetch resolved, so `read` threw. */
+function toHomerApiError(error: unknown, responded: boolean): HomerApiError {
   if (error instanceof HomerApiError) return error;
-  if (error instanceof Error) {
-    return new HomerApiError(error.name === 'AbortError' ? 'Request timeout' : error.message);
-  }
-  return new HomerApiError('Unknown error occurred');
+  const timedOut = error instanceof Error && error.name === 'AbortError';
+  const wrapped = new HomerApiError(
+    timedOut ? 'Request timeout' : error instanceof Error ? error.message : 'Unknown error occurred',
+  );
+  wrapped.failure = timedOut ? 'timeout' : responded ? 'invalid-response' : 'unreachable';
+  return wrapped;
 }
 
 /** One agent file's endpoint; each `path` segment is encoded, its `/`s kept. */

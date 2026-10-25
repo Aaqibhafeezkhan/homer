@@ -364,7 +364,7 @@ describe('ProcessesPage URL state', () => {
   });
 
   it('says the API cannot be reached when the list request gets no response', () => {
-    useProcessesMock.mockReturnValue({ data: undefined, isLoading: false, error: new HomerApiError('Failed to fetch') });
+    useProcessesMock.mockReturnValue({ data: undefined, isLoading: false, error: Object.assign(new HomerApiError('Failed to fetch'), { failure: 'unreachable' as const }) });
     renderWithUrl('');
     expect(screen.getByRole('alert')).toHaveTextContent(
       /Failed to load processes: Cannot reach the Homer API at .* corsAllowedOrigins allows this console's origin\./,
