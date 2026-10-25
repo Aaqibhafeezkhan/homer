@@ -131,16 +131,25 @@ BuildKit provenance, then generates that platform's SBOM, signs the platform dig
 its provenance and SBOM, exactly as the steps above do. The console's license gate scans a local
 build of each platform before that push, which rebuilds from the builder's cache, so the gate
 still runs before anything is conveyed. `images` then joins each image's platform digests into
-one index with `docker buildx imagetools create`, under the same tags as before, checks that the
-index lists exactly this run's platform digests, signs the index digest, attests its provenance,
-and attests both platform SBOMs to it, since an SBOM describes one platform's file system. Its
-verify step checks the index and every platform digest the way a consumer does.
+one index with `docker buildx imagetools create`, under the same tags as before. It takes each
+digest from the artifact named for its platform and image (the image last, so no image's
+download pattern matches another's), checks that the digest's image labels carry this image's
+name and version, tag suffix included, so a slim build cannot pass for the full one, and checks
+that the index lists exactly those digests. It then signs the index digest, attests provenance
+to it, and attests both platform SBOMs to it, since an SBOM describes one platform's file system.
+Its verify step checks the index and every platform digest the way a consumer does.
+
+The two provenance attestations say different things. A platform digest's provenance records the
+workflow run that built that image. The index's provenance records the run that assembled and
+signed the index; `imagetools create` builds nothing, so it is not build provenance of the
+platform images. Both name the same workflow, tag and commit, which is what a consumer checks.
+A consumer who wants build provenance verifies the platform digests the index lists.
 
 Consequences:
 
 - The index digest is what the release page lists and what the documentation tells a consumer to
   verify and pin; it names each platform digest by content, and each of those carries its own
-  signature, provenance and SBOM for a consumer that pins a platform digest instead.
+  signature, build provenance and SBOM.
 - A failed platform build skips every index, so no release tag names an image that lacks a
   platform; the platform digests already pushed stay untagged until pruned.
 - `timeout-minutes` bounds a build, not the wait for a runner: GitHub does not count queue time,

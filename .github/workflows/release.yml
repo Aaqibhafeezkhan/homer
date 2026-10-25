@@ -179,8 +179,11 @@ jobs:
       TARGET: ${{ matrix.build.target }}
       DOCKERFILE: ${{ matrix.build.dockerfile }}
       CONTEXT: ${{ matrix.build.context }}
-      # The build argument takes the release tag, suffix included, as the image's version.
+      # The release tag, suffix included, is the image's version: a build argument, and a label job
+      # `images` checks so that an index can only be made of this entry's platform images.
+      VERSION: ${{ needs.image-tags.outputs.version }}${{ matrix.build.tag-suffix }}
       VERSION_BUILD_ARG: ${{ matrix.build.version-arg }}=${{ needs.image-tags.outputs.version }}${{ matrix.build.tag-suffix }}
+      TITLE: ${{ matrix.build.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -219,6 +222,7 @@ jobs:
         run: |
           docker buildx build --platform "$PLATFORM" --provenance=false --sbom=false --target "$TARGET" \
             --build-arg "$VERSION_BUILD_ARG" -f "$DOCKERFILE" --metadata-file build.json \
+            --label "org.opencontainers.image.title=$TITLE" --label "org.opencontainers.image.version=$VERSION" \
             --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" "$CONTEXT"
           digest=$(jq -r '."containerimage.digest"' build.json)
           printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "No registry digest for $IMAGE ($PLATFORM)"; exit 1; }
@@ -254,7 +258,8 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: sbom-${{ matrix.platform.arch }}.cdx.json
           push-to-registry: true
-      # Hands the digest and the SBOM to job `images`.
+      # Hands the digest and the SBOM to job `images`. The image comes last in the artifact name, so
+      # one entry's download pattern cannot match another entry's artifacts (homer-app, homer-app-slim).
       - name: Platform record
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
@@ -264,7 +269,7 @@ jobs:
           mv "sbom-$ARCH.cdx.json" platform/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: platform--${{ matrix.build.image }}${{ matrix.build.tag-suffix }}--${{ matrix.platform.arch }}
+          name: platform--${{ matrix.platform.arch }}--${{ matrix.build.image }}${{ matrix.build.tag-suffix }}
           path: platform/
           if-no-files-found: error
           retention-days: 1
@@ -299,9 +304,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: platform--${{ matrix.image }}${{ matrix.tag-suffix }}--*
+          pattern: platform--*--${{ matrix.image }}${{ matrix.tag-suffix }}
           path: platform
-          merge-multiple: true
       - name: Log in to GHCR
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -312,11 +316,22 @@ jobs:
           VERSION: ${{ needs.image-tags.outputs.version }}
           MOVING: ${{ needs.image-tags.outputs.moving }}
           SUFFIX: ${{ matrix.tag-suffix }}
+          TITLE: ${{ matrix.image }}
+          ENTRY: ${{ matrix.image }}${{ matrix.tag-suffix }}
         run: |
+          found=$(find platform -name 'digest-*' | wc -l)
+          [ "$found" -eq 2 ] || { echo "Expected 2 platform digests for $ENTRY, found $found"; exit 1; }
           platforms=()
           for arch in amd64 arm64; do
-            digest=$(cat "platform/digest-$arch")
-            printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "No $arch digest for $IMAGE"; exit 1; }
+            digest=$(cat "platform/platform--$arch--$ENTRY/digest-$arch")
+            printf '%s\n' "$digest" | grep -qxE 'sha256:[0-9a-f]{64}' || { echo "No $arch digest for $ENTRY"; exit 1; }
+            # The digest must be this entry's build for this platform: its labels name the image and
+            # the version, suffix included, so a homer-app-slim digest cannot pass for homer-app.
+            config=$(docker buildx imagetools inspect "$IMAGE@$digest" --format '{{json .Image}}')
+            [ "$(jq -r '.architecture' <<<"$config")" = "$arch" ] &&
+              [ "$(jq -r '.config.Labels["org.opencontainers.image.title"]' <<<"$config")" = "$TITLE" ] &&
+              [ "$(jq -r '.config.Labels["org.opencontainers.image.version"]' <<<"$config")" = "$VERSION$SUFFIX" ] ||
+              { echo "$IMAGE@$digest is not the $arch build of $ENTRY $VERSION$SUFFIX"; exit 1; }
             platforms+=("$digest")
           done
           tags=(-t "$IMAGE:$VERSION$SUFFIX")
@@ -349,14 +364,14 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.index.outputs.digest }}
-          sbom-path: platform/sbom-amd64.cdx.json
+          sbom-path: platform/platform--amd64--${{ matrix.image }}${{ matrix.tag-suffix }}/sbom-amd64.cdx.json
           push-to-registry: true
       - name: Attest SBOM (linux/arm64)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.index.outputs.digest }}
-          sbom-path: platform/sbom-arm64.cdx.json
+          sbom-path: platform/platform--arm64--${{ matrix.image }}${{ matrix.tag-suffix }}/sbom-arm64.cdx.json
           push-to-registry: true
       # Verifies the way a consumer does, the index and each platform image, so a broken signature
       # or a missing attestation fails the release instead of the first deployment that checks.

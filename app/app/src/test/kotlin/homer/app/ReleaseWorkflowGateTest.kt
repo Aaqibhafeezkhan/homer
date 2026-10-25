@@ -69,10 +69,19 @@ class ReleaseWorkflowGateTest {
 
     @Test
     fun `released images are signed, attested and verified after the push`() {
-        // Each platform image: pushed by digest, then its own SBOM, signature and provenance.
+        // Each platform image: the console's license gate first, then pushed by digest, then its own
+        // SBOM, signature and provenance.
         assertSupplyChain(
             "image-builds",
             listOf(
+                "- name: Build for the LGPL gate",
+                "if: matrix.build.image == 'homer-console'",
+                "--load -t homer-console:lgpl-gate",
+                "- name: LGPL gate",
+                "if: matrix.build.image == 'homer-console'",
+                "docker run --rm --platform \"\$PLATFORM\" --entrypoint sh homer-console:lgpl-gate",
+                "-name \"@img\" -o -name \"sharp\" -o -name \"libvips*\"",
+                "refusing to push",
                 "- name: Push",
                 "push-by-digest=true",
                 "format: cyclonedx-json",
@@ -90,13 +99,19 @@ class ReleaseWorkflowGateTest {
                 "cosign sign --yes \"\$IMAGE@\$DIGEST\"",
                 "- name: Attest provenance",
                 "subject-digest: \${{ steps.index.outputs.digest }}",
-                "sbom-path: platform/sbom-amd64.cdx.json",
-                "sbom-path: platform/sbom-arm64.cdx.json",
+                "sbom-path: platform/platform--amd64--\${{ matrix.image }}\${{ matrix.tag-suffix }}/sbom-amd64.cdx.json",
+                "sbom-path: platform/platform--arm64--\${{ matrix.image }}\${{ matrix.tag-suffix }}/sbom-arm64.cdx.json",
                 "for digest in \"\$DIGEST\" \$PLATFORMS; do",
                 "cosign verify \"\$IMAGE@\$digest\"",
                 "--predicate-type https://slsa.dev/provenance/v1",
                 "--predicate-type https://cyclonedx.org/bom",
             ),
+        )
+        val gateConditions = jobLines(release, "image-builds").filter { it.startsWith("        if:") }.map { it.trim() }
+        assertTrue(
+            gateConditions.all { it == "if: matrix.build.image == 'homer-console'" },
+            "$release job `image-builds` conditions a step with $gateConditions; the LGPL gate must run for every " +
+                "platform build of the console, since each platform image is pushed and conveyed on its own.",
         )
         for (job in listOf("image-builds", "images")) {
             val text = jobLines(release, job).joinToString("\n")
@@ -117,11 +132,39 @@ class ReleaseWorkflowGateTest {
             val at = text.indexOf(step, from)
             assertTrue(
                 at >= 0,
-                "$release job `$job` no longer has `$step` after the previous supply-chain step. Consumers verify " +
-                    "the cosign signature, the SLSA provenance and the CycloneDX SBOM before deploying (ADR-0086).",
+                "$release job `$job` no longer has `$step` after the previous supply-chain step. The console's " +
+                    "license gate runs before the push, and consumers verify the cosign signature, the SLSA " +
+                    "provenance and the CycloneDX SBOM before deploying (ADR-0086).",
             )
             from = at + step.length
         }
+    }
+
+    @Test
+    fun `no image is built before the release's changelog section is checked`() {
+        val tags = jobLines(release, "image-tags").joinToString("\n")
+        val steps =
+            listOf(
+                "- name: Changelog section",
+                "if: github.ref_type == 'tag'",
+                "run: tools/release/notes.sh changelog \"\$TAG\" >/dev/null",
+                "- name: Image tags",
+                "echo \"version=",
+            )
+        var from = 0
+        for (step in steps) {
+            val at = tags.indexOf(step, from)
+            assertTrue(
+                at >= 0,
+                "$release job `image-tags` no longer has `$step` after the previous step. A release tag whose " +
+                    "version has no CHANGELOG.md section must fail before any image is built or pushed.",
+            )
+            from = at + step.length
+        }
+        assertTrue(
+            "    needs: image-tags" in jobLines(release, "image-builds"),
+            "$release job `image-builds` no longer needs `image-tags`, so it could push before the changelog check.",
+        )
     }
 
     @Test
@@ -142,9 +185,11 @@ class ReleaseWorkflowGateTest {
         )
         val index = jobLines(release, "images").map { it.trim() }
         assertTrue(
-            "needs: [image-tags, image-builds]" in index && "for arch in amd64 arm64; do" in index,
-            "$release job `images` must wait for every platform build and join the amd64 and arm64 digests into " +
-                "the index; a release tag must not name an image that lacks a platform.",
+            "needs: [image-tags, image-builds]" in index && "for arch in amd64 arm64; do" in index &&
+                index.any { it.contains("org.opencontainers.image.version") && it.contains("\"\$VERSION\$SUFFIX\"") },
+            "$release job `images` must wait for every platform build and join this entry's amd64 and arm64 " +
+                "digests, checked by their version label, into the index; a release tag must not name an image " +
+                "that lacks a platform or another entry's build.",
         )
     }
 
@@ -234,6 +279,59 @@ class ReleaseWorkflowGateTest {
             "$release job `image-tags` writes $tagOutputs; it computes the tags shared by every image, and the " +
                 "suffix belongs to the matrix entry that applies it.",
         )
+    }
+
+    @Test
+    fun `each index downloads its own platform artifacts and no other entry's`() {
+        val upload =
+            jobLines(release, "image-builds")
+                .map { it.trim() }
+                .single { it.startsWith("name: platform--") }
+                .removePrefix("name: ")
+        val pattern =
+            jobLines(release, "images")
+                .map { it.trim() }
+                .single { it.startsWith("pattern: platform--") }
+                .removePrefix("pattern: ")
+        val entries = publishedImages(jobLines(release, "image-builds"))
+        val uploads =
+            entries.associateWith { entry -> listOf("amd64", "arm64").map { arch -> expand(upload, entry, arch) }.toSet() }
+        for (entry in entries) {
+            val glob = Regex(expand(pattern, entry, arch = null).split("*").joinToString("[^/]*") { Regex.escape(it) })
+            val matched =
+                uploads.values
+                    .flatten()
+                    .filter { glob.matches(it) }
+                    .toSet()
+            assertTrue(
+                matched == uploads.getValue(entry),
+                "$release job `images` for `$entry` downloads $matched with pattern `$pattern`, but job " +
+                    "`image-builds` uploads ${uploads.getValue(entry)} for it. An index built from another entry's " +
+                    "digests tags and signs the wrong image (homer-app over homer-app -slim).",
+            )
+        }
+    }
+
+    /** [template] with the matrix expressions of [entry] (`IMAGE[:SUFFIX]`) and [arch] filled in. */
+    private fun expand(
+        template: String,
+        entry: String,
+        arch: String?,
+    ): String {
+        val image = entry.substringBefore(":")
+        val suffix = entry.substringAfter(":", "")
+        var text = template
+        for ((expression, value) in listOf(
+            "matrix.platform.arch" to arch,
+            "matrix.build.image" to image,
+            "matrix.image" to image,
+            "matrix.build.tag-suffix" to suffix,
+            "matrix.tag-suffix" to suffix,
+        )) {
+            if (value != null) text = text.replace("\${{ $expression }}", value)
+        }
+        assertTrue("\${{" !in text, "$release artifact name `$template` uses an expression this guard does not expand.")
+        return text
     }
 
     /** Each `- image:` matrix entry of [lines] as `IMAGE`, or `IMAGE:SUFFIX` when it sets a `tag-suffix`. */

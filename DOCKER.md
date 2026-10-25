@@ -484,10 +484,13 @@ gh attestation verify "oci://$image" --repo livesport/homer \
   --predicate-type https://cyclonedx.org/bom
 ```
 
-The index lists each platform image by its own digest
+The provenance on the index records the release run that assembled and signed
+it, not a build: the build provenance of what you run is on the platform
+images. The index lists each of them by its own digest
 (`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.36.0`
-shows them), and each platform image is signed and attested the same way, so
-the same commands verify a platform digest if you pin one instead of the index.
+shows them), and each is signed and attested the same way, so the same
+commands verify a platform digest: run them on the one for your host to check
+how it was built, or if you pin it instead of the index.
 
 ### Frontend Variables
 
