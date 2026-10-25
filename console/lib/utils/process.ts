@@ -1,4 +1,4 @@
-import type { ProcessExecution, ProcessInfo, ProcessStatus } from '@/types/homer';
+import type { ProcessInfo, ProcessStatus } from '@/types/homer';
 import { formatTimestamp } from './format';
 import { splitCommaList } from './list';
 
@@ -20,31 +20,21 @@ export interface LastCommand {
 }
 
 /**
- * The last execution that actually ran, or undefined when every one of
- * them was skipped by its `when:` condition.
- */
-function lastRanExecution(executions: ProcessExecution[]): ProcessExecution | undefined {
-  for (let i = executions.length - 1; i >= 0; i--) {
-    if (!executions[i].skipped) return executions[i];
-  }
-  return undefined;
-}
-
-/**
  * Derives the "last command" status and label shown for a process.
  *
  * A WORKING process with a current command reports that command as
- * `running`; otherwise the most recent execution that ran is classified
- * as `success` (resultCode 0) or `failed`. A skipped command never ran,
- * so trailing skips are walked past. A process with no execution that
- * ran reports null status and label.
+ * `running`; otherwise the most recent execution that actually ran is
+ * classified as `success` (resultCode 0) or `failed` — a command skipped
+ * by its `when:` condition never ran, so the trailing skips are passed
+ * over. A process with no execution that ran reports null status and
+ * label.
  */
 export function getLastCommand(process: ProcessInfo): LastCommand {
   if (process.status === 'WORKING' && process.currentCommand) {
     return { status: 'running', label: process.currentCommand };
   }
 
-  const lastRan = lastRanExecution(process.executions ?? []);
+  const lastRan = (process.executions ?? []).findLast((e) => !e.skipped);
   if (!lastRan) {
     return { status: null, label: null };
   }
