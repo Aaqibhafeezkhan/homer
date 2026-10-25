@@ -37,6 +37,7 @@ import { CurrentCommandBox } from '@/components/processes/current-command-box';
 import { ProcessActions } from '@/components/processes/process-actions';
 import { FlowSection } from '@/components/processes/flow-section';
 import { ActionErrorAlert } from '@/components/processes/action-error-alert';
+import { ApiErrorAlert } from '@/components/layout/api-error-alert';
 import { StatusTimelineCard } from '@/components/processes/status-timeline-card';
 import { ChildRunsCard } from '@/components/processes/child-runs-card';
 import { useNow } from '@/lib/hooks/use-now';
@@ -344,7 +345,20 @@ function ExecutionsCard({ process, processId, now, expansion, download, lg, onTo
   );
 }
 
-function ProcessLoading() {
+/** What the page shows before the process loads: the loading line, or why it cannot load. */
+function ProcessPlaceholder({ processId, error }: { processId: number; error: Error | null }) {
+  if (error) {
+    return (
+      <div className="p-6 space-y-6">
+        <BackButton fallbackHref="/processes" label="Processes" />
+        <ApiErrorAlert
+          title="Failed to load the process"
+          error={error}
+          notFound={`Process ${processId} does not exist, or you cannot see it.`}
+        />
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-center p-8">
       <div className="text-muted-foreground">Loading process details...</div>
@@ -392,7 +406,7 @@ export default function ProcessDetailPage({
 }) {
   const resolvedParams = use(params);
   const processId = parseInt(resolvedParams.id);
-  const { data: process } = useProcess(processId);
+  const { data: process, error } = useProcess(processId);
   const actions = useRunActions(processId);
   const download = useArtifactDownload(processId);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
@@ -400,7 +414,7 @@ export default function ProcessDetailPage({
   const now = useNow();
   const { data: children } = useChildRuns(processId);
 
-  if (!process) return <ProcessLoading />;
+  if (!process) return <ProcessPlaceholder processId={processId} error={error} />;
 
   return (
     <div className="p-6 space-y-6">

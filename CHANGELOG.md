@@ -13,6 +13,10 @@
 - **Added: `server.localRunner.enabled` config** — `false` registers no local runner, so a run routed to `local` fails at once instead of executing in the server's container. See [ADR-0095](docs/adr/0095-local-runner-can-be-turned-off.md).
 - **Fixed: quick-start console sign-in** — The Docker Compose quick start now enables console sign-in with the admin token, instead of leaving the console unauthenticated against a bearer-only backend. See [ADR-0011](docs/adr/0011-cookie-based-console-auth.md).
 
+### Console
+
+- **Fixed: an unreachable or rejecting API no longer leaves the console loading forever** — The process detail, process list and questions pages say whether the API rejected the request, cannot be reached (down or blocked by CORS), or has no such process.
+
 ## [1.36.0] - 2026-10-24
 
 ### Homer

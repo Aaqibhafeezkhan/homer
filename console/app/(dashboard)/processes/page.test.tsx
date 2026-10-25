@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ProcessesPage from './page';
 import type { ProcessInfo } from '@/types/homer';
+import { HomerApiError } from '@/lib/api/client';
 
 // Children that pull query hooks / rendering irrelevant to the URL-state
 // behavior under test. ProcessTable stands in for the real one, rendering the
@@ -360,5 +361,13 @@ describe('ProcessesPage URL state', () => {
     // Scoped to the page-total span: each root's Flow cell sums the same runs,
     // so a bare text query would match those too.
     expect(screen.getByText('Total cost:').parentElement).toHaveTextContent('$1.7500');
+  });
+
+  it('says the API cannot be reached when the list request gets no response', () => {
+    useProcessesMock.mockReturnValue({ data: undefined, isLoading: false, error: new HomerApiError('Failed to fetch') });
+    renderWithUrl('');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Failed to load processes: Cannot reach the Homer API at .* corsAllowedOrigins allows this console's origin\./,
+    );
   });
 });

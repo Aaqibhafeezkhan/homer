@@ -7,6 +7,7 @@ import { ProcessTable } from '@/components/processes/process-table';
 import { FlowSummaryCell } from '@/components/processes/flow-summary-cell';
 import { AgentFilter } from '@/components/processes/agent-filter';
 import { SweepStatusBanner } from '@/components/processes/sweep-status-banner';
+import { ApiErrorAlert } from '@/components/layout/api-error-alert';
 import { Button } from '@/components/ui/button';
 import { ProcessInfo, ProcessListResponse, ProcessStatus } from '@/types/homer';
 import { Badge } from '@/components/ui/badge';
@@ -102,13 +103,7 @@ function ListLoadState({ isLoading, error }: { isLoading: boolean; error: Error 
         </div>
       )}
 
-      {error && (
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-4">
-          <p className="text-sm text-destructive">
-            Failed to load processes: {error.message}
-          </p>
-        </div>
-      )}
+      {error && <ApiErrorAlert title="Failed to load processes" error={error} />}
     </>
   );
 }
