@@ -4,7 +4,7 @@
 
 ### Console
 
-- **Fixed: console sign-in on a first visit** — A reader who opens a console page without a session gets a neutral "Sign in to continue" prompt instead of "session expired", opens on the Token form when the deployment offers bearer sign-in, and returns to the page they asked for after signing in.
+- **Fixed: console sign-in on a first visit** — A reader who opens a console page without a session gets a neutral "Sign in to continue" prompt instead of "session expired", opens on the Token form when the deployment offers bearer sign-in, and returns to the page they asked for after signing in; a session that really expired, including one already dead when the page loads, still says so.
 
 ## [1.37.0] - 2026-10-25
 

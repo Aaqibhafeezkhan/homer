@@ -24,9 +24,11 @@ export default function DashboardLayout({
   const { status } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  // `status === 'authed'` is the only state in which a session can expire, so it
-  // is what separates a real expiry from a session-less first visit.
-  const expiredHandled = useAuthExpiredHandler(status === 'authed');
+  // The handler decides whether a 401 was an expiry from the credential it
+  // rejected — a stored bearer token, or a session that was ever `authed`; the
+  // status is passed so it can latch the latter. A session-less first visit
+  // must not read as an expiry.
+  const expiredHandled = useAuthExpiredHandler(status);
 
   useEffect(() => {
     // Only redirect on an explicit anon status. While loading, render the

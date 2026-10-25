@@ -315,10 +315,12 @@ nonce its own scripts.
   point of use, right before `router.push`, so an attacker-crafted `next` cannot
   become an open redirect (ADR-0047).
 - `?expired=1` — and with it the "Your session expired" banner — is emitted only
-  by the auth-expired handler, and only when `status === 'authed'` said a session
-  existed. A session-less first visit gets the neutral "Sign in to continue"
-  prompt instead: a 401 on the global SSE streams (`sse.ts` is not
-  `AUTH_BUS_EXEMPT`) is not an expiry.
+  by the auth-expired handler, and only when the rejected request carried a
+  session: a bearer token still in the active instance's storage, or a mount that
+  was ever `authed` (the cookie itself is not client-readable, so mid-use is the
+  only way a cookie expiry is recognisable). A session-less first visit gets the
+  neutral "Sign in to continue" prompt instead: a 401 on the global SSE streams
+  (`sse.ts` is not `AUTH_BUS_EXEMPT`) is not an expiry.
 - Dashboard layout redirects to `/login` when
   `appConfig.auth.enabled && !isAuthenticated`.
 - `appConfig.auth.enabled === false` bypasses everything and sets

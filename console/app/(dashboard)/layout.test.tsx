@@ -11,7 +11,7 @@ const streams = vi.hoisted(() => ({
   useAgentReloadStream: vi.fn(),
 }));
 const markInAppNavigation = vi.hoisted(() => vi.fn());
-const expiredHandlerArgs = vi.hoisted(() => ({ hadSession: undefined as boolean | undefined }));
+const expiredHandlerArgs = vi.hoisted(() => ({ status: undefined as string | undefined }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
@@ -20,8 +20,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/auth/auth-context', () => ({ useAuth: () => ({ status: authState.status }) }));
 vi.mock('@/lib/config/app-config', () => ({ appConfig: appConfigMock }));
 vi.mock('@/lib/auth/use-auth-expired-handler', () => ({
-  useAuthExpiredHandler: (hadSession: boolean) => {
-    expiredHandlerArgs.hadSession = hadSession;
+  useAuthExpiredHandler: (status: string) => {
+    expiredHandlerArgs.status = status;
     return expiredHandled;
   },
 }));
@@ -58,7 +58,7 @@ describe('DashboardLayout', () => {
     expiredHandled.current = false;
     appConfigMock.auth.enabled = true;
     pathname.mockReset().mockReturnValue('/processes');
-    expiredHandlerArgs.hadSession = undefined;
+    expiredHandlerArgs.status = undefined;
   });
 
   it('renders the shell around the page once authenticated', () => {
@@ -103,15 +103,15 @@ describe('DashboardLayout', () => {
     expect(push).toHaveBeenCalledWith('/login?next=%2Fprocesses%2F1');
   });
 
-  it('tells the expiry handler a session existed only while authed', () => {
+  it('hands the expiry handler the authed status so it can latch a real session', () => {
     renderLayout();
-    expect(expiredHandlerArgs.hadSession).toBe(true);
+    expect(expiredHandlerArgs.status).toBe('authed');
   });
 
-  it('tells the expiry handler no session existed for an anonymous reader', () => {
+  it('hands the expiry handler the anon status of a session-less reader', () => {
     authState.status = 'anon';
     renderLayout();
-    expect(expiredHandlerArgs.hadSession).toBe(false);
+    expect(expiredHandlerArgs.status).toBe('anon');
   });
 
   it('does not push /login again once expiry recovery already redirected', () => {

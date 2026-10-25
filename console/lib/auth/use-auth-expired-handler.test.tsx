@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuthExpiredHandler } from './use-auth-expired-handler';
+import type { AuthStatus } from './auth-context';
 import { notifyAuthExpired } from './auth-expired-bus';
 import {
   DEFAULT_INSTANCE_ID,
   resetInstancesStoreForTests,
   tokenKeyFor,
+  upsertInstance,
 } from '@/lib/instances/store';
 
 const ACTIVE_TOKEN_KEY = tokenKeyFor(DEFAULT_INSTANCE_ID);
@@ -19,22 +21,33 @@ vi.mock('next/navigation', () => ({
   usePathname: () => usePathname(),
 }));
 
+/** The active instance's mode decides whether a stored token counts as a
+ * credential the backend could have rejected; the test config defaults to cookie. */
+function activateBearerInstance() {
+  upsertInstance({
+    id: DEFAULT_INSTANCE_ID,
+    label: 'Default',
+    baseUrl: 'http://localhost:8080',
+    mode: 'bearer',
+  });
+}
+
 function HarnessProbe({
   onRef,
-  hadSession = true,
+  status = 'loading',
 }: {
   onRef?: (ref: ReturnType<typeof useAuthExpiredHandler>) => void;
-  hadSession?: boolean;
+  status?: AuthStatus;
 }) {
-  const handled = useAuthExpiredHandler(hadSession);
+  const handled = useAuthExpiredHandler(status);
   onRef?.(handled);
   return null;
 }
 
-function renderHarness(client: QueryClient = new QueryClient(), hadSession = true) {
+function renderHarness(client: QueryClient = new QueryClient(), status: AuthStatus = 'loading') {
   return render(
     <QueryClientProvider client={client}>
-      <HarnessProbe hadSession={hadSession} />
+      <HarnessProbe status={status} />
     </QueryClientProvider>,
   );
 }
@@ -44,25 +57,73 @@ describe('useAuthExpiredHandler', () => {
     replace.mockReset();
     usePathname.mockReset().mockReturnValue('/processes');
     resetInstancesStoreForTests();
-    localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
   });
 
   it('redirects to /login with the requested path and the expired marker', () => {
+    activateBearerInstance();
+    localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
     renderHarness();
     act(() => notifyAuthExpired('http-401'));
     expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses&expired=1');
     expect(localStorage.getItem(ACTIVE_TOKEN_KEY)).toBeNull();
   });
 
-  it('drops the expired marker when no session existed', () => {
-    renderHarness(new QueryClient(), false);
+  it('marks an expiry for a bearer token the backend rejected on page load', () => {
+    // The reader returns with a token that has already expired: no render of
+    // this mount ever said 'authed', so the stored credential is the only
+    // evidence that there was a session to expire.
+    activateBearerInstance();
+    localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
+    renderHarness(new QueryClient(), 'loading');
+    act(() => notifyAuthExpired('http-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses&expired=1');
+  });
+
+  it('drops the expired marker when the reader had no credential at all', () => {
+    activateBearerInstance();
+    renderHarness(new QueryClient(), 'loading');
     act(() => notifyAuthExpired('sse-401'));
     expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses');
   });
 
+  it('ignores a stored bearer token while the active instance is in cookie mode', () => {
+    // The default instance is cookie-mode here, so a leftover token is not the
+    // credential this request carried.
+    localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
+    renderHarness(new QueryClient(), 'loading');
+    act(() => notifyAuthExpired('http-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses');
+  });
+
+  it('marks an expiry for a cookie session that expired mid-use', () => {
+    // No client-readable credential in cookie mode: having been 'authed' is
+    // the only evidence of the session that just ended.
+    renderHarness(new QueryClient(), 'authed');
+    act(() => notifyAuthExpired('http-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses&expired=1');
+  });
+
+  it('keeps the expired marker after the auth context has flipped to anon', () => {
+    const client = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <HarnessProbe status="authed" />
+      </QueryClientProvider>,
+    );
+    // AuthProvider's own listener flips the override to 'anon' on the same
+    // event, so a status read at event time would already say "no session".
+    rerender(
+      <QueryClientProvider client={client}>
+        <HarnessProbe status="anon" />
+      </QueryClientProvider>,
+    );
+    act(() => notifyAuthExpired('http-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses&expired=1');
+  });
+
   it('carries the path the reader was on', () => {
     usePathname.mockReturnValue('/processes/1');
-    renderHarness();
+    renderHarness(new QueryClient(), 'authed');
     act(() => notifyAuthExpired('http-401'));
     expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses%2F1&expired=1');
   });
