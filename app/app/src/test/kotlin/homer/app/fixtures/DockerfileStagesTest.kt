@@ -30,6 +30,14 @@ class DockerfileStagesTest {
     }
 
     @Test
+    fun `an unnamed stage parses with no name`() {
+        val unnamed = DockerfileStages("FROM alpine\nRUN apk add curl\nFROM --platform=linux/arm64 alpine:3\n")
+
+        assertEquals(listOf("alpine" to null, "alpine:3" to null), unnamed.stages.map { it.base to it.name })
+        assertEquals(setOf("curl"), DockerfileStages.apkPackages(unnamed.stages.first()))
+    }
+
+    @Test
     fun `apk packages include chained installs and skip flags and virtual names`() {
         assertEquals(setOf("curl", "python3", "gcc", "jq"), DockerfileStages.apkPackages(dockerfile.stage("slim")))
         assertEquals(emptySet(), DockerfileStages.apkPackages(dockerfile.stage("runner")))

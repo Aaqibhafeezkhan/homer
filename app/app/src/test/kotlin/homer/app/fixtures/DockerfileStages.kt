@@ -29,7 +29,7 @@ internal class DockerfileStages(
             if (line.startsWith("FROM ", ignoreCase = true)) {
                 // FROM [--platform=…] <image> [AS <name>]
                 val parts = line.split(Regex("""\s+""")).drop(1).filterNot { it.startsWith("--") }
-                val name = parts.getOrNull(2)?.takeIf { parts[1].equals("AS", ignoreCase = true) }?.lowercase()
+                val name = if (parts.size > 2 && parts[1].equals("AS", ignoreCase = true)) parts[2].lowercase() else null
                 acc += Stage(parts[0], name, emptyList())
             } else if (acc.isNotEmpty()) {
                 acc[acc.lastIndex] = acc.last().let { it.copy(instructions = it.instructions + line) }
