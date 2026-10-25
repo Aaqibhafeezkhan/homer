@@ -157,7 +157,7 @@ tasks.test {
     ciConfig?.let { systemProperty("homer.ciConfig", it.absolutePath) }
 
     // ArtifactoryTransportTest, ArtifactorySecretExposureTest, ReleaseWorkflowGateTest,
-    // ExampleAgentsDeprecationTest and ExampleHelloAgentInputTest read repo files
+    // ExampleAgentsDeprecationTest, ExampleHelloAgentInputTest and SchemaValidationTest read repo files
     // that are not otherwise inputs of this task. Undeclared, they leave the cache
     // key unchanged, so editing a Dockerfile or a compose file replays a cached
     // pass and the guard never runs -- precisely when it is meant to fire.
@@ -173,6 +173,7 @@ tasks.test {
             repoRoot.resolve(".github/workflows/pages.yml"),
             fileTree(repoRoot) { include("docker-compose*.yml") },
             fileTree(repoRoot.resolve("example/agents")),
+            fileTree(repoRoot.resolve("example/config")),
         ).withPropertyName("guardedRepoFiles")
         .withPathSensitivity(PathSensitivity.RELATIVE)
 
