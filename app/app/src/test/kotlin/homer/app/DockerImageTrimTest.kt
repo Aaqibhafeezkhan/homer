@@ -1,8 +1,7 @@
 package homer.app
 
-import homer.app.fixtures.repoRoot
+import homer.app.fixtures.DockerfileStages
 import org.junit.jupiter.api.Test
-import java.io.File
 import kotlin.test.assertTrue
 
 /**
@@ -10,14 +9,8 @@ import kotlin.test.assertTrue
  * layer, and the image's jar keeps only the SQLite native library its musl base loads.
  */
 class DockerImageTrimTest {
-    /** The Dockerfile's instructions, each with its `\`-continued lines joined. */
-    private val instructions: List<String> =
-        File(repoRoot, "app/Dockerfile")
-            .readText()
-            .replace(Regex("""\\\n"""), " ")
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
+    private val dockerfile = DockerfileStages.app
+    private val instructions = dockerfile.instructions
 
     @Test
     fun `every global npm install cleans the npm cache in the same layer`() {
@@ -41,19 +34,12 @@ class DockerImageTrimTest {
             },
             "app/Dockerfile no longer strips the non-musl SQLite natives from the image's jar (about 11 MB).",
         )
-        // FROM [--platform=…] <image> [AS <name>]; stage names are case-insensitive.
-        val froms =
-            instructions
-                .filter { it.startsWith("FROM ", ignoreCase = true) }
-                .map { line -> line.split(Regex("""\s+""")).drop(1).filterNot { it.startsWith("--") } }
-                .map { parts -> parts[0] to parts.getOrNull(2)?.takeIf { parts[1].equals("AS", ignoreCase = true) }?.lowercase() }
         // A stage built FROM another stage of this file inherits that stage's base; every other base must be musl.
-        val stageNames = froms.mapNotNull { it.second }.toSet()
         val runtimeBases =
-            froms
-                .filter { (_, name) -> name != "builder" }
-                .map { it.first }
-                .filter { it.lowercase() !in stageNames }
+            dockerfile.stages
+                .filter { it.name != "builder" }
+                .map { it.base }
+                .filterNot { dockerfile.isStage(it) }
         assertTrue(
             runtimeBases.isNotEmpty() && runtimeBases.all { it.contains("alpine") },
             "the image's jar loads only the Linux-Musl SQLite library, so every runtime stage must stay on a musl " +

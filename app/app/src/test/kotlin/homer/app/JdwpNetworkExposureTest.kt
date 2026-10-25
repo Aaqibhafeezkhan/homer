@@ -1,5 +1,6 @@
 package homer.app
 
+import homer.app.fixtures.DockerfileStages
 import homer.app.fixtures.repoRoot
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -296,21 +297,11 @@ class JdwpNetworkExposureTest {
                 "a different bind silently breaks the IDE attach path (ADR-0076, DOCKER.md § " +
                 "Development Mode).",
         )
-        val dockerfileLines = File(repoRoot, "app/Dockerfile").readLines()
-        val runnerStage =
-            dockerfileLines
-                .dropWhile { !it.endsWith(" AS runner") }
-                .drop(1)
-                .takeWhile { !it.startsWith("FROM ") }
-        val apkAdd =
-            runnerStage
-                .dropWhile { !it.trimStart().startsWith("RUN apk add") }
-                .takeWhile { it.isNotBlank() }
-                .joinToString(" ")
+        val apkPackages = DockerfileStages.app.chain("runner").flatMap { DockerfileStages.apkPackages(it) }
         assertTrue(
-            apkAdd.contains("bash"),
+            "bash" in apkPackages,
             "the tunnel's container half runs `bash -c \"exec 3<>/dev/tcp/127.0.0.1/5005 …\"`, so the " +
-                "runtime image (app/Dockerfile's runner stage) must install bash; without it the " +
+                "runtime image (app/Dockerfile's runner stage or a stage it is built FROM) must install bash; without it the " +
                 "documented attach path fails (ADR-0076, DOCKER.md § Development Mode).",
         )
         val dockerMd = File(repoRoot, "DOCKER.md").readText()

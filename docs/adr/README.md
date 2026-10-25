@@ -152,3 +152,4 @@ One of:
 | [0091](0091-ai-review-of-github-pull-requests.md) | The AI review of GitHub pull requests, gated before any model runs | proposed |
 | [0092](0092-maintenance-mode-queues-starts-and-skips-cron.md) | Maintenance mode queues new starts and skips cron, above the claim queue | proposed |
 | [0093](0093-the-default-compose-stack-runs-published-images.md) | The default compose stack runs published release images | proposed |
+| [0094](0094-slim-server-image-for-pull-runner-deployments.md) | A slim server image for deployments whose agents run on pull runners | proposed |

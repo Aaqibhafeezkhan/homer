@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Added: slim `homer-app:<version>-slim` image** — A server image without the agent CLIs (Claude Code, Codex, Node.js, git), for deployments whose agents run on pull runners. See [ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md).
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
 
 ## [1.36.0] - 2026-10-24

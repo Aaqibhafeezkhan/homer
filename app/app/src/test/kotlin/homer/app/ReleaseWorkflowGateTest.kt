@@ -120,10 +120,10 @@ class ReleaseWorkflowGateTest {
     @Test
     fun `the release page lists every image the release publishes`() {
         val lines = File(repoRoot, release).readLines()
-        val built = lines.mapNotNull { Regex("""^\s+- image: ([a-z0-9-]+)$""").find(it)?.groupValues?.get(1) }.toSet()
+        val built = publishedImages(lines)
         val listed =
             lines
-                .firstNotNullOfOrNull { Regex("""^\s+for image in ([a-z0-9 -]+); do$""").find(it)?.groupValues?.get(1) }
+                .firstNotNullOfOrNull { Regex("""^\s+for entry in ([a-z0-9 :-]+); do$""").find(it)?.groupValues?.get(1) }
                 ?.split(" ")
                 ?.filter { it.isNotBlank() }
                 ?.toSet()
@@ -133,6 +133,36 @@ class ReleaseWorkflowGateTest {
             "$release job `release-notes` lists $listed, but job `images` publishes $built. An image missing from " +
                 "the release page reaches consumers without its digest and verify command (ADR-0086).",
         )
+    }
+
+    @Test
+    fun `every published tag carries the matrix entry's tag suffix`() {
+        val lines = File(repoRoot, release).readLines().map { it.trim() }
+        assertTrue(
+            "SUFFIX: \${{ matrix.tag-suffix }}" in lines,
+            "$release step `Image tags` no longer reads the matrix entry's `tag-suffix` into SUFFIX.",
+        )
+        val outputs = lines.filter { it.startsWith("echo \"version=") || it.startsWith("echo \"moving=") }
+        val tagged = outputs.filterNot { it.startsWith("echo \"moving=\"") }
+        assertTrue(
+            tagged.size == 3 && tagged.all { it.contains("\$SUFFIX\" >>\"\$GITHUB_OUTPUT\"") },
+            "$release step `Image tags` writes $tagged; the tag version, the branch version and the moving branch " +
+                "tag must each end with \$SUFFIX, or a variant entry (homer-app -slim) pushes over the full image's tag.",
+        )
+    }
+
+    /** Each `- image:` matrix entry of [lines] as `IMAGE`, or `IMAGE:SUFFIX` when it sets a `tag-suffix`. */
+    private fun publishedImages(lines: List<String>): Set<String> {
+        val entries = mutableListOf<String>()
+        for (line in lines) {
+            val image = Regex("""^\s+- image: ([a-z0-9-]+)$""").find(line)?.groupValues?.get(1)
+            val suffix = Regex("""^\s+tag-suffix: '?(-[a-z0-9]+)'?$""").find(line)?.groupValues?.get(1)
+            when {
+                image != null -> entries += image
+                suffix != null && entries.isNotEmpty() -> entries[entries.lastIndex] += ":$suffix"
+            }
+        }
+        return entries.toSet()
     }
 
     @Test
