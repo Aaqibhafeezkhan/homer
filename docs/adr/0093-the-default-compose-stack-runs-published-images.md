@@ -83,7 +83,13 @@ the working tree, which is exactly what a pulled image cannot.
 - Bad: a per-release manual bump. Forgetting it means a fresh clone keeps
   pulling the previous release, so `ComposeImageSourceTest` compares the
   compose default with the newest released heading in `CHANGELOG.md` and fails
-  the build instead.
+  the build instead. The same guard reads the release pins in `.env.example`,
+  `README.md` and `DOCKER.md`, and requires **every** version each of those
+  names — `DOCKER.md` carries two, its `FROM` example and its `imagetools
+  inspect` example — to equal that heading; the looser rules (at least one
+  match is current, or the pin matched exactly once) were rejected, because a
+  doc that also names an older release still sends a reader to the previous
+  version.
 - Neutral: the repo convention of pinning compose `image:` by digest
   (`renovate.json`) does not apply to the two Homer services, which track a
   release tag on purpose; base images and any digest-pinned override still do.
