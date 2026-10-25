@@ -21,18 +21,20 @@ vi.mock('next/navigation', () => ({
 
 function HarnessProbe({
   onRef,
+  hadSession = true,
 }: {
   onRef?: (ref: ReturnType<typeof useAuthExpiredHandler>) => void;
+  hadSession?: boolean;
 }) {
-  const handled = useAuthExpiredHandler();
+  const handled = useAuthExpiredHandler(hadSession);
   onRef?.(handled);
   return null;
 }
 
-function renderHarness(client: QueryClient = new QueryClient()) {
+function renderHarness(client: QueryClient = new QueryClient(), hadSession = true) {
   return render(
     <QueryClientProvider client={client}>
-      <HarnessProbe />
+      <HarnessProbe hadSession={hadSession} />
     </QueryClientProvider>,
   );
 }
@@ -45,11 +47,24 @@ describe('useAuthExpiredHandler', () => {
     localStorage.setItem(ACTIVE_TOKEN_KEY, 'stale-bearer');
   });
 
-  it('redirects to /login?expired=1 and clears the active token', () => {
+  it('redirects to /login with the requested path and the expired marker', () => {
     renderHarness();
     act(() => notifyAuthExpired('http-401'));
-    expect(replace).toHaveBeenCalledWith('/login?expired=1');
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses&expired=1');
     expect(localStorage.getItem(ACTIVE_TOKEN_KEY)).toBeNull();
+  });
+
+  it('drops the expired marker when no session existed', () => {
+    renderHarness(new QueryClient(), false);
+    act(() => notifyAuthExpired('sse-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses');
+  });
+
+  it('carries the path the reader was on', () => {
+    usePathname.mockReturnValue('/processes/1');
+    renderHarness();
+    act(() => notifyAuthExpired('http-401'));
+    expect(replace).toHaveBeenCalledWith('/login?next=%2Fprocesses%2F1&expired=1');
   });
 
   it('no-ops when already on /login', () => {

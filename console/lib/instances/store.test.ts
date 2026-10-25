@@ -129,4 +129,45 @@ describe('instances store', () => {
     resetInstancesStoreForTests();
     expect(getActiveInstance().id).toBe('only');
   });
+
+  it('seeds a cookie default when the deployment does not offer bearer', () => {
+    expect(getActiveInstance().mode).toBe('cookie');
+  });
+
+  it('seeds a bearer default when the deployment offers bearer sign-in', () => {
+    appConfig.auth.allowBearer = true;
+    try {
+      resetInstancesStoreForTests();
+      expect(getActiveInstance().mode).toBe('bearer');
+    } finally {
+      appConfig.auth.allowBearer = false;
+    }
+  });
+
+  it('seeds a bearer default when the deployment mode is bearer', () => {
+    appConfig.auth.mode = 'bearer';
+    try {
+      resetInstancesStoreForTests();
+      expect(getActiveInstance().mode).toBe('bearer');
+    } finally {
+      appConfig.auth.mode = 'cookie';
+    }
+  });
+
+  it('never rewrites the mode of a persisted instance', () => {
+    localStorage.setItem(
+      INSTANCES_KEY,
+      JSON.stringify({
+        instances: [{ id: 'only', label: 'Only', baseUrl: 'https://x', mode: 'cookie' }],
+        activeInstanceId: 'only',
+      }),
+    );
+    appConfig.auth.allowBearer = true;
+    try {
+      resetInstancesStoreForTests();
+      expect(getActiveInstance().mode).toBe('cookie');
+    } finally {
+      appConfig.auth.allowBearer = false;
+    }
+  });
 });

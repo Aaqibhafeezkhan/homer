@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/auth-context';
+import { loginHref } from '@/lib/auth/return-path';
 import { appConfig } from '@/lib/config/app-config';
 import { Header } from '@/components/layout/header';
 import { MaintenanceBanner } from '@/components/layout/maintenance-banner';
@@ -22,18 +23,22 @@ export default function DashboardLayout({
 }) {
   const { status } = useAuth();
   const router = useRouter();
-  const expiredHandled = useAuthExpiredHandler();
+  const pathname = usePathname();
+  // `status === 'authed'` is the only state in which a session can expire, so it
+  // is what separates a real expiry from a session-less first visit.
+  const expiredHandled = useAuthExpiredHandler(status === 'authed');
 
   useEffect(() => {
     // Only redirect on an explicit anon status. While loading, render the
     // skeleton so the cookie-bound auth probe has a chance to land before
     // we bounce the user to /login. Closes P1 #19 (auth-redirect race).
-    // Skip if expiry recovery already replaced to /login?expired=1 — a
-    // second push here would win the race and drop the banner.
+    // Skip if expiry recovery already replaced to /login — a second push here
+    // would win the race and drop the expired banner. No `expired` marker
+    // here: an anon reader never had a session to expire.
     if (status === 'anon' && appConfig.auth.enabled && !expiredHandled.current) {
-      router.push('/login');
+      router.push(loginHref(pathname, false));
     }
-  }, [status, router, expiredHandled]);
+  }, [status, router, pathname, expiredHandled]);
 
   useProcessStatusStream();
   useAgentReloadStream();

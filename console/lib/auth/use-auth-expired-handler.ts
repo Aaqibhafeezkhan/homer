@@ -4,13 +4,17 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { onAuthExpired } from './auth-expired-bus';
+import { loginHref } from './return-path';
 import { removeActiveToken } from '@/lib/instances/store';
 
 /**
  * Subscribes to auth-expired events and performs the standard
  * recovery: clear the active instance's bearer token, clear all React Query caches
  * (avoids leaking stale per-user data into a fresh login), and
- * redirect to /login with ?expired=1. Idempotency comes from a one-shot
+ * redirect to /login carrying the requested path as `next`. The `expired=1`
+ * marker — and so the "session expired" wording — is added only when
+ * `hadSession` says a session existed; a 401 on a session-less first visit is
+ * not an expiry. Idempotency comes from a one-shot
  * latch (the recovery runs at most once per mount); the /login check
  * covers events that arrive when the hook mounts on a route transition
  * where pathname is already /login. Audit P0 #6.
@@ -18,7 +22,7 @@ import { removeActiveToken } from '@/lib/instances/store';
  * Returns the latch ref: `true` once the recovery has fired, so callers
  * can avoid issuing a second, competing navigation.
  */
-export function useAuthExpiredHandler(): RefObject<boolean> {
+export function useAuthExpiredHandler(hadSession: boolean): RefObject<boolean> {
   const router = useRouter();
   const pathname = usePathname();
   const queryClient = useQueryClient();
@@ -39,9 +43,9 @@ export function useAuthExpiredHandler(): RefObject<boolean> {
         /* SSR or denied storage; ignore */
       }
       queryClient.clear();
-      router.replace('/login?expired=1');
+      router.replace(loginHref(pathname, hadSession));
     });
-  }, [pathname, queryClient, router]);
+  }, [pathname, queryClient, router, hadSession]);
 
   return handled;
 }

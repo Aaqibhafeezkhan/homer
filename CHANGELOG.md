@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Console
+
+- **Fixed: console sign-in on a first visit** — A reader who opens a console page without a session gets a neutral "Sign in to continue" prompt instead of "session expired", opens on the Token form when the deployment offers bearer sign-in, and returns to the page they asked for after signing in.
+
 ## [1.37.0] - 2026-10-25
 
 ### Homer

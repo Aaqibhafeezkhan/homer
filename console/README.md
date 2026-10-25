@@ -525,6 +525,15 @@ toggle when `CONSOLE_ALLOW_BEARER=true`:
   stored in `localStorage`. Use for transition only; CLI / MCP / webhook
   clients are the supported audience for bearer.
 
+Opening a console page without a session sends you to the login screen with
+the page you asked for and a neutral "Sign in to continue" prompt; the "Your
+session expired" banner appears only when a session actually existed and was
+rejected. Signing in returns to that page — the return path is accepted only
+as a same-origin relative console path, so an absolute or protocol-relative
+value is ignored rather than followed. `CONSOLE_ALLOW_BEARER=true` also makes
+**Token** the mode the form opens in, because it marks a bearer-only backend;
+an explicit `?mode=` parameter or the active instance's saved mode still wins.
+
 The console reads the caller's capabilities from `GET /api/v1/auth/me`
 (`{username, role, grants}`) and hides controls the user can't use:
 admin-only nav (Costs, Schedules, Reload, Runners), per-agent Edit/Debug (require
