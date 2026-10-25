@@ -315,6 +315,33 @@ class ComposeImageSourceTest {
     }
 
     @Test
+    fun `the quick start enables console token sign-in`() {
+        // The example backend is bearer-only: a console started without these two settings runs
+        // unauthenticated and every API call it makes gets a 401 (issue #26).
+        val lines = File(repoRoot, "docker-compose.yml").readLines()
+        val frontend = service(lines, "frontend")
+        assertTrue(frontend >= 0, "docker-compose.yml no longer defines a `frontend` service.")
+        val environment = childKey(lines, frontend, "environment")
+        val entries = if (environment < 0) emptyList() else nestedBlock(lines, environment).map { it.trim().removePrefix("- ") }
+        for (entry in listOf("CONSOLE_AUTH_ENABLED=\${AUTH_ENABLED:-false}", "CONSOLE_ALLOW_BEARER=\${CONSOLE_ALLOW_BEARER:-false}")) {
+            assertTrue(
+                entry in entries,
+                "docker-compose.yml: the `frontend` environment lost `$entry`, so `.env.example`'s console " +
+                    "sign-in settings never reach the console and it runs unauthenticated against the " +
+                    "bearer-only backend: every API call gets a 401 (issue #26).",
+            )
+        }
+        val env = File(repoRoot, ".env.example").readLines().map { it.trim() }
+        for (setting in listOf("AUTH_ENABLED=true", "CONSOLE_ALLOW_BEARER=true")) {
+            assertTrue(
+                setting in env,
+                ".env.example no longer sets `$setting`: the quick start's console shows no sign-in, or no " +
+                    "Token tab, so the example bearer-only backend answers every console call with a 401 (issue #26).",
+            )
+        }
+    }
+
+    @Test
     fun `no compose file or quick start carries a literal admin token`() {
         val assignment = Regex("""(^|[^'\w])HOMER_ADMIN_TOKEN=(\S*)""")
         val scanned = guardedFiles()

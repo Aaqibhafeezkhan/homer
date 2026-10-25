@@ -7,6 +7,7 @@
 - **Added: slim `homer-app:<version>-slim` image** — A server image without the agent CLIs (Claude Code, Codex, Node.js, git), for deployments whose agents run on pull runners. See [ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md).
 - **Changed: a smaller `homer-app` image** — The image no longer ships npm's download cache or SQLite native libraries for other platforms, so the first pull is about 300 MB (a third) smaller.
 - **Added: `server.localRunner.enabled` config** — `false` registers no local runner, so a run routed to `local` fails at once instead of executing in the server's container. See [ADR-0095](docs/adr/0095-local-runner-can-be-turned-off.md).
+- **Fixed: quick-start console sign-in** — The Docker Compose quick start now enables console sign-in with the admin token, instead of leaving the console unauthenticated against a bearer-only backend. See [ADR-0011](docs/adr/0011-cookie-based-console-auth.md).
 
 ## [1.36.0] - 2026-10-24
 

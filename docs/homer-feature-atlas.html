@@ -525,6 +525,7 @@ curl -X POST "http://localhost:8080/api/v1/agent/quickstart"
             run rather than passing silently.</p>
           <pre><code># console: http://localhost:3000/processes/1
 #          http://localhost:3000/questions
+# compose stack: sign in first at http://localhost:3000/login?mode=bearer (Token: $HOMER_ADMIN_TOKEN)
 curl "http://localhost:8080/api/v1/status/1"
 # "status": "FINISHED"
 curl "http://localhost:8080/api/v1/artifacts?processId=1&amp;path=report.txt"</code></pre>
