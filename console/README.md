@@ -68,9 +68,10 @@ npm run dev
 Image builds, the standalone container, and the full stack with the backend
 are covered in [`DEPLOYMENT.md`](DEPLOYMENT.md) and
 [`../DOCKER.md`](../DOCKER.md#quick-start). The root compose stack needs
-`HOMER_ADMIN_TOKEN` set in `.env`; to use the console without logging in, also
-set `CONFIG_PATH=config/config-local.json` (an unsecured backend bound to
-loopback).
+`HOMER_ADMIN_TOKEN` set in `.env`, and its `.env.example` turns on Token
+sign-in with that value; to use the console without logging in, set
+`CONFIG_PATH=config/config-local.json` and `AUTH_ENABLED=false` instead (an
+unsecured backend bound to loopback).
 
 ## Configuration
 

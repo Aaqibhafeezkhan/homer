@@ -260,8 +260,10 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 # {"processId": 1}
 ```
 
-The run starts in the background and stops on a question. Open the console at
-<http://localhost:3000/processes/1> to watch its live logs, then answer **ship**
+The run starts in the background and stops on a question. Sign in to the
+console first: open <http://localhost:3000/login?mode=bearer>, choose **Token**
+and paste the `HOMER_ADMIN_TOKEN` value from `.env` (`echo "$TOKEN"`). Then open
+<http://localhost:3000/processes/1> to watch its live logs, and answer **ship**
 in the **Questions** inbox (<http://localhost:3000/questions>). The run resumes,
 prints the artifact it wrote, and finishes:
 

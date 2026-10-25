@@ -109,10 +109,14 @@ cp .env.example .env
 echo "HOMER_ADMIN_TOKEN=$(openssl rand -hex 24)" >> .env
 ```
 
-The default backend config uses bearer auth, which the cookie-only console
-cannot log in with. To use the console without logging in, also set
-`CONFIG_PATH=config/config-local.json` in `.env` (an unsecured backend, bound
-to loopback); for real logins, configure a password scheme — see
+The default backend config uses bearer auth, so `.env.example` turns on
+console sign-in with the token option (`AUTH_ENABLED=true`,
+`CONSOLE_ALLOW_BEARER=true`): sign in at `/login?mode=bearer` on the Token tab
+with the `HOMER_ADMIN_TOKEN` value. The token is then kept in `localStorage`,
+acceptable for this loopback-only stack. To use the console without logging in,
+instead set `CONFIG_PATH=config/config-local.json` and `AUTH_ENABLED=false` in
+`.env` (an unsecured backend, bound to loopback); for real logins, configure a
+password scheme and leave `CONSOLE_ALLOW_BEARER` off — see
 [`app/SERVER.md`](../app/SERVER.md) § *Password Authentication*.
 
 ### Run

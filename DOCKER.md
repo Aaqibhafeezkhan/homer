@@ -53,9 +53,18 @@ echo "HOMER_ADMIN_TOKEN=$(openssl rand -hex 24)" >> .env
 docker compose up -d
 
 # 4. Access the application (bound to localhost by default)
-# Frontend: http://localhost:3000
+# Frontend: http://localhost:3000 — sign in at http://localhost:3000/login?mode=bearer,
+#           Token tab, with the HOMER_ADMIN_TOKEN value from .env
 # Backend API: http://localhost:8080
 ```
+
+The example config makes the backend bearer-only, so `.env.example` turns on
+console sign-in with the token option (`AUTH_ENABLED=true`,
+`CONSOLE_ALLOW_BEARER=true`). The console keeps that token in the browser's
+`localStorage`, which is acceptable for this loopback-only stack; for a real
+deployment use cookie sign-in with a password scheme
+([`app/SERVER.md`](app/SERVER.md) § *Password Authentication*) and leave
+`CONSOLE_ALLOW_BEARER` off.
 
 `docker compose up` **pulls** the published release images
 (`ghcr.io/livesport/homer/homer-app`, `ghcr.io/livesport/homer/homer-console`)
@@ -479,7 +488,8 @@ gh attestation verify "oci://$image" --repo livesport/homer \
 |----------|---------|-------------|
 | `FRONTEND_PORT` | 3000 | Host port for the console (published on `127.0.0.1` only) |
 | `CONSOLE_HOMER_API_URL` | `http://localhost:8080` | Backend API URL, as reached from the browser (`docker-compose.dev.yml` pins the default) |
-| `AUTH_ENABLED` | false | Enable authentication |
+| `AUTH_ENABLED` | false (`.env.example`: true) | Passed to the console as `CONSOLE_AUTH_ENABLED`: turns on console sign-in |
+| `CONSOLE_ALLOW_BEARER` | false (`.env.example`: true) | Offers Token sign-in on the console's login screen; off means cookie (password) sign-in only. A bearer token is kept in the browser's `localStorage`, so leave it off outside a loopback setup |
 | `CONSOLE_PLUGINS` | *(unset)* | Comma-separated plugin entries — a same-origin module path under `public/`, optionally `@<requirement>` (`/plugins/costs.js@admin`). See [Console plugins in the image](#console-plugins-in-the-image) |
 | `CONSOLE_THEMES` | *(unset)* | Comma-separated theme entries as `name:path` (`acme:/themes/acme.css`) — a same-origin stylesheet under `public/`. See [Console themes in the image](#console-themes-in-the-image) |
 | `CONSOLE_THEME_MODES` | *(unset)* | `light:<name>,dark:<name>` — names two `CONSOLE_THEMES` entries as the light/dark pair; they replace the built-in themes. See [Console themes in the image](#console-themes-in-the-image) |
