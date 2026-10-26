@@ -359,24 +359,93 @@ class ExternalRunnerSessionTest {
     @Test
     fun `a count that cannot be real fails at once and cannot extend the wait`() =
         runTest {
-            // maxOutputBytes is 64 here, and a chunk is at least one byte.
-            listOf(-1L, 65L).forEach { impossible ->
-                val s = openSession(domain())
-                val result =
-                    async {
-                        runCatching {
-                            s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
-                        }
+            val s = openSession(domain())
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
                     }
-                runCurrent()
-                val op = s.mailbox.next(1.seconds)!!
-                s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = impossible))
-                runCurrent()
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = -1))
+            runCurrent()
 
-                assertTrue(result.isCompleted, "a count of $impossible is refused without waiting")
-                val message = assertNotNull(result.await().exceptionOrNull()).message!!
-                assertTrue("output incomplete on stdout" in message, message)
-            }
+            assertTrue(result.isCompleted, "a negative count is refused without waiting")
+            val message = assertNotNull(result.await().exceptionOrNull()).message!!
+            assertTrue("output incomplete on stdout" in message, message)
+        }
+
+    @Test
+    fun `a count past the output cap is a claim to wait for, not an impossible one`() =
+        runTest {
+            // A chunk may be empty: the sink advances the per-stream sequence for a zero-byte
+            // chunk, so a stream can legitimately report more chunks than its cap has bytes.
+            val s = openSession(domain())
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 65))
+            runCurrent()
+            assertFalse(result.isCompleted, "a positive count is never refused without the wait")
+
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+            val message = assertNotNull(result.await().exceptionOrNull()).message!!
+            assertTrue("output incomplete on stdout" in message, message)
+            assertTrue("65 chunk(s)" in message, message)
+        }
+
+    @Test
+    fun `a cap-tripping chunk that lands during the bounded wait fails with the cap error`() =
+        runTest {
+            val s = openSession(domain())
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = s.sink(op.opId)!!
+            sink.append("stdout", 0, ByteArray(10))
+            // Reported ahead of what Homer holds, so the step enters the bounded wait; the
+            // chunk that then lands crosses the 64-byte cap, consumes its seq and drops its
+            // bytes — closing the very gap the wait was for.
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 2, stderrChunks = 0))
+            runCurrent()
+            sink.append("stdout", 1, ByteArray(60))
+            assertTrue(sink.capTripped.isCompleted, "the landing chunk trips the cap")
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+
+            val failure = result.await().exceptionOrNull()
+            assertTrue(failure is OutputCapExceededException, "$failure")
+        }
+
+    @Test
+    fun `two short streams are named by one output-incomplete error each`() =
+        runTest {
+            val s = openSession(domain())
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 2, stderrChunks = 1))
+            runCurrent()
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+
+            val message = assertNotNull(result.await().exceptionOrNull()).message!!
+            assertTrue("output incomplete on stdout: the instance reported 2 chunk(s)" in message, message)
+            assertTrue("; output incomplete on stderr: the instance reported 1 chunk(s)" in message, message)
         }
 
     @Test

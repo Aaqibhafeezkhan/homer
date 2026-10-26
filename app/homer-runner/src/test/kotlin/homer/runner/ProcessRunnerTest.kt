@@ -180,6 +180,49 @@ class ProcessRunnerTest {
         }
 
     @Test
+    fun `a sink stalled on one stream only is shed there and names just that stream`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo out; echo err >&2"), tmp, env, null)
+                val started = System.nanoTime()
+                val exit =
+                    handle.await(2.seconds) { stream, _, _ ->
+                        // stdout settles at once, stderr never returns: the per-stream cut
+                        // naming must follow the stream, not the pair.
+                        if (stream == RunnerProtocol.STREAM_STDERR) awaitCancellation()
+                    }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertEquals(0, exit.code)
+                assertTrue(elapsedMs < 8_000, "the cut stream is shed at the drain bound; took ${elapsedMs}ms")
+                assertEquals(setOf(RunnerProtocol.STREAM_STDERR), exit.cutStreams)
+                assertEquals(1L, exit.stdoutChunks, "the stream that settled is counted as handed over")
+                assertEquals(0L, exit.stderrChunks)
+            }
+        }
+
+    @Test
+    fun `a stalled sink with op budget left sheds only after spending it`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo out"), tmp, env, null)
+                val started = System.nanoTime()
+                // The op's budget is well above the 5 s floor, so the drain's second phase —
+                // waiting out what is left of that budget for a pump that is still handing a
+                // chunk over — is the bound that fires, not the floor.
+                val exit = handle.await(15.seconds) { _, _, _ -> awaitCancellation() }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertEquals(0, exit.code)
+                assertFalse(exit.timedOut, "the process exited on its own; the drain bound is not a timeout")
+                assertTrue(elapsedMs >= 5_000, "the drain spends at least the join floor; took ${elapsedMs}ms")
+                assertTrue(elapsedMs < 20_000, "the shed still lands inside the op's budget; took ${elapsedMs}ms")
+                assertEquals(setOf(RunnerProtocol.STREAM_STDOUT), exit.cutStreams)
+                assertEquals(0L, exit.stdoutChunks)
+            }
+        }
+
+    @Test
     fun `a killed op keeps the bounded join floor and reports its timeout`() =
         runBlocking(Dispatchers.Default) {
             withTimeout(30.seconds) {

@@ -429,6 +429,11 @@ class SessionWorker(
 
     private fun killAll() = running.values.forEach { it.kill() }
 
+    private fun deleteTree(path: Path) {
+        if (!path.exists()) return
+        Files.walk(path).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+    }
+
     companion object {
         private const val MAX_RETRIES = 5
         private val OWNER_ONLY = PosixFilePermissions.fromString("rwx------")
@@ -444,6 +449,9 @@ class SessionWorker(
  * still unsent — otherwise the tail of a step's output vanishes with nothing in the log to
  * explain it. Session, op, stream and chunk count only: the chunks may hold secrets (§12 rule 7),
  * and [ProcessRunner.Handle] has neither id, so this is the first place that can name them.
+ *
+ * File scope, not a member: the class sits at its 400-line limit, and the file-level [logger]
+ * below is what a file-level function can see.
  */
 private fun cmdResult(
     sessionId: String,
@@ -466,11 +474,6 @@ private fun cmdResult(
         stdoutChunks = exit.stdoutChunks,
         stderrChunks = exit.stderrChunks,
     )
-}
-
-private fun deleteTree(path: Path) {
-    if (!path.exists()) return
-    Files.walk(path).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
 }
 
 private val logger = LoggerFactory.getLogger(SessionWorker::class.java)

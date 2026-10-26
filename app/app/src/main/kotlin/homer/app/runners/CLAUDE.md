@@ -82,7 +82,9 @@ facets `QueuedRunner` reads; its sessions are created by the claim route
 `OpResult`s, tars ride the `tar` routes through `TarStreams`, and command
 output arrives as ordered chunks through `OutputSink` into the usual
 `cmd_N.out`/`cmd_N.err` files, so nothing above the session changes. A `cmd`
-result also reports how many chunks each stream posted, and the instance
+result also reports one past the last `seq` each stream posted or gave up posting (a
+chunk abandoned after its retries is counted, so a lost one reads as a short count,
+never as a complete one), and the instance
 finishes posting before it reports its exit: a count ahead of what
 `OutputSink` received is waited on once, briefly, and then fails the step as
 *output incomplete* rather than passing truncated output off as a clean exit.

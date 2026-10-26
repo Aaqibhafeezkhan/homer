@@ -41,9 +41,10 @@ object RunnerProtocol {
  * strict, so a key this binary does not know fails the whole body — and an instance and the
  * Homer it reports to are upgraded independently, while every DTO here only ever gains
  * optional fields. An unknown key is ignored instead of answered with a 400. The instance's
- * own client reads with the same rule (`HomerClient`), so both ends of one wire agree.
+ * own client reads with the same rule — `HomerClient` uses this one definition, so both ends
+ * of one wire cannot drift apart.
  */
-internal val runnerProtocolJson = Json { ignoreUnknownKeys = true }
+val runnerProtocolJson = Json { ignoreUnknownKeys = true }
 
 @Serializable
 data class RegisterInstanceRequest(

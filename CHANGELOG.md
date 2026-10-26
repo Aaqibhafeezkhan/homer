@@ -5,6 +5,7 @@
 ### Homer
 
 - **Fixed: an external runner dropped the end of a step's output** — A step on a pull runner now finishes sending its output before reporting its exit code, and output that is still incomplete fails the step instead of passing as truncated.
+- **Fixed: runner-protocol bodies refused on unknown fields** — A body carrying a field this Homer does not know is decoded for what it knows instead of answered with a 400, so mixed-version deployments no longer lose an op result to a newer peer's extra field.
 - **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
 
 ### Console
