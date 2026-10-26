@@ -58,7 +58,7 @@ class HomerRunnerCli(
     val drainTimeout by option(
         "--drain-timeout",
         envvar = "HOMER_RUNNER_DRAIN_TIMEOUT",
-        help = "Seconds to finish in-flight runs on SIGTERM",
+        help = "Seconds to finish in-flight runs on SIGTERM or a failed health check",
     ).long().default(600)
 
     override fun run() {

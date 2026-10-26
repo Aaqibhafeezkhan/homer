@@ -3422,7 +3422,7 @@ instead ([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-co
 | `--concurrency` | `HOMER_RUNNER_CONCURRENCY` | `1` | Runs at once; above the domain's `maxConcurrencyPerInstance` the registration is refused. |
 | `--root` | `HOMER_RUNNER_ROOT` | `/var/homer-runner` | Where each session gets a fresh owner-only `<processId>-<random id>` directory, deleted when the session ends. |
 | `--name` | `HOMER_RUNNER_NAME` | the host name, shaped to the instance-name pattern | Instance name shown in Homer. |
-| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` before they are killed. |
+| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` or a failed health check before they are killed. |
 
 Exit codes: `1` for a usage error (a missing option or token, an unknown flag),
 an unexpected failure, or a refused startup when the JVM cannot be made

@@ -83,8 +83,10 @@ Chosen option: **a runner self-check, plus a least-recently-claimed handoff**.
 
 ### In-session check on a start failure
 
-- Bad: subsumed by the pre-claim check, which also catches the failure before
-  a run is lost.
+- Bad: it would end only the run in flight sooner; the pre-claim check already
+  keeps a broken host from taking the next run, and catches a host that broke
+  while idle before a run is lost. A host that breaks mid-run still fails that
+  run's remaining commands until the run ends; that gap is accepted.
 
 ### Wake-all race or oldest waiter
 

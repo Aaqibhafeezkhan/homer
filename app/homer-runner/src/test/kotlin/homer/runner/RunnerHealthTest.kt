@@ -21,6 +21,13 @@ class RunnerHealthTest {
     }
 
     @Test
+    fun `a probe that exits non-zero still passes the check`(
+        @TempDir root: Path,
+    ) {
+        RunnerHealth.check(root, probeArgv = listOf("/bin/sh", "-c", "exit 3"))
+    }
+
+    @Test
     fun `a program that cannot start fails the check`(
         @TempDir root: Path,
     ) {
