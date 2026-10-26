@@ -3284,6 +3284,9 @@ runners:
 **Matching.** An alias filter matches the runner with that alias. A tag filter
 matches a runner whose `tags` contain every requested tag; a runner without
 `tags` never matches a tag filter. Among matches the oldest request wins.
+Among idle matching consumers, a new request goes to the one that claimed
+least recently, so idle runners take turns
+([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
 
 **Env and host visibility for tag-filtered runs.** An alias-filtered run knows
 its runner before the workspace env is composed, so per-runner `env` keeps its
@@ -3343,7 +3346,8 @@ runners:
 An instance registers with a name, the tags it serves and a `concurrency`,
 then long-polls for claims. It matches an agent with `runner: workers` or an
 agent whose `runnerTags` are all among its announced tags; among matches the
-oldest run wins, exactly as for static runners. Adding a domain needs a
+oldest run wins, exactly as for static runners, and among idle matching
+instances the one that claimed least recently gets it. Adding a domain needs a
 restart; adding an instance or a tag never does.
 
 Every wait is bounded: an instance silent for `heartbeatTimeoutSec` is
@@ -3403,6 +3407,13 @@ both to same-user processes. Spawned runs are unaffected — `execve` resets the
 flag for the child. On Linux a failed call is fatal (exit `1`); on a host
 without `prctl` the runner logs a warning and continues.
 
+Before registering and before every claim the runner also checks that it can
+start a process (a `/bin/sh -c "exit 0"` probe with an empty environment, so the
+token never reaches it) and create a file under `--root`. A JVM that can no
+longer spawn processes would otherwise keep claiming runs and fail each at once
+while healthy instances sit idle; a restart fixes it, so the runner exits `3`
+instead ([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
+
 | Option | Env var | Default | Meaning |
 | --- | --- | --- | --- |
 | `--url` | `HOMER_RUNNER_URL` | required | Homer base URL (`https://`, or loopback `http://`), without embedded credentials. |
@@ -3411,12 +3422,19 @@ without `prctl` the runner logs a warning and continues.
 | `--concurrency` | `HOMER_RUNNER_CONCURRENCY` | `1` | Runs at once; above the domain's `maxConcurrencyPerInstance` the registration is refused. |
 | `--root` | `HOMER_RUNNER_ROOT` | `/var/homer-runner` | Where each session gets a fresh owner-only `<processId>-<random id>` directory, deleted when the session ends. |
 | `--name` | `HOMER_RUNNER_NAME` | the host name, shaped to the instance-name pattern | Instance name shown in Homer. |
-| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` before they are killed. |
+| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` or a failed health check before they are killed. |
 
 Exit codes: `1` for a usage error (a missing option or token, an unknown flag),
 an unexpected failure, or a refused startup when the JVM cannot be made
 non-dumpable; `2` when Homer rejects the registration (bad token, disallowed
-tag) or `--url` is refused; `143` after a `SIGTERM` drain.
+tag) or `--url` is refused; `3` when this host cannot start a process or write
+`--root` (checked before registering and before every claim): the runner stops
+claiming, deregisters, lets in-flight runs finish within `--drain-timeout` and
+exits, so run it under a supervisor that restarts it (launchd `KeepAlive`, or
+systemd `Restart=on-failure` with `RestartSec=10s`: with the default `100ms` and
+`StartLimitBurst=5` per 10 s a host that fails the check at startup hits the
+start limit within a second, and the unit stays failed after the cause is
+fixed); `143` after a `SIGTERM` drain.
 
 #### ExternalRunner fields
 
