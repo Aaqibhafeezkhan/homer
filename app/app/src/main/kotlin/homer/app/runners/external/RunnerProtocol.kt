@@ -124,8 +124,9 @@ sealed class RunnerOp {
 }
 
 /**
- * Result of one op. `createWorkspace` fills [root]; `cmd` fills [exitCode] and
- * [timedOut]; `download` may set [missing]; any op may set [error] with [ok] false.
+ * Result of one op. `createWorkspace` fills [root]; `cmd` fills [exitCode], [timedOut]
+ * and the two chunk counts; `download` may set [missing]; any op may set [error] with
+ * [ok] false.
  */
 @Serializable
 data class OpResult(
@@ -135,5 +136,13 @@ data class OpResult(
     val missing: Boolean = false,
     val exitCode: Int? = null,
     val timedOut: Boolean = false,
+    /**
+     * How many chunks a `cmd` handed to the `output` route for this stream — one past the
+     * last `seq` it posted, a chunk whose post it gave up on included. Null when the
+     * instance reports no count (an older runner), which leaves the check inert.
+     */
+    val stdoutChunks: Long? = null,
+    /** The same for `stderr`. */
+    val stderrChunks: Long? = null,
     val error: String? = null,
 )

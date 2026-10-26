@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Fixed: an external runner dropped the end of a step's output** — A step on a pull runner now finishes sending its output before reporting its exit code, and output that is still incomplete fails the step instead of passing as truncated.
 - **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
 
 ### Console

@@ -291,6 +291,136 @@ class ExternalRunnerSessionTest {
         }
 
     @Test
+    fun `a cmd result whose counts match the chunks Homer holds returns the clean result`() =
+        runTest {
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = s.sink(op.opId)!!
+            sink.append("stdout", 0, "hi\n".toByteArray())
+            sink.append("stdout", 1, "there\n".toByteArray())
+            sink.append("stderr", 0, "warn\n".toByteArray())
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 2, stderrChunks = 1))
+
+            assertEquals(0, result.await().getOrThrow().exitCode)
+        }
+
+    @Test
+    fun `a count above the chunks Homer holds fails the step as output incomplete`() =
+        runTest {
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.sink(op.opId)!!.append("stdout", 0, "hi\n".toByteArray())
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 2, stderrChunks = 0))
+            runCurrent()
+            assertFalse(result.isCompleted, "the step gives the last chunk one bounded wait to arrive")
+
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+            val message = assertNotNull(result.await().exceptionOrNull()).message!!
+            assertTrue("output incomplete on stdout" in message, message)
+        }
+
+    @Test
+    fun `a chunk that arrives during the bounded wait completes the step`() =
+        runTest {
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = s.sink(op.opId)!!
+            sink.append("stdout", 0, "hi\n".toByteArray())
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 2, stderrChunks = 0))
+            runCurrent()
+
+            sink.append("stdout", 1, "there\n".toByteArray())
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+
+            assertEquals(0, result.await().getOrThrow().exitCode)
+        }
+
+    @Test
+    fun `a count that cannot be real fails at once and cannot extend the wait`() =
+        runTest {
+            // maxOutputBytes is 64 here, and a chunk is at least one byte.
+            listOf(-1L, 65L).forEach { impossible ->
+                val s = openSession(domain())
+                val result =
+                    async {
+                        runCatching {
+                            s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                        }
+                    }
+                runCurrent()
+                val op = s.mailbox.next(1.seconds)!!
+                s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = impossible))
+                runCurrent()
+
+                assertTrue(result.isCompleted, "a count of $impossible is refused without waiting")
+                val message = assertNotNull(result.await().exceptionOrNull()).message!!
+                assertTrue("output incomplete on stdout" in message, message)
+            }
+        }
+
+    @Test
+    fun `a result that carries no counts keeps today's behavior`() =
+        runTest {
+            // An older runner binary reports nothing to compare, so the check stays inert.
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0))
+            runCurrent()
+
+            assertEquals(0, result.await().getOrThrow().exitCode)
+        }
+
+    @Test
+    fun `the output-incomplete error never carries output bytes`() =
+        runTest {
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("sh", "-c", "x"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds)
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            s.sink(op.opId)!!.append("stdout", 0, "SECRET-VALUE\n".toByteArray())
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0, stdoutChunks = 3, stderrChunks = 0))
+            runCurrent()
+            testScheduler.advanceTimeBy(ExternalShellExecutor.INCOMPLETE_OUTPUT_WAIT.inWholeMilliseconds + 1)
+
+            val message = assertNotNull(result.await().exceptionOrNull()).message!!
+            assertTrue("output incomplete on stdout" in message, message)
+            assertFalse("SECRET-VALUE" in message, "the error names ids and counts, never output: $message")
+        }
+
+    @Test
     fun `losing the instance fails the pending op and the run`() =
         runTest {
             val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))

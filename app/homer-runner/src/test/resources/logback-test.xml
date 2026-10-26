@@ -1,0 +1,15 @@
+<configuration>
+    <!-- logback is a test-only backend here (the runner ships slf4j-simple). It writes to
+         stderr like slf4j-simple does, and a test that asserts on a warning attaches its own
+         ListAppender instead of reading this appender. -->
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

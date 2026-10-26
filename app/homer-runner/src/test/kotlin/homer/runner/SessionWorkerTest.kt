@@ -1,5 +1,7 @@
 package homer.runner
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import homer.app.runners.DownloadMode
 import homer.app.runners.TarStreams
 import homer.app.runners.external.ClaimResponse
@@ -12,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.LoggerFactory
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -29,6 +32,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import ch.qos.logback.classic.Logger as LogbackLogger
 
 class SessionWorkerTest {
     @TempDir
@@ -160,6 +164,109 @@ class SessionWorkerTest {
             assertEquals("out\n", api.output.filter { it.first == "stdout" }.joinToString("") { it.third.decodeToString() })
             api.ops.send(RunnerOp.Close("cl", "done"))
             run.await()
+        }
+
+    @Test
+    fun `a slow chunk post loses no tail and the result reports the per-stream chunk counts`() =
+        live {
+            val w = worker()
+            val run = async { w.run() }
+            api.ops.send(RunnerOp.CreateWorkspace("cw"))
+            api.result()
+            // Every post lags, so the pump is still posting when the process exits: the exit
+            // must wait for the drain rather than cut it, or the marker line is lost.
+            api.postOutputDelayMs = 100
+            api.ops.send(
+                RunnerOp.Cmd(
+                    "c1",
+                    listOf("sh", "-c", "echo one; echo two; echo MARKER"),
+                    mapOf("PATH" to "/usr/bin:/bin"),
+                    null,
+                    30_000,
+                    w.sessionRoot.resolve("workdir").toString(),
+                ),
+            )
+            val r = api.result()
+            assertEquals(0, r.exitCode)
+            val stdout = api.output.filter { it.first == "stdout" }
+            assertEquals("one\ntwo\nMARKER\n", stdout.joinToString("") { it.third.decodeToString() })
+            assertEquals(stdout.size.toLong(), r.stdoutChunks, "the result reports what the stream posted")
+            assertEquals(0L, r.stderrChunks)
+            api.ops.send(RunnerOp.Close("cl", "done"))
+            run.await()
+        }
+
+    @Test
+    fun `a chunk dropped after its retries is still counted, so the result is short`() =
+        live {
+            val w = worker()
+            val run = async { w.run() }
+            api.ops.send(RunnerOp.CreateWorkspace("cw"))
+            api.result()
+            repeat(6) { api.postOutputFailures += IOException("connection reset") }
+            api.ops.send(
+                RunnerOp.Cmd(
+                    "c1",
+                    listOf("sh", "-c", "echo lost"),
+                    mapOf("PATH" to "/usr/bin:/bin"),
+                    null,
+                    30_000,
+                    w.sessionRoot.resolve("workdir").toString(),
+                ),
+            )
+            // The retry budget is five delays of a second each, so the result lands well past
+            // the default wait.
+            val r = api.result(timeoutMs = 30_000)
+            assertEquals(0, r.exitCode)
+            assertEquals(1L, r.stdoutChunks, "a dropped chunk still counts, so Homer sees the stream short")
+            assertTrue(api.output.none { it.first == "stdout" }, "the chunk never landed")
+            api.ops.send(RunnerOp.Close("cl", "done"))
+            run.await()
+        }
+
+    @Test
+    fun `a drain cut with output unsent warns once per stream and never logs chunk bytes`() =
+        live {
+            val appender = ListAppender<ILoggingEvent>().also { it.start() }
+            val logback = LoggerFactory.getLogger(SessionWorker::class.java) as LogbackLogger
+            logback.addAppender(appender)
+            try {
+                val w = worker()
+                val run = async { w.run() }
+                api.ops.send(RunnerOp.CreateWorkspace("cw"))
+                api.result()
+                // Neither post ever returns, so both pumps are still handing their chunk over when
+                // the drain bound expires: the tail of both streams is dropped, and the op's own
+                // deadline is shorter than that bound.
+                api.postOutputStalls = true
+                api.ops.send(
+                    RunnerOp.Cmd(
+                        "c1",
+                        listOf("sh", "-c", "echo out; echo SECRET-VALUE >&2"),
+                        mapOf("PATH" to "/usr/bin:/bin"),
+                        null,
+                        2_000,
+                        w.sessionRoot.resolve("workdir").toString(),
+                    ),
+                )
+                val r = api.result(timeoutMs = 30_000)
+
+                assertEquals(0, r.exitCode)
+                val cut = appender.list.map { it.formattedMessage }.filter { "output cut" in it }
+                assertEquals(2, cut.size, "one warning per cut stream, got: $cut")
+                assertTrue(cut.any { "stdout" in it }, "$cut")
+                assertTrue(cut.any { "stderr" in it }, "$cut")
+                cut.forEach { message ->
+                    assertTrue("sess" in message && "c1" in message, "session and op are named: $message")
+                    assertFalse("SECRET-VALUE" in message, "no chunk bytes may reach the log: $message")
+                }
+                assertEquals(0L, r.stdoutChunks, "a chunk the sink never took back is not reported as handed over")
+                assertEquals(0L, r.stderrChunks)
+                api.ops.send(RunnerOp.Close("cl", "done"))
+                run.await()
+            } finally {
+                logback.detachAppender(appender)
+            }
         }
 
     @Test

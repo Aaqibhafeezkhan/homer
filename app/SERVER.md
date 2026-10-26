@@ -3477,13 +3477,18 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
 
-Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`.
+Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
+result may also carry `stdoutChunks`/`stderrChunks`, the number of chunks the instance
+handed to the `output` route for that stream; both are optional, so a result from an
+older runner binary omits them. When one is present and ahead of the chunks Homer has
+received, Homer waits once, briefly, for the rest and then fails the step with
+`output incomplete on <stream>` instead of running on truncated output.
 
 **Nested runs hold a permit.** A run holds its runner's permit for its whole
 duration, not just while it is opening the session. If `concurrency` is set on
