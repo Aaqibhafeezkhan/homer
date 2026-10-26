@@ -66,6 +66,10 @@ Chosen option: **a runner self-check, plus a least-recently-claimed handoff**.
 - Bad: a poll that is handed a run and then cancelled before it claims still
   marks its consumer as recently claimed; the run itself goes to the next
   parked match.
+- Bad: a run reserved for a woken poll is skipped by every other consumer's
+  `take()`, so another consumer can claim a newer run first, an exception to
+  ADR-0066's oldest-request-first order. The window lasts until the woken poll
+  claims the run or hands it on, so it is accepted.
 
 ## Pros and Cons of the Options
 

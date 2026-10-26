@@ -418,6 +418,33 @@ class RunnerClaimQueueTest {
         }
 
     @Test
+    fun `a reservation handed on until no waiter is left stays claimable`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 10)
+            val session = mockk<RunnerSession>(relaxed = true)
+            val takeA = async { queue.take(Consumer("local")) }
+            runCurrent()
+            val takeB = async { queue.take(Consumer("local")) }
+            runCurrent()
+            val run =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    queue.awaitClaim(params(1), RunnerFilter.Alias("local"), 300.seconds)
+                }
+            takeA.cancel()
+            takeB.cancel()
+            runCurrent()
+
+            assertTrue(takeA.isCancelled)
+            assertTrue(takeB.isCancelled)
+            assertEquals(0, queue.waiterCount())
+            assertEquals(1, queue.pendingCount())
+            val taken = queue.take(Consumer("local"))
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(session))
+            assertSame(session, run.await())
+        }
+
+    @Test
     fun `a woken consumer that no longer matches passes the request on`() =
         runTest {
             val queue = RunnerClaimQueue(maxPending = 10)
