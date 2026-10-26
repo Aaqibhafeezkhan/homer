@@ -3495,13 +3495,27 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
 
-Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`.
+Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
+result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance
+posted or gave up posting for that stream — a chunk whose post was abandoned after its
+retries is counted too, so a lost chunk shows up as a short count and never as a complete
+one. The one exception: a chunk still unsent when the instance's bounded post-exit drain
+expires is dropped with one warning naming the session, op, stream and count, and reaches
+no count — that result then matches what Homer holds while output is missing, and the
+instance's log is the only trace. Both fields are optional, so a result from an
+older runner binary omits them. When one is present and ahead of the chunks Homer has
+received, Homer waits once, briefly, for the rest and then fails the step with
+`output incomplete on <stream>` instead of running on truncated output.
+
+Both ends of this protocol are upgraded independently, so every body it carries is
+decoded with unknown keys ignored: an instance newer than the server it reports to is
+read for the fields this server knows, never refused as a malformed body.
 
 **Nested runs hold a permit.** A run holds its runner's permit for its whole
 duration, not just while it is opening the session. If `concurrency` is set on

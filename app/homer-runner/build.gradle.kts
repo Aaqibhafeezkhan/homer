@@ -26,6 +26,13 @@ dependencies {
     implementation(libs.bundles.ktorClient)
 
     testImplementation(libs.bundles.testing)
+    // Tests assert on log events through logback's ListAppender, so the test runtime needs a
+    // real backend; the runner itself keeps slf4j-simple as its only binding.
+    testImplementation(libs.logbackClassic)
+}
+
+configurations.named("testRuntimeClasspath") {
+    exclude(group = "org.slf4j", module = "slf4j-simple")
 }
 
 application {

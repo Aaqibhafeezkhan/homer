@@ -106,7 +106,14 @@ Chosen option: **A**.
   without exception: a throw from the tag-set provider (a registry read that
   outruns the schema, say) is caught, logged as a warning, and the agent still
   loads. Skipping the agent over a check whose only product is a warning would
-  turn the availability-only tag semantics above into a load failure.
+  turn the availability-only tag semantics above into a load failure. (10) Every
+  runner-protocol body decodes with unknown keys ignored rather than strict: an
+  instance and the Homer it reports to are upgraded independently, so a body
+  carrying a field the reader does not know yet is decoded for what it knows
+  instead of answered with a 400 that would cost the op result it rode in on. The
+  price is that a typo'd field is silently dropped from then on, and re-tightening
+  the decode would be a breaking change; the wire therefore keeps the rule that its
+  DTOs only ever gain optional fields.
 
 ### Consequences
 

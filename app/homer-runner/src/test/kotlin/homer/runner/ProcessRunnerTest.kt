@@ -1,6 +1,8 @@
 package homer.runner
 
+import homer.app.runners.external.RunnerProtocol
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -14,12 +16,15 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class ProcessRunnerTest {
     @TempDir
     lateinit var tmp: Path
+
+    private val env = mapOf("PATH" to "/usr/bin:/bin")
 
     @Test
     fun `cancelling await from outside kills the process instead of orphaning it`() =
@@ -106,6 +111,139 @@ class ProcessRunnerTest {
                 assertTrue("Dumpable:\t1" in status, "a spawned child must be dumpable; got: $status")
             }
         }
+
+    @Test
+    fun `a sink that outlasts the join still posts the tail inside the op budget`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo MARKER"), tmp, env, null)
+                val out = StringBuilder()
+                // The post alone outlasts the fixed 5 s join, so the drain has to spend the op's
+                // own budget instead: with the join as the bound the chunk is cut and the step's
+                // tail is lost, which is the reported bug.
+                val exit =
+                    handle.await(15.seconds) { _, _, bytes ->
+                        delay(5_200)
+                        out.append(bytes.decodeToString())
+                    }
+
+                assertEquals(0, exit.code)
+                assertTrue("MARKER" in out.toString(), "the last chunk must be posted before the exit is reported; got: $out")
+                assertEquals(emptySet(), exit.cutStreams)
+                assertEquals(1L, exit.stdoutChunks, "the stdout chunks the sink was handed are reported")
+                assertEquals(0L, exit.stderrChunks)
+            }
+        }
+
+    @Test
+    fun `a grandchild holding the pipe open does not stretch await past the op deadline`() =
+        runBlocking(Dispatchers.Default) {
+            // The shell exits at once, while the sleep it backgrounded still holds the stream's
+            // write end; the op's budget is minutes, so a drain that waited on the grandchild —
+            // there is no EOF to wait for until it dies — would outlive this test's own bound.
+            withTimeout(20.seconds) {
+                val handle =
+                    ProcessRunner.start(listOf("sh", "-c", "echo MARKER; sleep 30 & echo pid=$!"), tmp, env, null)
+                val out = StringBuilder()
+                val exit = handle.await(10.minutes) { _, _, bytes -> out.append(bytes.decodeToString()) }
+                val grandchild = grandchildOf(out.toString())
+                // The premise, checked rather than assumed: the write end is still held by a live
+                // grandchild, so the reads the drain shed are parked on it, not finished.
+                assertTrue(grandchild.isAlive, "the grandchild must outlive the shell that spawned it")
+                grandchild.destroyForcibly()
+
+                assertEquals(0, exit.code)
+                assertFalse(exit.timedOut, "the shell exited on its own; a grandchild must not turn that into a timeout")
+                assertTrue("MARKER" in out.toString(), "the tail is posted before the exit is reported; got: $out")
+                assertEquals(emptySet(), exit.cutStreams, "a parked read has nothing unsent, so no stream is cut")
+            }
+        }
+
+    @Test
+    fun `a stalled sink is shed at the drain bound and both streams are reported cut`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo out; echo err >&2"), tmp, env, null)
+                val started = System.nanoTime()
+                val exit = handle.await(2.seconds) { _, _, _ -> awaitCancellation() }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertEquals(0, exit.code)
+                // A post that never returns is shed at the drain bound — here the 5 s floor, the
+                // op's own budget being smaller — so a stalled sink cannot hang the op, and every
+                // stream still unsent is named rather than passed off as complete.
+                assertTrue(elapsedMs < 8_000, "a stalled post is shed at the drain bound; took ${elapsedMs}ms")
+                assertEquals(setOf(RunnerProtocol.STREAM_STDOUT, RunnerProtocol.STREAM_STDERR), exit.cutStreams)
+                assertEquals(0L, exit.stdoutChunks, "a chunk the sink never took back is not counted as handed over")
+                assertEquals(0L, exit.stderrChunks)
+            }
+        }
+
+    @Test
+    fun `a sink stalled on one stream only is shed there and names just that stream`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo out; echo err >&2"), tmp, env, null)
+                val started = System.nanoTime()
+                val exit =
+                    handle.await(2.seconds) { stream, _, _ ->
+                        // stdout settles at once, stderr never returns: the per-stream cut
+                        // naming must follow the stream, not the pair.
+                        if (stream == RunnerProtocol.STREAM_STDERR) awaitCancellation()
+                    }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertEquals(0, exit.code)
+                assertTrue(elapsedMs < 8_000, "the cut stream is shed at the drain bound; took ${elapsedMs}ms")
+                assertEquals(setOf(RunnerProtocol.STREAM_STDERR), exit.cutStreams)
+                assertEquals(1L, exit.stdoutChunks, "the stream that settled is counted as handed over")
+                assertEquals(0L, exit.stderrChunks)
+            }
+        }
+
+    @Test
+    fun `a stalled sink with op budget left sheds only after spending it`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "echo out"), tmp, env, null)
+                val started = System.nanoTime()
+                // The op's budget is well above the 5 s floor, so the drain's second phase —
+                // waiting out what is left of that budget for a pump that is still handing a
+                // chunk over — is the bound that fires, not the floor.
+                val exit = handle.await(15.seconds) { _, _, _ -> awaitCancellation() }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertEquals(0, exit.code)
+                assertFalse(exit.timedOut, "the process exited on its own; the drain bound is not a timeout")
+                assertTrue(elapsedMs >= 5_000, "the drain spends at least the join floor; took ${elapsedMs}ms")
+                assertTrue(elapsedMs < 20_000, "the shed still lands inside the op's budget; took ${elapsedMs}ms")
+                assertEquals(setOf(RunnerProtocol.STREAM_STDOUT), exit.cutStreams)
+                assertEquals(0L, exit.stdoutChunks)
+            }
+        }
+
+    @Test
+    fun `a killed op keeps the bounded join floor and reports its timeout`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                val handle = ProcessRunner.start(listOf("sh", "-c", "sleep 30"), tmp, env, null)
+                val started = System.nanoTime()
+                val exit = handle.await(500.milliseconds) { _, _, _ -> }
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertTrue(exit.timedOut)
+                assertFalse(handle.isAlive())
+                // Kill grace plus the PUMP_JOIN floor: an expired op has no budget left, so the
+                // drain falls back to the floor rather than running to the timeout it never got.
+                assertTrue(elapsedMs < 11_000, "the kill path stays bounded; took ${elapsedMs}ms")
+            }
+        }
+
+    /** The shell's backgrounded child, from the pid the shell printed for it. */
+    private fun grandchildOf(output: String): ProcessHandle {
+        val pid = Regex("pid=(\\d+)").find(output)!!.groupValues[1].toLong()
+        return ProcessHandle.of(pid).orElseThrow { AssertionError("the shell reported no grandchild pid: $output") }
+    }
 
     /** The effective uid of this process, from `/proc/self/status`. */
     private fun effectiveUid(): Int {
