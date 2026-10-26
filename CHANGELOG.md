@@ -5,6 +5,7 @@
 ### Homer
 
 - **Fixed: homer-runner kept claiming runs it could not start** — Before registering and before each claim the runner checks that it can start a process and write under `--root`; when it cannot, it stops claiming, deregisters, lets in-flight runs finish and exits 3 for its supervisor to restart. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
+- **Fixed: one fast-failing runner instance took most runs** — A new run goes to the idle matching runner that claimed least recently, instead of to whichever waiting poll wins a race, so an instance that fails every run at once no longer takes every run. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
 - **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
 
 ### Console

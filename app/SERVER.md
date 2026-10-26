@@ -3284,6 +3284,9 @@ runners:
 **Matching.** An alias filter matches the runner with that alias. A tag filter
 matches a runner whose `tags` contain every requested tag; a runner without
 `tags` never matches a tag filter. Among matches the oldest request wins.
+Among idle matching consumers, a new request goes to the one that claimed
+least recently, so idle runners take turns
+([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
 
 **Env and host visibility for tag-filtered runs.** An alias-filtered run knows
 its runner before the workspace env is composed, so per-runner `env` keeps its
@@ -3343,7 +3346,8 @@ runners:
 An instance registers with a name, the tags it serves and a `concurrency`,
 then long-polls for claims. It matches an agent with `runner: workers` or an
 agent whose `runnerTags` are all among its announced tags; among matches the
-oldest run wins, exactly as for static runners. Adding a domain needs a
+oldest run wins, exactly as for static runners, and among idle matching
+instances the one that claimed least recently gets it. Adding a domain needs a
 restart; adding an instance or a tag never does.
 
 Every wait is bounded: an instance silent for `heartbeatTimeoutSec` is

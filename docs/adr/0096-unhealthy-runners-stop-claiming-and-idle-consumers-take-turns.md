@@ -47,17 +47,25 @@ Chosen option: **a runner self-check, plus a least-recently-claimed handoff**.
    ignored: the check is about the spawn mechanism.
 2. **Part 2, the claim queue.** A run that arrives while several consumers are
    idle goes to the one that claimed least recently, instead of to whichever
-   woke first. Idle instances take turns, so a broken one cannot win every
-   race.
+   woke first; ties go to the oldest waiter. A run handed to a parked poll
+   counts as that consumer's claim at once, so an instance with several
+   parked polls does not take a whole burst. Idle instances take turns, so a
+   broken one cannot win every race.
 
 ### Consequences
 
 - Good: a broken instance is out within one claim.
 - Bad: a host without `/bin/sh`, or with a full disk, crash-loops under its
   supervisor instead of staying up and failing runs.
+- Good: static runners (local, ssh, kubernetes) whose tags match one run now
+  take turns too.
 - Bad: least-recently-claimed hands a broken instance about 1/(N+1) of runs
-  while N healthy instances are idle, and every run that arrives while they are
-  busy. It limits the damage; Part 1 removes the cause.
+  while N healthy instances are idle, whatever its concurrency, and every run
+  that arrives while they are busy. It limits the damage; Part 1 removes the
+  cause.
+- Bad: a poll that is handed a run and then cancelled before it claims still
+  marks its consumer as recently claimed; the run itself goes to the next
+  parked match.
 
 ## Pros and Cons of the Options
 
@@ -81,8 +89,10 @@ Chosen option: **a runner self-check, plus a least-recently-claimed handoff**.
 ### Wake-all race or oldest waiter
 
 - Bad: a wake-all race favours the fastest, which is the instance that fails
-  fastest. Oldest waiter is unfair across reconnects.
+  fastest. The oldest waiter is no fairer: a waiter's age resets on every 30 s
+  long-poll, so poll timing decides the order, not who last got work.
 
 ## More Information
 
 - Issue #73. Threat model: [ADR-0047](0047-security-by-design-and-threat-model.md).
+  Claim queue and pull runners: [ADR-0066](0066-external-pull-runners-and-unified-claim-queue.md).
