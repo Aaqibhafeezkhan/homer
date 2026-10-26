@@ -2390,7 +2390,8 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
             concurrency); a silent instance is dropped and its runs fail. Admins can see every configured runner, its
             live instances and pending claims via <code>GET /api/v1/runners</code> and <code>GET /api/v1/runners/queue</code>.
             The runner makes its JVM non-dumpable at startup, so a run sharing its user cannot read the domain token out of
-            <code>/proc</code>.</p>
+            <code>/proc</code>. An instance that cannot start processes or write its root stops claiming, deregisters and
+            exits <code>3</code> for its supervisor to restart.</p>
           <pre><code>runners:
   workers: !&lt;external&gt;
     token: "@SYSENV:HOMER_WORKERS_TOKEN"
