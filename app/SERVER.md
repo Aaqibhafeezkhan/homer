@@ -3487,7 +3487,10 @@ Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A
 result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance
 posted or gave up posting for that stream — a chunk whose post was abandoned after its
 retries is counted too, so a lost chunk shows up as a short count and never as a complete
-one; both fields are optional, so a result from an
+one. The one exception: a chunk still unsent when the instance's bounded post-exit drain
+expires is dropped with one warning naming the session, op, stream and count, and reaches
+no count — that result then matches what Homer holds while output is missing, and the
+instance's log is the only trace. Both fields are optional, so a result from an
 older runner binary omits them. When one is present and ahead of the chunks Homer has
 received, Homer waits once, briefly, for the rest and then fails the step with
 `output incomplete on <stream>` instead of running on truncated output.
