@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
+
 ### Console
 
 - **Fixed: console sign-in on a first visit** — A reader who opens a console page without a session gets a neutral "Sign in to continue" prompt instead of "session expired", opens on the Token form when the deployment offers bearer sign-in, and returns to the page they asked for after signing in; a bearer session that really expired — even one already dead when the page loads — still says so, and a cookie session that expires mid-use does too.
