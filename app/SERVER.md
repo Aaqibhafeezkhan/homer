@@ -3490,6 +3490,10 @@ older runner binary omits them. When one is present and ahead of the chunks Home
 received, Homer waits once, briefly, for the rest and then fails the step with
 `output incomplete on <stream>` instead of running on truncated output.
 
+Both ends of this protocol are upgraded independently, so every body it carries is
+decoded with unknown keys ignored: an instance newer than the server it reports to is
+read for the fields this server knows, never refused as a malformed body.
+
 **Nested runs hold a permit.** A run holds its runner's permit for its whole
 duration, not just while it is opening the session. If `concurrency` is set on
 a runner, a `RunAgent` child targeting the same runner, or a `runnerCmd` step

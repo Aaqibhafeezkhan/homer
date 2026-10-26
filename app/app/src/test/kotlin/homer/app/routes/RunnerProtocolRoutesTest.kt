@@ -159,6 +159,16 @@ class RunnerProtocolRoutesTest {
         }
 
     @Test
+    fun `a register body from a newer instance is accepted, not a 400`() =
+        testApplication {
+            mount()
+            // The instance and the server are upgraded independently: a key this binary does not
+            // know must not refuse the registration the instance carried here (ADR-0066).
+            val r = register(body = """{"name":"host-1","futureField":true}""")
+            assertEquals(HttpStatusCode.Created, r.status)
+        }
+
+    @Test
     fun `register validates tags and concurrency with 422 and the instance bound with 429`() =
         testApplication {
             mount()
@@ -465,7 +475,9 @@ class RunnerProtocolRoutesTest {
                     client.post("/api/v1/runner/sessions/${claimed.sessionId}/next") {
                         header(HttpHeaders.Authorization, "Bearer workers-token")
                         contentType(ContentType.Application.Json)
-                        setBody(apiJson.encodeToString(NextRequest.serializer(), NextRequest(OpResult(op.opId, root = "/r/7"))))
+                        // `future` stands for a field an instance newer than this server sends:
+                        // the result it carried here must still reach the run (ADR-0066).
+                        setBody("""{"completed":{"opId":"${op.opId}","root":"/r/7","future":1}}""")
                     }
                 assertEquals(HttpStatusCode.NoContent, afterResult.status, "nothing else queued yet")
                 assertEquals("/r/7/workdir", overrides.await()[EnvConstants.WORK_DIR])

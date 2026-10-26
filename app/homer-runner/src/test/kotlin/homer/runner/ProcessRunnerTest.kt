@@ -139,8 +139,8 @@ class ProcessRunnerTest {
     fun `a grandchild holding the pipe open does not stretch await past the op deadline`() =
         runBlocking(Dispatchers.Default) {
             // The shell exits at once, while the sleep it backgrounded still holds the stream's
-            // write end; the op's budget is minutes, so a drain that waited on that grandchild
-            // rather than on the stream would outlive this test's own bound instead of returning.
+            // write end; the op's budget is minutes, so a drain that waited on the grandchild —
+            // there is no EOF to wait for until it dies — would outlive this test's own bound.
             withTimeout(20.seconds) {
                 val handle =
                     ProcessRunner.start(listOf("sh", "-c", "echo MARKER; sleep 30 & echo pid=$!"), tmp, env, null)
@@ -148,14 +148,14 @@ class ProcessRunnerTest {
                 val exit = handle.await(10.minutes) { _, _, bytes -> out.append(bytes.decodeToString()) }
                 val grandchild = grandchildOf(out.toString())
                 // The premise, checked rather than assumed: the write end is still held by a live
-                // grandchild, so the drain above ended on the stream, not on the grandchild's exit.
+                // grandchild, so the reads the drain shed are parked on it, not finished.
                 assertTrue(grandchild.isAlive, "the grandchild must outlive the shell that spawned it")
                 grandchild.destroyForcibly()
 
                 assertEquals(0, exit.code)
                 assertFalse(exit.timedOut, "the shell exited on its own; a grandchild must not turn that into a timeout")
                 assertTrue("MARKER" in out.toString(), "the tail is posted before the exit is reported; got: $out")
-                assertEquals(emptySet(), exit.cutStreams, "the drain is not shed on a grandchild's account")
+                assertEquals(emptySet(), exit.cutStreams, "a parked read has nothing unsent, so no stream is cut")
             }
         }
 

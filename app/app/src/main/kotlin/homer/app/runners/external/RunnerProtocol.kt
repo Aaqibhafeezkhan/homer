@@ -4,6 +4,7 @@ import homer.app.models.RUNNER_LONG_POLL_SEC
 import homer.app.runners.DownloadMode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.security.SecureRandom
 import java.util.HexFormat
 
@@ -34,6 +35,15 @@ object RunnerProtocol {
         return HexFormat.of().formatHex(bytes)
     }
 }
+
+/**
+ * Wire format of the bodies this protocol carries. Deliberately not `apiJson`: that one is
+ * strict, so a key this binary does not know fails the whole body — and an instance and the
+ * Homer it reports to are upgraded independently, while every DTO here only ever gains
+ * optional fields. An unknown key is ignored instead of answered with a 400. The instance's
+ * own client reads with the same rule (`HomerClient`), so both ends of one wire agree.
+ */
+internal val runnerProtocolJson = Json { ignoreUnknownKeys = true }
 
 @Serializable
 data class RegisterInstanceRequest(

@@ -2,7 +2,6 @@ package homer.app.runners.external
 
 import homer.app.apiJson
 import homer.app.runners.DownloadMode
-import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -64,11 +63,12 @@ class RunnerProtocolTest {
         val body = apiJson.encodeToString(NextRequest.serializer(), NextRequest(counted))
         assertEquals(counted, apiJson.decodeFromString(NextRequest.serializer(), body).completed)
 
-        // And a payload carrying a field this binary does not know still decodes in the
-        // runner's own client, which reads with `ignoreUnknownKeys` (HomerClient): a newer
-        // Homer adding a field must not break an older instance.
-        val lenient = Json { ignoreUnknownKeys = true }
-        assertEquals("op-3", lenient.decodeFromString(OpResult.serializer(), """{"opId":"op-3","future":1}""").opId)
+        // And a payload carrying a field this binary does not know is ignored by the Json the
+        // runner routes decode with, so an instance newer than this server is not a 400.
+        assertEquals(
+            "op-3",
+            runnerProtocolJson.decodeFromString(OpResult.serializer(), """{"opId":"op-3","future":1}""").opId,
+        )
     }
 
     @Test
