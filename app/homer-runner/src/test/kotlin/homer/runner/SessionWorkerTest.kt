@@ -258,6 +258,7 @@ class SessionWorkerTest {
                 assertTrue(cut.any { "stderr" in it }, "$cut")
                 cut.forEach { message ->
                     assertTrue("sess" in message && "c1" in message, "session and op are named: $message")
+                    assertTrue("after 0 chunk(s)" in message, "the count is named: $message")
                     assertFalse("SECRET-VALUE" in message, "no chunk bytes may reach the log: $message")
                 }
                 assertEquals(0L, r.stdoutChunks, "a chunk the sink never took back is not reported as handed over")
