@@ -302,7 +302,25 @@ nonce its own scripts.
   (cookie/bearer) is shown **only** when `appConfig.auth.allowBearer` is on
   (`CONSOLE_ALLOW_BEARER=true`); otherwise the console is cookie-only and any
   `?mode=bearer` in the URL is ignored (bearer tokens in `localStorage` are
-  XSS-exfiltratable — see the 2026-07-12 review, H3).
+  XSS-exfiltratable — see the 2026-07-12 review, H3). With bearer allowed the
+  form also **opens** in Token mode (URL `?mode=`, then the active instance's
+  saved mode, win over that default), and `seedDefault` seeds the default
+  instance `mode: 'bearer'` for the same reason — a bearer-only backend cannot
+  accept a password.
+- The **return path** is the `next` parameter both redirects into `/login` put on
+  the URL (the dashboard layout's anon push and the auth-expired handler).
+  `safeReturnPath` (`lib/auth/return-path.ts`) accepts a same-origin relative
+  console path and nothing else — no scheme, no `//` or `/\`, no control
+  character, no `?`/`#`, no `/login` — and the login form re-checks it at the
+  point of use, right before `router.push`, so an attacker-crafted `next` cannot
+  become an open redirect (ADR-0047).
+- `?expired=1` — and with it the "Your session expired" banner — is emitted only
+  by the auth-expired handler, and only when the rejected request carried a
+  session: a bearer token still in the active instance's storage, or a mount that
+  was ever `authed` (the cookie itself is not client-readable, so mid-use is the
+  only way a cookie expiry is recognisable). A session-less first visit gets the
+  neutral "Sign in to continue" prompt instead: a 401 on the global SSE streams
+  (`sse.ts` is not `AUTH_BUS_EXEMPT`) is not an expiry.
 - Dashboard layout redirects to `/login` when
   `appConfig.auth.enabled && !isAuthenticated`.
 - `appConfig.auth.enabled === false` bypasses everything and sets

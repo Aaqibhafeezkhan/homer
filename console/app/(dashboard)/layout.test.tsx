@@ -5,17 +5,25 @@ const push = vi.fn();
 const authState = vi.hoisted(() => ({ status: 'authed' as string }));
 const expiredHandled = vi.hoisted(() => ({ current: false }));
 const appConfigMock = vi.hoisted(() => ({ auth: { enabled: true } }));
+const pathname = vi.hoisted(() => vi.fn(() => '/processes'));
 const streams = vi.hoisted(() => ({
   useProcessStatusStream: vi.fn(),
   useAgentReloadStream: vi.fn(),
 }));
 const markInAppNavigation = vi.hoisted(() => vi.fn());
+const expiredHandlerArgs = vi.hoisted(() => ({ status: undefined as string | undefined }));
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push }),
+  usePathname: () => pathname(),
+}));
 vi.mock('@/lib/auth/auth-context', () => ({ useAuth: () => ({ status: authState.status }) }));
 vi.mock('@/lib/config/app-config', () => ({ appConfig: appConfigMock }));
 vi.mock('@/lib/auth/use-auth-expired-handler', () => ({
-  useAuthExpiredHandler: () => expiredHandled,
+  useAuthExpiredHandler: (status: string) => {
+    expiredHandlerArgs.status = status;
+    return expiredHandled;
+  },
 }));
 vi.mock('@/lib/api/streams', () => streams);
 vi.mock('@/lib/hooks/use-mark-in-app-navigation', () => ({
@@ -49,6 +57,8 @@ describe('DashboardLayout', () => {
     authState.status = 'authed';
     expiredHandled.current = false;
     appConfigMock.auth.enabled = true;
+    pathname.mockReset().mockReturnValue('/processes');
+    expiredHandlerArgs.status = undefined;
   });
 
   it('renders the shell around the page once authenticated', () => {
@@ -80,8 +90,28 @@ describe('DashboardLayout', () => {
   it('redirects an anonymous user to /login and renders nothing', () => {
     authState.status = 'anon';
     const { container } = renderLayout();
-    expect(push).toHaveBeenCalledWith('/login');
+    // The requested path rides along so sign-in can return to it; no `expired`
+    // marker, because an anonymous reader never had a session to expire.
+    expect(push).toHaveBeenCalledWith('/login?next=%2Fprocesses');
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('carries the requested path of a nested dashboard route', () => {
+    authState.status = 'anon';
+    pathname.mockReturnValue('/processes/1');
+    renderLayout();
+    expect(push).toHaveBeenCalledWith('/login?next=%2Fprocesses%2F1');
+  });
+
+  it('hands the expiry handler the authed status so it can latch a real session', () => {
+    renderLayout();
+    expect(expiredHandlerArgs.status).toBe('authed');
+  });
+
+  it('hands the expiry handler the anon status of a session-less reader', () => {
+    authState.status = 'anon';
+    renderLayout();
+    expect(expiredHandlerArgs.status).toBe('anon');
   });
 
   it('does not push /login again once expiry recovery already redirected', () => {

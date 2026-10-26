@@ -13,6 +13,14 @@ const appConfigMock = vi.hoisted(() => ({
   api: { baseUrl: 'http://localhost:8080', timeout: 30000, allowedOrigins: [] as string[] },
   auth: { enabled: false, mode: 'cookie', allowBearer: false, tokenKey: 'homer_auth_token' },
 }));
+// Mutable per-test active instance; the seeded default is cookie-mode unless the
+// deployment offers bearer sign-in (see lib/instances/store.ts seedDefault).
+const instancesMock = vi.hoisted(() => ({
+  instances: [
+    { id: 'default', label: 'Default', baseUrl: 'http://localhost:8080', mode: 'cookie' },
+  ] as { id: string; label: string; baseUrl: string; mode: 'cookie' | 'bearer' }[],
+  activeInstanceId: 'default',
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
@@ -21,14 +29,7 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/config/app-config', () => ({ appConfig: appConfigMock }));
 vi.mock('@/lib/auth/auth-context', () => ({ useAuth: () => ({ login }) }));
 vi.mock('@/lib/instances/use-instances', () => ({
-  useInstances: () => ({
-    instances: [
-      { id: 'default', label: 'Default', baseUrl: 'http://localhost:8080', mode: 'cookie' },
-    ],
-    activeInstanceId: 'default',
-    upsertInstance,
-    setActiveInstance,
-  }),
+  useInstances: () => ({ ...instancesMock, upsertInstance, setActiveInstance }),
 }));
 
 import LoginPage from './page';
@@ -42,6 +43,20 @@ function renderPage() {
   );
 }
 
+/** The active instance as `seedDefault` leaves it for the given deployment. */
+function setActiveInstanceMode(mode: 'cookie' | 'bearer') {
+  instancesMock.instances = [
+    { id: 'default', label: 'Default', baseUrl: 'http://localhost:8080', mode },
+  ];
+}
+
+/** Fill in and submit the sign-in form. */
+async function signIn(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText(/username/i), 'alice');
+  await user.type(screen.getByLabelText(/^password$/i), 'pw');
+  await user.click(screen.getByRole('button', { name: /^login$/i }));
+}
+
 describe('LoginPage', () => {
   beforeEach(() => {
     login.mockReset();
@@ -51,6 +66,7 @@ describe('LoginPage', () => {
     searchParamsMock.mockReturnValue(new URLSearchParams(''));
     appConfigMock.auth.allowBearer = false;
     appConfigMock.api.allowedOrigins = [];
+    setActiveInstanceMode('cookie');
   });
 
   it('folds the endpoint by default, summarizing the active instance host', async () => {
@@ -293,5 +309,96 @@ describe('LoginPage', () => {
 
     expect(login).toHaveBeenCalledWith('alice', 'pw');
     await waitFor(() => expect(push).toHaveBeenCalledWith('/processes'));
+  });
+
+  it('returns to the requested console path after a successful sign-in', async () => {
+    searchParamsMock.mockReturnValue(new URLSearchParams({ next: '/processes/1' }));
+    login.mockResolvedValue('ok');
+    const user = userEvent.setup();
+    renderPage();
+
+    await signIn(user);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/processes/1'));
+  });
+
+  it.each([
+    ['an absolute URL', 'https://evil.test/x'],
+    ['a protocol-relative URL', '//evil.test'],
+    ['a login-loop target', '/login'],
+  ])('refuses %s as a return path and lands on /processes', async (_label, next) => {
+    searchParamsMock.mockReturnValue(new URLSearchParams({ next }));
+    login.mockResolvedValue('ok');
+    const user = userEvent.setup();
+    renderPage();
+
+    await signIn(user);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/processes'));
+  });
+
+  it('shows a neutral prompt to a reader who never had a session', () => {
+    searchParamsMock.mockReturnValue(new URLSearchParams({ next: '/processes/1' }));
+    renderPage();
+    expect(screen.getByRole('status')).toHaveTextContent(/sign in to continue/i);
+    expect(screen.queryByText(/session expired/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the expired banner, and no neutral prompt, for a real expiry', () => {
+    searchParamsMock.mockReturnValue(
+      new URLSearchParams({ next: '/processes/1', expired: '1' }),
+    );
+    renderPage();
+    expect(screen.getByRole('alert')).toHaveTextContent(/session expired/i);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('shows no prompt at all when the reader arrived at /login directly', () => {
+    renderPage();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('lets a forged expired flag change the wording only', async () => {
+    searchParamsMock.mockReturnValue(new URLSearchParams('expired=1'));
+    login.mockResolvedValue('ok');
+    const user = userEvent.setup();
+    renderPage();
+
+    // Wording only: the mode and the post-login destination are untouched.
+    expect(screen.getByRole('alert')).toHaveTextContent(/session expired/i);
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+
+    await signIn(user);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/processes'));
+  });
+
+  it('preselects Token when bearer is the deployment default', () => {
+    appConfigMock.auth.allowBearer = true;
+    // No saved mode resolves (no active instance), so the `?? 'bearer'`
+    // deployment default alone decides — a saved mode has the sibling test
+    // above.
+    instancesMock.instances = [];
+    renderPage();
+    expect(screen.getByRole('radio', { name: /token/i })).toBeChecked();
+    expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+  });
+
+  it('lets a saved cookie instance win over the bearer default', () => {
+    appConfigMock.auth.allowBearer = true;
+    setActiveInstanceMode('cookie');
+    renderPage();
+    expect(screen.getByRole('radio', { name: /password/i })).toBeChecked();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+  });
+
+  it('lets an explicit ?mode= param win over the bearer default', () => {
+    appConfigMock.auth.allowBearer = true;
+    setActiveInstanceMode('bearer');
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=cookie'));
+    renderPage();
+    expect(screen.getByRole('radio', { name: /password/i })).toBeChecked();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
   });
 });
