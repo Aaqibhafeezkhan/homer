@@ -10,5 +10,4 @@ maxParallelRuns: 1 # Int: at most one run executes at a time
 onMaxParallelRuns: WAIT # OnMaxParallelRunsStrategy: WAIT queues a surplus run, REJECT fails it
 maxQueuedRuns: 2 # Int?: under WAIT, fail a surplus run once 2 runs are queued
 cooldown:
-  minInterval: 1m # String?: minimum time since the previous run started
   afterFailure: 15m # String?: minimum time since a FAILED run ended

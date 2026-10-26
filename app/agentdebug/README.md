@@ -189,13 +189,14 @@ Agent-loading logs (`[main] INFO agentdebug - ...`) go to stderr; append
 ### list
 Against the Quick Start config:
 ```
-Available agents (11):
+Available agents (12):
   body-input           - Demonstrates inputs sourced from JSON request body (1 command)
   header-input         - Demonstrates inputs sourced from request headers (1 command)
   hello                - A sample greeting agent that demonstrates commands and query parameters (2 commands)
   jsonpath             (1 command)
   langgraph_demo       - Demonstrates the !<langgraph> command launching the Python homer_langgraph runtime (1 command)
   langgraph_demo_check - Check sub-agent the langgraph_demo graph fans out to; always reports ok (1 command)
+  limits               - Demonstrates concurrency limits and cooldown with a slow command (1 command)
   mcp-greet            - Demonstrates exposing an agent as an MCP tool on /mcp (1 command)
   quickstart           - The Quick start agent: no LLM credentials, one operator question, and a
 result that follows the answer.
