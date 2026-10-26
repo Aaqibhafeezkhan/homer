@@ -74,6 +74,19 @@ is for consumers and diagnostics only. Tests that construct a
 (or a real scope under `runBlocking`), otherwise `openSession` waits for
 the full claim TTL.
 
+A consumer with no match parks in `take()`. A new request wakes at most
+one parked consumer: the matching one that claimed least recently (ties:
+the oldest waiter), and reserves the request for it, so a fresh `take()`
+skips it. The reservation already counts as that consumer's claim, so an
+instance with several parked polls does not take a whole burst. A woken consumer that leaves without claiming it (cancelled,
+timed out, or no longer matching) hands the reservation to the next
+parked match. Claim records are one entry per registered consumer,
+removed on `unregisterConsumer` (ADR-0096).
+
+- **Constraint:** the claim CAS (`tryClaim()`) stays in the taker's own
+  `take()`, never in `submit`: the claim route's long-poll relies on
+  nothing suspending after the claim inside `take()`.
+
 An `!<external>` domain (`ExternalRunnerDomain`) is a `Runner` only for the
 facets `QueuedRunner` reads; its sessions are created by the claim route
 (`RunnerProtocolRoutes`) when an instance's long-poll takes a request. An

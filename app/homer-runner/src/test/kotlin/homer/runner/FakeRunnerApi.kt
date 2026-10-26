@@ -87,8 +87,13 @@ class FakeRunnerApi : RunnerApi {
     val deregisterFailures = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
     val deregisterCalls = AtomicInteger(0)
 
+    /** Suspends `deregister` before it records anything, like a real HTTP call; cancelled calls record nothing. */
+    @Volatile
+    var deregisterDelayMs = 0L
+
     override suspend fun deregister(instanceId: String) {
         deregisterCalls.incrementAndGet()
+        if (deregisterDelayMs > 0) delay(deregisterDelayMs)
         deregisterFailures.poll()?.let { throw it }
         deregistrations += instanceId
     }

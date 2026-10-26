@@ -964,7 +964,7 @@ artifact next to `homer-app` and `homer-console`:
 
 ```bash
 docker build --target homer-runner -t homer-runner -f app/Dockerfile .
-docker run -d --name homer-runner \
+docker run -d --name homer-runner --restart on-failure \
   -e HOMER_RUNNER_URL=https://homer.internal \
   -e HOMER_RUNNER_TOKEN="$HOMER_WORKERS_TOKEN" \
   -e HOMER_RUNNER_TAGS=linux,gpu \
@@ -972,6 +972,11 @@ docker run -d --name homer-runner \
   -e HOMER_RUNNER_NAME="$(hostname)" \
   homer-runner
 ```
+
+A runner that can no longer start processes or write its root exits `3`;
+`--restart on-failure` brings it back (see `app/SERVER.md`). It also restarts
+on exit `1` and `2`, so a bad token or a disallowed tag loops with Docker's
+restart backoff until the configuration is fixed.
 
 The image is deliberately small (`bash`, `curl`, `git`, `tar`, `gzip`,
 `util-linux` for `setsid`, a JRE). An agent that needs `claude`, `node`,

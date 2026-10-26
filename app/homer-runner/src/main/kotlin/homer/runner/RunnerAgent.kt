@@ -3,6 +3,9 @@ package homer.runner
 import homer.app.runners.external.ClaimResponse
 import homer.app.runners.external.RegisterInstanceRequest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -10,12 +13,14 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -48,7 +53,9 @@ class Backoff(
  * on 4xx), run `concurrency` claim loops, hand each claim to a [SessionWorker],
  * and on [drain] stop claiming, deregister and give in-flight sessions
  * `drainTimeout` to finish. A `404` on `claim` means Homer dropped the instance
- * (heartbeat expiry); the agent registers again under a new id.
+ * (heartbeat expiry); the agent registers again under a new id. A host that fails
+ * [healthCheck] never registers or, once running, stops claiming, drains and ends [run]
+ * with [RunnerUnhealthyException].
  */
 class RunnerAgent(
     private val api: RunnerApi,
@@ -58,6 +65,7 @@ class RunnerAgent(
         Duration,
     ) -> SessionWorker = { claim, heartbeat -> SessionWorker(api, claim, options.root, heartbeat) },
     private val backoff: Backoff = Backoff(),
+    private val healthCheck: (Path) -> Unit = RunnerHealth::check,
 ) {
     @Volatile
     var instanceId: String? = null
@@ -67,22 +75,30 @@ class RunnerAgent(
     private var heartbeatTimeout: Duration = 60.seconds
 
     private val draining = AtomicBoolean(false)
+    private val drained = CompletableDeferred<Unit>()
     private val active = AtomicInteger(0)
     private val loops = CopyOnWriteArrayList<ClaimLoopHandle>()
     private val registerLock = Mutex()
+    private val unhealthy = AtomicReference<RunnerUnhealthyException?>(null)
 
     val activeSessions: Int get() = active.get()
 
     suspend fun run() =
         coroutineScope {
+            checkHealth()
             register()
             repeat(options.concurrency) { index ->
                 val flag = AtomicBoolean(false)
-                loops += ClaimLoopHandle(launch { claimLoop(index, flag) }, flag)
+                loops += ClaimLoopHandle(launch { claimLoop(index, flag, this@coroutineScope) }, flag)
             }
             loops.map { it.job }.joinAll()
-            logger.info("homer-runner drained; exiting")
+            if (unhealthy.get() == null) logger.info("homer-runner drained; exiting")
+        }.also {
+            // Outside the scope: throwing inside would cancel the drain child still deregistering.
+            unhealthy.get()?.let { throw it }
         }
+
+    private suspend fun checkHealth() = withContext(Dispatchers.IO) { healthCheck(options.root) }
 
     private suspend fun register() {
         var attempt = 0
@@ -120,10 +136,20 @@ class RunnerAgent(
     private suspend fun claimLoop(
         index: Int,
         flag: AtomicBoolean,
+        scope: CoroutineScope,
     ) {
         var attempt = 0
         while (!draining.get()) {
             val id = instanceId ?: return
+            try {
+                checkHealth()
+            } catch (e: RunnerUnhealthyException) {
+                // Not drain() inline: it cancels idle loop jobs, this one included.
+                unhealthy.compareAndSet(null, e)
+                logger.error("Host is unhealthy, no more claims: {}", e.message)
+                scope.launch { drain() }
+                return
+            }
             val claim =
                 try {
                     api.claim(id).also { attempt = 0 }
@@ -181,9 +207,20 @@ class RunnerAgent(
             register()
         }
 
-    /** SIGTERM path. Safe to call more than once and from a shutdown hook. */
+    /**
+     * SIGTERM path. Safe to call more than once and from a shutdown hook: a later call waits for
+     * the first, so a SIGTERM during a drain a failed check started still gets `drainTimeout`.
+     */
     suspend fun drain() {
-        if (!draining.compareAndSet(false, true)) return
+        if (!draining.compareAndSet(false, true)) return drained.await()
+        try {
+            drainOnce()
+        } finally {
+            drained.complete(Unit)
+        }
+    }
+
+    private suspend fun drainOnce() {
         logger.info("Draining: no new claims; {} session(s) in flight, waiting up to {}", active.get(), options.drainTimeout)
         instanceId?.let { id ->
             // Bounded independently of drainTimeout (which could be much longer, or even

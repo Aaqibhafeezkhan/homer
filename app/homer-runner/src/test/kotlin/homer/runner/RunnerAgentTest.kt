@@ -13,8 +13,10 @@ import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.io.IOException
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -113,6 +115,90 @@ class RunnerAgentTest {
             run.await()
             assertEquals(0, agent.activeSessions)
             assertTrue(api.claims.tryReceive().isSuccess, "the claim offered after drain began was never taken")
+        }
+
+    @Test
+    fun `an unhealthy host at startup never registers`() =
+        live {
+            val agent =
+                RunnerAgent(
+                    api,
+                    options(),
+                    scriptedWorker(),
+                    fastBackoff,
+                ) { throw RunnerUnhealthyException("cannot start a process: boom") }
+            assertThrows<RunnerUnhealthyException> { agent.run() }
+            assertEquals(emptyList(), api.registrations.toList())
+        }
+
+    @Test
+    fun `a failed check before a claim stops claiming, deregisters and ends run unhealthy`() =
+        live {
+            api.deregisterDelayMs = 200 // a real deregister suspends; the rethrow must not cancel it
+            val checks = AtomicInteger(0)
+            // passes at startup and before the first claim, fails before the second
+            val agent =
+                RunnerAgent(api, options(), scriptedWorker(), fastBackoff) {
+                    if (checks.incrementAndGet() > 2) throw RunnerUnhealthyException("cannot start a process: boom")
+                }
+            api.claims.send(null) // first claim answers 204
+            assertThrows<RunnerUnhealthyException> { agent.run() }
+            assertEquals(1, api.claimCalls.get())
+            assertEquals(listOf("inst-1"), api.deregistrations.toList())
+        }
+
+    @Test
+    fun `a session in flight on another loop finishes before an unhealthy run ends`() =
+        live {
+            val failing = AtomicBoolean(false)
+            val agent =
+                RunnerAgent(api, options(concurrency = 2), scriptedWorker(), fastBackoff) {
+                    if (failing.get()) throw RunnerUnhealthyException("cannot start a process: boom")
+                }
+            val run = async { runCatching { agent.run() } }
+            delay(100)
+            api.claims.send(ClaimResponse("s1", 1, "a", emptyList()))
+            delay(300)
+            assertEquals(1, agent.activeSessions, "one loop holds the session")
+
+            failing.set(true) // the other loop's next check fails
+            delay(300)
+            assertEquals(listOf("inst-1"), api.deregistrations.toList())
+            assertFalse(run.isCompleted, "run() waits for the in-flight session")
+
+            api.ops.send(
+                homer.app.runners.external.RunnerOp
+                    .Close("c1", "done"),
+            )
+            assertTrue(run.await().exceptionOrNull() is RunnerUnhealthyException)
+            assertEquals(0, agent.activeSessions)
+        }
+
+    @Test
+    fun `a second drain waits for the drain a failed check started`() =
+        live {
+            val failing = AtomicBoolean(false)
+            val agent =
+                RunnerAgent(api, options(concurrency = 2), scriptedWorker(), fastBackoff) {
+                    if (failing.get()) throw RunnerUnhealthyException("cannot start a process: boom")
+                }
+            val run = async { runCatching { agent.run() } }
+            api.claims.send(ClaimResponse("s1", 1, "a", emptyList()))
+            awaitUntil { agent.activeSessions == 1 }
+            failing.set(true) // the other loop's next check fails and starts the drain
+            awaitUntil { api.deregistrations.isNotEmpty() }
+
+            val second = async { agent.drain() } // the shutdown hook's drain on SIGTERM
+            delay(300)
+            assertFalse(second.isCompleted, "a second drain returned while a session was in flight")
+
+            api.ops.send(
+                homer.app.runners.external.RunnerOp
+                    .Close("c1", "done"),
+            )
+            second.await()
+            assertEquals(0, agent.activeSessions)
+            assertTrue(run.await().exceptionOrNull() is RunnerUnhealthyException)
         }
 
     @Test

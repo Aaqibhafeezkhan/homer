@@ -6,6 +6,8 @@
 
 - **Fixed: an external runner dropped the end of a step's output** — A step on a pull runner now finishes sending its output before reporting its exit code, or gives up on a stalled drain with one logged warning, and output that is still incomplete fails the step instead of passing as truncated.
 - **Fixed: runner-protocol bodies refused on unknown fields** — A body carrying a field this Homer does not know is decoded for what it knows instead of answered with a 400, so mixed-version deployments no longer lose an op result to a newer peer's extra field.
+- **Fixed: homer-runner kept claiming runs it could not start** — Before registering and before each claim the runner checks that it can start a process and write under `--root`; when it cannot, it stops claiming, deregisters, lets in-flight runs finish and exits 3 for its supervisor to restart. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
+- **Fixed: one fast-failing runner instance took most runs** — A new run goes to the idle matching runner that claimed least recently, instead of to whichever waiting poll wins a race, so an instance that fails every run at once no longer takes every run. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
 - **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
 
 ### Console
