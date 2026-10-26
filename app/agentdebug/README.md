@@ -189,7 +189,7 @@ Agent-loading logs (`[main] INFO agentdebug - ...`) go to stderr; append
 ### list
 Against the Quick Start config:
 ```
-Available agents (11):
+Available agents (12):
   body-input           - Demonstrates inputs sourced from JSON request body (1 command)
   header-input         - Demonstrates inputs sourced from request headers (1 command)
   hello                - A sample greeting agent that demonstrates commands and query parameters (2 commands)
@@ -202,6 +202,7 @@ result that follows the answer.
  (5 commands)
   result               (5 commands)
   sleep                (1 command)
+  tagged-run           - Demonstrates subject tags resolved from inputs and one runtime tag key (1 command)
   when-example         - Demonstrates the `when:` predicate. Each command runs only if its predicate
 evaluates to true. Predicates use bash test syntax; exit 0 = true, 1 = false,
 ≥2 = eval error (fails the agent). Per-expression timeout is 5 s.
