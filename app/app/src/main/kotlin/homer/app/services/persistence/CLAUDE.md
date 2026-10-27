@@ -149,6 +149,7 @@ there and a row here (SQLite rule 1 in
 | 26 | prune indexes + paginated list filters for `dispatches`/`continuations` | [0021](../../../../../../../../../docs/adr/0021-ask-and-dispatch.md) |
 | 27 | `continuations.thread_id` + `continuations_thread_id` index (LangGraph `subs` thread lookup) | [0044](../../../../../../../../../docs/adr/0044-langgraph-resume-and-run-introspection.md) |
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
+| 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 
 ### Schema constraints
 
