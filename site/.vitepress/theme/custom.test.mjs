@@ -18,7 +18,7 @@ test('a code name in a table cell is never broken mid-word', () => {
 
 test('no rule lets a code name break at any character', () => {
   for (const { selector, body } of rules) {
-    assert.doesNotMatch(body, /overflow-wrap:\s*anywhere/, selector)
-    assert.doesNotMatch(body, /word-break:\s*break-all/, selector)
+    assert.doesNotMatch(body, /overflow-wrap:\s*(anywhere|break-word)/, selector)
+    assert.doesNotMatch(body, /word-break:\s*(break-all|break-word)/, selector)
   }
 })
