@@ -653,6 +653,7 @@ curl "http://localhost:8080/api/v1/status/12345"
   "id": 12345,
   "status": "WORKING",
   "agentName": "example-agent",
+  "group": "platform",
   "history": [
     {
       "timestamp": 1700000000,
@@ -700,6 +701,7 @@ The response includes:
 - **id**: Process ID
 - **status**: Current process status (CREATED, WORKING, FINISHED, FAILED, KILLED, UNKNOWN — set by startup reconciliation for runs interrupted by a server restart; terminal)
 - **agentName**: Name of the agent that was executed
+- **group**: The agent's current group label (optional; null when the agent is ungrouped or no longer loaded), resolved from the agent's current definition at read time
 - **history**: Complete audit trail of all status transitions with timestamps
 - **executions**: Detailed execution information for each command including timing, exit codes, output file paths, and error messages. `resultCode` is normally the command's exit code. Commands skipped by a `when` clause record `-1` with `skipped: true` and the skip reason in `errMsg`; a failed `when`-predicate evaluation records the predicate's exit code instead; a timed-out predicate records `-1` with the timeout message in `errMsg`. Error text on these entries is secret-redacted. Otherwise `-1` means no exit code was available (internal failure, or the run was aborted for exceeding the output cap). `kind` is the command's tag (`cmd`, `script`, `claude`, `codex`, `agent`, `langgraph`, `runnerCmd`); empty for runs recorded before 1.27. LLM harness commands (`claude`, `codex`) also carry `llmAccounting` — `{sessionId, costUsd, source, fallbackReason, usage}` — the CLI session id, the cost charged for that command, its source (`cli` | `session` | `none` — no cost figure was available from either), and, when the cost figure is degraded, why — a CLI fallback, an incomplete session figure (the endpoint had not ingested every call of the session), or a pending one (`session figure pending` — the step returned on the CLI figure and the session lookup is still settling in the background, replacing the record when it answers). `usage` is `{input, output, cacheRead, cacheWrite, reasoning}` token counts summed over every turn end of the winning attempt, or `null` when no turn end was seen. `llmAccounting` is `null` for non-LLM commands.
 - **currentCommand**: Label of the command currently executing, `null` if none

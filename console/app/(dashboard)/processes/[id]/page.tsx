@@ -49,22 +49,8 @@ import type { LangGraphRunStatus, ProcessInfo, ProcessListResponse } from '@/typ
 // `/processes?parent=<id>`. A root shows the whole Flow section instead.
 const CHILD_RUNS_SHOWN = 20;
 
-// The run's cost, from the cost ledger via the status API rather than parsed out
-// of cmd_N.out — so it is still here after the artifacts are purged.
-function CostMeta({ process }: { process: ProcessInfo }) {
-  if (!process.costUsd) return null;
-  return (
-    <span className="text-sm">
-      cost <span className="font-medium text-foreground">{formatCost(process.costUsd)}</span>{' '}
-      <span className="rounded border px-1 text-xs" title={costSourceTitle(process.costSource)}>
-        {costSourceLabel(process.costSource)}
-      </span>
-    </span>
-  );
-}
-
-// The agent link, cost, parent/root run links, Langfuse trace and tags under
-// the page title.
+// The agent link, group, cost, parent/root run links, Langfuse trace and tags
+// under the page title.
 function ProcessMeta({ process }: { process: ProcessInfo }) {
   return (
     <>
@@ -75,13 +61,20 @@ function ProcessMeta({ process }: { process: ProcessInfo }) {
         >
           {process.agentName}
         </Link>
-        {/* The agent's group, from the current definition; nothing for an ungrouped agent. */}
         {process.group && (
           <span className="text-sm">
             group <span className="font-medium text-foreground">{process.group}</span>
           </span>
         )}
-        <CostMeta process={process} />
+        {/* The run's cost, from the cost ledger via the status API, so it survives artifact purge. */}
+        {!!process.costUsd && (
+          <span className="text-sm">
+            cost <span className="font-medium text-foreground">{formatCost(process.costUsd)}</span>{' '}
+            <span className="rounded border px-1 text-xs" title={costSourceTitle(process.costSource)}>
+              {costSourceLabel(process.costSource)}
+            </span>
+          </span>
+        )}
         {process.parentProcessId != null && (
           <Link
             href={`/processes/${process.parentProcessId}`}

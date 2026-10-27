@@ -251,3 +251,66 @@ describe('AgentsPage group tabs', () => {
     expect(screen.getByText('orphan-agent')).toBeInTheDocument();
   });
 });
+
+describe('AgentsPage group tab value and URL mapping', () => {
+  beforeEach(() => {
+    replace.mockReset();
+    mockCan(false);
+    useReloadAgentsMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  });
+
+  function setupAgents(agents: { name: string; group: string }[]) {
+    useAgentsMock.mockReturnValue({ data: { agents }, isLoading: false, error: null });
+  }
+
+  function tabNames() {
+    return screen.getAllByRole('tab').map((tab) => tab.textContent);
+  }
+
+  it('keeps a group literally named "all" selectable and distinct from the All tab', async () => {
+    setupAgents([{ name: 'all-agent', group: 'all' }]);
+    const user = userEvent.setup();
+    renderWithUrl('');
+    expect(tabNames()).toEqual(['All', 'all']);
+    await user.click(screen.getByRole('tab', { name: 'all' }));
+    expect(replace).toHaveBeenCalledWith('/agents?group=all', { scroll: false });
+  });
+
+  it('selects the "all" group tab from the URL param, not the All tab', () => {
+    setupAgents([{ name: 'all-agent', group: 'all' }]);
+    renderWithUrl('group=all');
+    expect(screen.getByRole('tab', { name: 'all' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('all-agent')).toBeInTheDocument();
+  });
+
+  it('keeps the tab active across the URL round-trip of a group with a space and a slash', async () => {
+    const group = 'Platform / Billing';
+    setupAgents([{ name: 'pb-agent', group }]);
+    const user = userEvent.setup();
+    renderWithUrl('');
+    await user.click(screen.getByRole('tab', { name: group }));
+    // URLSearchParams.toString() encodes the space as `+` and the slash as %2F.
+    expect(replace).toHaveBeenCalledWith('/agents?group=Platform+%2F+Billing', { scroll: false });
+  });
+
+  it('selects a group with a space and a slash from the URL param', () => {
+    const group = 'Platform / Billing';
+    setupAgents([{ name: 'pb-agent', group }]);
+    renderWithUrl(`group=${encodeURIComponent(group)}`);
+    expect(screen.getByRole('tab', { name: group })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('pb-agent')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('matches the group param exactly when two groups differ only by case', () => {
+    setupAgents([
+      { name: 'upper-agent', group: 'Platform' },
+      { name: 'lower-agent', group: 'platform' },
+    ]);
+    renderWithUrl('group=platform');
+    expect(screen.getByRole('tab', { name: 'platform' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('lower-agent')).toBeInTheDocument();
+    expect(screen.queryByText('upper-agent')).not.toBeInTheDocument();
+  });
+});

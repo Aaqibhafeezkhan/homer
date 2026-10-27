@@ -929,6 +929,9 @@ class ApplicationTest {
             val single = apiJson.decodeFromString<ProcessInfoResponse>(client.get("/api/v1/status/$grouped").bodyAsText())
             assertEquals("Platform", single.group)
 
+            val goneSingle = apiJson.decodeFromString<ProcessInfoResponse>(client.get("/api/v1/status/$gone").bodyAsText())
+            assertNull(goneSingle.group)
+
             val listed = apiJson.decodeFromString<ProcessListResponse>(client.get("/api/v1/status/all").bodyAsText())
             assertEquals("Platform", listed.processes.single { it.id == grouped }.group)
             assertNull(listed.processes.single { it.id == gone }.group)
