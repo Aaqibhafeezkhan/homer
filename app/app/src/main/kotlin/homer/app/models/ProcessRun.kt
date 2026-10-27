@@ -63,7 +63,34 @@ data class ProcessInfo(
     // start and/or declared at run time via the callback route. Empty for the
     // sweep/reconciliation reads that do not surface tags. See ADR-0060.
     val tags: List<String> = emptyList(),
+    // Why the run ended FAILED before any of its commands started: the claim timeout, the
+    // lock skip, the parallel-run cap or one of the two queue bounds. A fixed-vocabulary
+    // sentence built from typed fields, never a raw exception message. Null for every other
+    // failure, and for a run that never failed. See ADR-0020.
+    val failureReason: String? = null,
+    // The run that blocked this one (the lock holder), when the cause names one; emitted only
+    // to a caller who may see that run. Not a foreign key: the holder may be evicted first,
+    // like every other run link. See ADR-0058.
+    val failureReasonRunId: Int? = null,
 )
+
+/**
+ * The hard cap on a stored pre-start failure reason. The repository write enforces it again,
+ * so no caller can grow the column past it. See ADR-0047.
+ */
+const val MAX_FAILURE_REASON_LENGTH = 500
+
+/** Appended when a reason is cut at [MAX_FAILURE_REASON_LENGTH], so a cut is visible. */
+const val FAILURE_REASON_TRUNCATION_MARKER = " …"
+
+/** Cuts [text] to [MAX_FAILURE_REASON_LENGTH] characters, marking the cut with [FAILURE_REASON_TRUNCATION_MARKER]. */
+fun truncateFailureReason(text: String): String =
+    if (text.length <= MAX_FAILURE_REASON_LENGTH) {
+        text
+    } else {
+        text.take(MAX_FAILURE_REASON_LENGTH - FAILURE_REASON_TRUNCATION_MARKER.length) +
+            FAILURE_REASON_TRUNCATION_MARKER
+    }
 
 /**
  * Pod lifecycle surfaced to clients and telemetry. `alias`

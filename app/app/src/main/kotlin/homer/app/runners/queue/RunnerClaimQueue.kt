@@ -88,7 +88,12 @@ class RunnerClaimQueue(
             if (session != null) return session
             if (request.tryFinish(ClaimRequest.State.EXPIRED)) {
                 remove(request)
-                throw RunnerClaimTimeoutException(timeout, filter, expiryReason(filter))
+                throw RunnerClaimTimeoutException(
+                    timeout,
+                    filter,
+                    expiryReason(filter, withAliases = true),
+                    expiryReason(filter, withAliases = false),
+                )
             }
             // Claimed before the deadline but the consumer is still opening the session (a
             // pod start, an ssh connect). The TTL bounds the wait for a claim, not the open;
@@ -242,14 +247,34 @@ class RunnerClaimQueue(
         }
     }
 
-    private fun expiryReason(filter: RunnerFilter): String {
+    private fun expiryReason(
+        filter: RunnerFilter,
+        withAliases: Boolean,
+    ): String {
         val matching = consumers.filter { it.matches(filter) }
         if (matching.isEmpty()) {
             return when (filter) {
-                is RunnerFilter.Alias -> "runner '${filter.alias}' has no registered instances"
-                is RunnerFilter.Tags -> "no registered runner matches ${filter.describe()}"
+                is RunnerFilter.Alias -> {
+                    if (withAliases) {
+                        "runner '${filter.alias}' has no registered instances"
+                    } else {
+                        "no registered runner matches it"
+                    }
+                }
+
+                is RunnerFilter.Tags -> {
+                    if (withAliases) {
+                        "no registered runner matches ${filter.describe()}"
+                    } else {
+                        "no registered runner matches those tags"
+                    }
+                }
             }
         }
+        // The alias-free rendering names the observation, not the runners: it is stored on the
+        // run and served to every caller who can see it, and a runner alias is admin-only there
+        // (ADR-0077). Both renderings read the same snapshot, so they cannot disagree.
+        if (!withAliases) return "every matching runner was at its concurrency limit"
         return matching.joinToString(", ") {
             "runner '${it.alias}' at concurrency ${it.inUse}/${it.concurrency ?: "unbounded"}"
         }

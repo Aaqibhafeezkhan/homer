@@ -149,6 +149,7 @@ there and a row here (SQLite rule 1 in
 | 26 | prune indexes + paginated list filters for `dispatches`/`continuations` | [0021](../../../../../../../../../docs/adr/0021-ask-and-dispatch.md) |
 | 27 | `continuations.thread_id` + `continuations_thread_id` index (LangGraph `subs` thread lookup) | [0044](../../../../../../../../../docs/adr/0044-langgraph-resume-and-run-introspection.md) |
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
+| 29 | `processes.failure_reason`, `processes.failure_reason_run_id` | — |
 
 ### Schema constraints
 
@@ -277,6 +278,16 @@ Editor-facing constraints the row's ADR does not state:
   residual filter, then all its sub runs in batched reads below the
   512-id chunk they split at. `DatabaseMigrationTest` pins both plans. See
   ADR-0044.
+- `processes.failure_reason` / `failure_reason_run_id` (v29) hold why a run ended
+  `FAILED` before any of its commands started, and the run that blocked it when the
+  cause names one (the lock holder; **not a foreign key**, like the other run links).
+  Both are left NULL on the v28→v29 upgrade: a pre-v29 row's failure is not
+  reconstructible, and NULL reads as "no reason recorded", never as "ran and failed".
+  The write is guarded on the row's own state — it lands only while `status = FAILED`
+  with no recorded execution and no current command — so a run that failed mid-flight
+  and one whose failure raced a kill that won the status CAS both keep NULL, and the
+  column is never rewritten. `failure_reason` is truncated to 500 characters inside
+  the write, so its bound holds whatever the caller passes.
 
 `transitionStatus` and `killTransition` project `status`, `history` and
 `agent_name` instead of `selectAll()`: they run under the write lock, and pulling

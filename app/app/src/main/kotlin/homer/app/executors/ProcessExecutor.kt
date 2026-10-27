@@ -140,6 +140,11 @@ class ProcessExecutor(
             ProcessStatus.FAILED,
         )
 
+        // Why the run never started, when the cause is one of the typed pre-start ones. The
+        // write is guarded on the committed status and on the run having recorded no step, so
+        // a mid-run failure and a kill that won the CAS above both store nothing.
+        storeFailureReason(processId, process, e)
+
         // Get final status for telemetry
         val finalStatus = processManager.getProcessStatus(processId)
 
@@ -175,6 +180,25 @@ class ProcessExecutor(
             )
             processSpan.recordException(e)
             logger.error("Process {} failed: {}", processId, e.message, e)
+        }
+    }
+
+    /**
+     * Stores why the run failed before it ever ran, redacted with the run's own redactor.
+     * Runs after the FAILED CAS, so the status is already committed: a failed write is logged
+     * and nothing else — it must never change the status, nor stop the release below.
+     */
+    @Suppress("SuspendFunSwallowedCancellation") // runs under NonCancellable; the status is already committed
+    private suspend fun storeFailureReason(
+        processId: Int,
+        process: Process,
+        e: Exception,
+    ) {
+        val failure = PreStartFailureReason.of(e) ?: return
+        try {
+            processManager.setFailureReason(processId, process.failureReasonRedactor.redact(failure.reason), failure.holderRunId)
+        } catch (writeError: Exception) {
+            logger.error("Storing the failure reason for process {} failed: {}", processId, writeError.message, writeError)
         }
     }
 

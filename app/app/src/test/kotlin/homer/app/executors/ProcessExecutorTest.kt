@@ -1,9 +1,16 @@
 package homer.app.executors
 
+import homer.app.exceptions.AnotherProcessStillActive
+import homer.app.exceptions.ClaimQueueFullException
+import homer.app.exceptions.MaxParallelRunsExceededException
+import homer.app.exceptions.MaxQueuedRunsExceededException
+import homer.app.exceptions.RunnerClaimTimeoutException
 import homer.app.fixtures.TestFixtures
+import homer.app.infra.SecretRedactor
 import homer.app.infra.TelemetryService
 import homer.app.models.Cooldown
 import homer.app.models.ProcessStatus
+import homer.app.models.RunnerFilter
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
 import io.mockk.Runs
@@ -29,6 +36,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Unit tests for ProcessExecutor
@@ -912,6 +920,148 @@ class ProcessExecutorTest {
 
             // Telemetry should ALSO be FAILED (fixes inconsistency)
             verify { mockSpan.setAttribute("process.status", "FAILED") }
+        }
+
+    // ========== Pre-start failure reason (ADR-0020) ==========
+
+    /** Runs [e] through the failure path and returns what the executor stored as the reason. */
+    private suspend fun storedReasonFor(
+        e: Exception,
+        redactor: SecretRedactor = SecretRedactor.NONE,
+    ): String? {
+        val reason = slot<String>()
+        every { mockProcess.failureReasonRedactor } returns redactor
+        coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+        coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+        coEvery { mockProcess.execute(any(), any()) } throws e
+        coEvery { mockProcessManager.setFailureReason(1, capture(reason), any()) } returns true
+
+        processExecutor.execute(mockProcess, testContext)
+        delay(150)
+
+        return if (reason.isCaptured) reason.captured else null
+    }
+
+    @Test
+    fun `a SKIP_CURRENT lock skip is stored with the run that held the lock`() =
+        runBlocking {
+            every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+            coEvery { mockProcess.execute(any(), any()) } throws AnotherProcessStillActive(999)
+            coEvery { mockProcessManager.setFailureReason(1, any(), any()) } returns true
+
+            processExecutor.execute(mockProcess, testContext)
+            delay(150)
+
+            coVerify { mockProcessManager.setFailureReason(1, match { it.contains("SKIP_CURRENT") }, 999) }
+        }
+
+    @Test
+    fun `a claim timeout is stored with the alias-free filter and the public reason`() =
+        runBlocking {
+            val reason =
+                storedReasonFor(
+                    RunnerClaimTimeoutException(
+                        60.seconds,
+                        RunnerFilter.Alias("k8s-dev"),
+                        "runner 'k8s-dev' was at its concurrency limit",
+                        "every matching runner was at its concurrency limit",
+                    ),
+                )!!
+
+            assertEquals(
+                "No runner claimed this run within 60 s (pinned runner filter): " +
+                    "every matching runner was at its concurrency limit.",
+                reason,
+            )
+        }
+
+    @Test
+    fun `a REJECT parallel-run cap is stored`() =
+        runBlocking {
+            val reason = storedReasonFor(MaxParallelRunsExceededException("demo", 3))!!
+
+            assertEquals(
+                "Parallel-run cap (maxParallelRuns: 3, onMaxParallelRuns: REJECT): agent 'demo' was already " +
+                    "at its limit, so this run never started.",
+                reason,
+            )
+        }
+
+    @Test
+    fun `a full parallel-run wait queue is stored`() =
+        runBlocking {
+            val reason = storedReasonFor(MaxQueuedRunsExceededException("demo", 5))!!
+
+            assertEquals(
+                "Parallel-run wait queue full (maxQueuedRuns: 5): agent 'demo' already had that many runs " +
+                    "waiting for a slot, so this run never started.",
+                reason,
+            )
+        }
+
+    @Test
+    fun `a full claim queue is stored`() =
+        runBlocking {
+            val reason = storedReasonFor(ClaimQueueFullException(100))!!
+
+            assertEquals(
+                "Runner claim queue full (maxPendingRunnerClaims: 100): that many runs were already waiting " +
+                    "to be claimed, so this run never started.",
+                reason,
+            )
+        }
+
+    @Test
+    fun `a secret in a reason is redacted with the run's own redactor`() =
+        runBlocking {
+            val reason =
+                storedReasonFor(
+                    RunnerClaimTimeoutException(
+                        60.seconds,
+                        RunnerFilter.Tags(setOf("linux")),
+                        "no registered runner matches those tags",
+                        "runner matched s3cret-token",
+                    ),
+                    redactor = SecretRedactor.from(mapOf("TOKEN" to "s3cret-token"), setOf("TOKEN")),
+                )
+
+            assertEquals("No runner claimed this run within 60 s (tags [linux]): runner matched ***.", reason)
+        }
+
+    @Test
+    fun `a failure that happened while the run was running stores no reason`() =
+        runBlocking {
+            val reason = storedReasonFor(IllegalStateException("boom"))
+
+            assertEquals(null, reason)
+            coVerify(exactly = 0) { mockProcessManager.setFailureReason(any(), any(), any()) }
+        }
+
+    @Test
+    fun `a reason write that fails still leaves the run FAILED and the job released`() =
+        runBlocking {
+            every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+            coEvery { mockProcess.execute(any(), any()) } throws ClaimQueueFullException(100)
+            coEvery { mockProcessManager.setFailureReason(any(), any(), any()) } throws RuntimeException("db down")
+
+            processExecutor.execute(mockProcess, testContext)
+            delay(150)
+
+            coVerify { mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED) }
+            verify { mockSpan.end() }
+            coVerify { mockProcessManager.removeJob(1) }
+            verify {
+                mockLogger.error(
+                    match { it.contains("Storing the failure reason") },
+                    1,
+                    "db down",
+                    any<Throwable>(),
+                )
+            }
         }
 
     // ========== onTerminal Callback Tests (ADR-0023) ==========

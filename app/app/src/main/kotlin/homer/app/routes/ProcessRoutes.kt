@@ -2,6 +2,7 @@ package homer.app.routes
 
 import homer.app.exceptions.QueryParamValidationException
 import homer.app.models.ErrorResponse
+import homer.app.models.ProcessInfo
 import homer.app.models.ProcessListResponse
 import homer.app.models.ProcessStatus
 import homer.app.models.ProcessStatus.CREATED
@@ -113,6 +114,7 @@ private fun Route.processStatusRoute(deps: ApiDeps) {
                         val root = processManager.getProcessInfo(rootId)
                         root != null && authorizer.canSee(principal, root.owner, root.agentName)
                     } ?: true
+            val holderVisible = holderRunVisible(processInfo, principal)
             val latestCommandArtifacts =
                 if (processInfo.currentCommand != null) {
                     processManager.latestCommandArtifacts(processId)
@@ -130,11 +132,28 @@ private fun Route.processStatusRoute(deps: ApiDeps) {
                     // The alias is admin-only (CWE-200, fail closed). See ADR-0077.
                     aliasVisible = authorizer.isAdmin(principal),
                     runnerType = processInfo.runner?.let { runner -> runnerType(config, runner.alias) },
+                    holderVisible = holderVisible,
                 ),
             )
         }
     }
 }
+
+/**
+ * Whether [principal] may open the run a failure reason names as [processInfo]'s blocker (a lock
+ * holder), so its id may be appended to the reason. [sensitive_data_exposure / CWE-200] Fail
+ * closed, like the root-id gate: a holder that is gone, or one this caller cannot see, withholds
+ * the id. See ADR-0058.
+ */
+private suspend fun ApiDeps.holderRunVisible(
+    processInfo: ProcessInfo,
+    principal: String?,
+): Boolean =
+    processInfo.failureReasonRunId
+        ?.let { holderId ->
+            val holder = processManager.getProcessInfo(holderId)
+            holder != null && authorizer.canSee(principal, holder.owner, holder.agentName)
+        } ?: false
 
 /** `DELETE /kill/{processId}`: killing a process the caller can control. */
 private fun Route.processKillRoute(deps: ApiDeps) {

@@ -98,6 +98,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
@@ -251,6 +252,88 @@ class ProcessVisibilityTest {
 
             val res = client.get("/api/v1/status/42") { header(HttpHeaders.Authorization, "Bearer read-token") }
             assertEquals(HttpStatusCode.OK, res.status)
+        }
+
+    // ---------- Failure reason and the run it names (CWE-200) ----------
+
+    /** A real manager with [failed] (owner alice, FAILED before it started) blocked by [holder] (owner bob). */
+    private suspend fun managerWithLockSkip(): Triple<ProcessManager, Int, Int> {
+        val pm = PersistenceTestSupport.processManager()
+        val holder = pm.obtainProcessId("other", owner = "bob")
+        val failed = pm.obtainProcessId("deploy", owner = "alice")
+        pm.compareAndSetStatus(failed, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING)
+        pm.compareAndSetStatus(failed, setOf(ProcessStatus.WORKING), ProcessStatus.FAILED)
+        pm.setFailureReason(failed, "Lock skip (SKIP_CURRENT)", holder)
+        return Triple(pm, failed, holder)
+    }
+
+    private fun questionsWithNoOpenCount(): QuestionsService =
+        mockk<QuestionsService>(relaxed = true).also { coEvery { it.openCountByProcess() } returns emptyMap() }
+
+    @Test
+    fun `status withholds the blocking run id from a caller who cannot see that run`() =
+        runBlocking {
+            val (pm, failed, _) = managerWithLockSkip()
+            testApplication {
+                val tokens = mapOf("alice" to ownerToken)
+                application {
+                    installGrantsApp(
+                        tokens,
+                        deps(authorizerFor(tokens), questionsService = questionsWithNoOpenCount(), processManagerOverride = pm),
+                    )
+                }
+
+                val res = client.get("/api/v1/status/$failed") { header(HttpHeaders.Authorization, "Bearer owner-token") }
+
+                assertEquals(HttpStatusCode.OK, res.status)
+                // Alice owns the failed run, not the run that blocked it: she reads the reason,
+                // never the id of a run she may not open. §12 rule 3, ADR-0058.
+                assertEquals("Lock skip (SKIP_CURRENT)", apiJson.decodeFromString<ProcessInfoResponse>(res.bodyAsText()).failureReason)
+            }
+        }
+
+    @Test
+    fun `status appends the blocking run id for a caller who can see that run`() =
+        runBlocking {
+            val (pm, failed, holder) = managerWithLockSkip()
+            testApplication {
+                val tokens = mapOf("root" to adminToken)
+                application {
+                    installGrantsApp(
+                        tokens,
+                        deps(authorizerFor(tokens), questionsService = questionsWithNoOpenCount(), processManagerOverride = pm),
+                    )
+                }
+
+                val res = client.get("/api/v1/status/$failed") { header(HttpHeaders.Authorization, "Bearer admin-token") }
+
+                assertEquals(HttpStatusCode.OK, res.status)
+                assertEquals(
+                    "Lock skip (SKIP_CURRENT) (run #$holder)",
+                    apiJson.decodeFromString<ProcessInfoResponse>(res.bodyAsText()).failureReason,
+                )
+            }
+        }
+
+    @Test
+    fun `status hides a failed run from the holder's owner and leaks no reason`() =
+        runBlocking {
+            val (pm, failed, _) = managerWithLockSkip()
+            testApplication {
+                val tokens = mapOf("bob" to ownerToken)
+                application {
+                    installGrantsApp(
+                        tokens,
+                        deps(authorizerFor(tokens), questionsService = questionsWithNoOpenCount(), processManagerOverride = pm),
+                    )
+                }
+
+                val res = client.get("/api/v1/status/$failed") { header(HttpHeaders.Authorization, "Bearer owner-token") }
+
+                // Owning the run that blocked it grants nothing on the run itself.
+                assertEquals(HttpStatusCode.NotFound, res.status)
+                assertTrue("SKIP_CURRENT" !in res.bodyAsText(), res.bodyAsText())
+            }
         }
 
     @Test

@@ -19,6 +19,7 @@ internal fun upgradeSchema(
     migrateToV24(st, current)
     migrateToV27(st, current)
     migrateToV28(st, current)
+    migrateToV29(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -309,5 +310,18 @@ private fun migrateToV28(
 ) {
     if (current in 1 until 28) {
         st.execute("CREATE INDEX IF NOT EXISTS questions_agent_name ON questions (agent_name)")
+    }
+}
+
+/** v28→v29 adds the stored pre-start failure reason and the run it names. */
+private fun migrateToV29(
+    st: Statement,
+    current: Int,
+) {
+    if (current in 1 until 29) {
+        // No backfill: a run that ended before this version was never observed by the code
+        // that maps a cause to a reason, and a guessed reason is worse than none.
+        addColumnIfMissing(st, "processes", "failure_reason", "TEXT")
+        addColumnIfMissing(st, "processes", "failure_reason_run_id", "INTEGER")
     }
 }

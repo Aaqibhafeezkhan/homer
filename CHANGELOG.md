@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: `failureReason` on the process status response** — A run that ended `FAILED` before any command started (a claim timeout, a `SKIP_CURRENT` lock skip, a parallel-run cap or a full queue) carries a stored sentence saying which.
+
+### Console
+
+- **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
+
 ## [1.37.1] - 2026-10-27
 
 ### Homer

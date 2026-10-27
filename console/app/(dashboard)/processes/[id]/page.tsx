@@ -34,6 +34,7 @@ import { RunnerPanel } from '@/components/processes/runner-panel';
 import { QuestionPanel } from '@/components/questions/question-panel';
 import { ExecutionItem } from '@/components/processes/execution-item';
 import { CurrentCommandBox } from '@/components/processes/current-command-box';
+import { FailureReason } from '@/components/processes/failure-reason';
 import { ProcessActions } from '@/components/processes/process-actions';
 import { FlowSection } from '@/components/processes/flow-section';
 import { ActionErrorAlert } from '@/components/processes/action-error-alert';
@@ -425,6 +426,9 @@ export default function ProcessDetailPage({
         canResume={lg.resumeEligible && !!lg.lgProbe.data}
         onDownloadClick={() => setDownloadDialogOpen(true)}
       />
+
+      {/* Why a FAILED run never started, when the server stored a reason for it. */}
+      {process.failureReason && <FailureReason reason={process.failureReason} variant="detail" />}
 
       {process.runner && <RunnerPanel runner={process.runner} />}
 
