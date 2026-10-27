@@ -39,6 +39,15 @@ interface RunRecords : GuardedStatusWrite {
 
     suspend fun getProcessStatus(processId: Int): ProcessStatus
 
+    // Records why the run failed before it ever ran, after the FAILED CAS. A guarded write:
+    // it lands only on a row still FAILED with no step recorded, so a mid-run failure and a
+    // kill that won the CAS both store nothing. See ADR-0020.
+    suspend fun setFailureReason(
+        processId: Int,
+        reason: String,
+        holderRunId: Int?,
+    ): Boolean
+
     suspend fun setPurgeAt(
         processId: Int,
         purgeAt: Long,

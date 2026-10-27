@@ -16,6 +16,7 @@ import homer.app.models.RunMessageResponse
 import homer.app.models.RunnerState
 import homer.app.models.RunnerStateResponse
 import homer.app.models.stripUrlSecrets
+import homer.app.models.truncateFailureReason
 import homer.app.services.Continuation
 import homer.app.services.Dispatch
 import homer.app.services.ProcessManager
@@ -47,6 +48,9 @@ fun ProcessInfo.toResponse(
     // Generic backend kind for `this.runner.alias`, precomputed by the caller from
     // the config; always emitted so a non-admin row keeps a backend label.
     runnerType: String? = null,
+    // Fail closed, like `aliasVisible`: `failureReason` names the run that blocked this one,
+    // so its id is appended only when the caller can see that run. See ADR-0058.
+    holderVisible: Boolean = false,
 ): ProcessInfoResponse =
     ProcessInfoResponse(
         id = this.id,
@@ -97,6 +101,14 @@ fun ProcessInfo.toResponse(
         rootProcessId = if (rootVisible) this.rootProcessId else null,
         retainedTruncated = this.retainedTruncated,
         tags = screenTags(this.tags, this.inputParams, agent, this.secretInputKeys),
+        // [sensitive_data_exposure / CWE-200] The id of the run that blocked this one is
+        // appended only when the caller may open that run; without it the reason still names
+        // the cause. The cap is applied to the assembled text, so the field stays bounded.
+        failureReason =
+            this.failureReason?.let { reason ->
+                val holder = this.failureReasonRunId
+                if (holderVisible && holder != null) truncateFailureReason("$reason (run #$holder)") else reason
+            },
     )
 
 /**

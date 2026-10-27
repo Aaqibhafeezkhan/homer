@@ -359,6 +359,28 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('failure reason', () => {
+    const REASON = 'Runner claim queue full (maxPendingRunnerClaims: 100): that many runs were already waiting.';
+
+    it('shows the reason beside a FAILED status, in the row and the card', () => {
+      const process = makeProcess({ status: 'FAILED', executions: [], failureReason: REASON });
+
+      render(<ProcessTable processes={[process]} />);
+
+      // Desktop row + mobile card both carry the badge, each with its own tooltip.
+      expect(screen.getAllByTitle(REASON)).toHaveLength(2);
+      expect(screen.getAllByText('Failed')).toHaveLength(2);
+    });
+
+    it('shows no reason for a run that carries none', () => {
+      const process = makeProcess({ status: 'FAILED', executions: [] });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.queryByText(/Failure reason:/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('a11y', () => {
     it('has no violations for a populated WORKING row with action buttons', async () => {
       const process = makeProcess({

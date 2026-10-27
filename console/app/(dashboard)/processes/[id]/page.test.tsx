@@ -363,6 +363,31 @@ describe('ProcessDetailPage execution ordering', () => {
     });
   });
 
+  describe('failure reason', () => {
+    const REASON =
+      'Lock skip (lockStrategy.onCollision: SKIP_CURRENT): another run still holds this agent’s lock, so this run never started.';
+
+    it('explains why a FAILED run never started', () => {
+      useProcessMock.mockReturnValue({
+        data: { ...runningProcess, status: 'FAILED', executions: [], failureReason: REASON },
+      });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+
+      expect(screen.getByText('Failed before it started')).toBeInTheDocument();
+      // The detail form carries the whole reason, untruncated.
+      expect(screen.getByText(REASON)).toBeInTheDocument();
+    });
+
+    it('shows no failure box for a run the server stored no reason for', () => {
+      useProcessMock.mockReturnValue({
+        data: { ...runningProcess, status: 'FAILED', executions: [], failureReason: null },
+      });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+
+      expect(screen.queryByText('Failed before it started')).not.toBeInTheDocument();
+    });
+  });
+
 });
 
 describe('ProcessDetailPage artifact download', () => {

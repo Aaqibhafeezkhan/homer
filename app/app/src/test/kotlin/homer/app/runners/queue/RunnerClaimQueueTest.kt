@@ -152,6 +152,33 @@ class RunnerClaimQueueTest {
         }
 
     @Test
+    fun `the alias-free reason names the observation and no runner`() =
+        runTest {
+            val saturated = RunnerClaimQueue(maxPending = 10)
+            saturated.registerConsumer(Consumer("build-host", concurrency = 2, inUse = 2))
+            val busy =
+                assertThrows<RunnerClaimTimeoutException> {
+                    saturated.awaitClaim(params(1), RunnerFilter.Alias("build-host"), 300.seconds)
+                }
+            assertEquals("every matching runner was at its concurrency limit", busy.publicReason)
+
+            val missing = RunnerClaimQueue(maxPending = 10)
+            val absent =
+                assertThrows<RunnerClaimTimeoutException> {
+                    missing.awaitClaim(params(1), RunnerFilter.Alias("workers"), 30.seconds)
+                }
+            assertEquals("no registered runner matches it", absent.publicReason)
+
+            val tags = RunnerClaimQueue(maxPending = 10)
+            tags.registerConsumer(Consumer("local", tags = setOf("linux")))
+            val unmatched =
+                assertThrows<RunnerClaimTimeoutException> {
+                    tags.awaitClaim(params(1), RunnerFilter.Tags(setOf("linux", "gpu")), 30.seconds)
+                }
+            assertEquals("no registered runner matches those tags", unmatched.publicReason)
+        }
+
+    @Test
     fun `a full queue fails the run immediately`() =
         runTest {
             val queue = RunnerClaimQueue(maxPending = 1)

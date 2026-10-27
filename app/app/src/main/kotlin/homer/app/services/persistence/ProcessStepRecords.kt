@@ -3,7 +3,9 @@ package homer.app.services.persistence
 import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
 import homer.app.models.LlmAccounting
+import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
+import homer.app.models.truncateFailureReason
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.jdbc.select
@@ -201,3 +203,36 @@ suspend fun ProcessRepository.setTraceId(
         Processes.update({ Processes.id eq processId }) { it[Processes.traceId] = traceId }
     }
 }
+
+/**
+ * Stores why the run ended FAILED before any of its commands started, and the run that
+ * blocked it when the cause names one. The write is guarded: it lands only while the row
+ * still reads `FAILED` and shows no started work — no recorded execution and no current
+ * command. A run that failed while it was running therefore keeps NULL, and so does one
+ * whose failure raced a kill that won the status CAS. Returns whether the write landed.
+ *
+ * [reason] is truncated to `MAX_FAILURE_REASON_LENGTH` here, so the column's bound holds
+ * whatever the caller passes. See ADR-0020.
+ */
+suspend fun ProcessRepository.setFailureReason(
+    processId: Int,
+    reason: String,
+    holderRunId: Int?,
+): Boolean =
+    db.query {
+        val row =
+            Processes
+                .select(Processes.status, Processes.executions, Processes.currentCommand)
+                .where { Processes.id eq processId }
+                .singleOrNull() ?: return@query false
+        if (row[Processes.status] != ProcessStatus.FAILED.name) return@query false
+        // Compared as stored text rather than decoded: every writer encodes through
+        // encodeExecutions, so an empty list is exactly this JSON, and the comparison keeps a
+        // multi-MiB executions blob off the failure path (SQLite rule 4).
+        if (row[Processes.executions] != EMPTY_EXECUTIONS_JSON) return@query false
+        if (row[Processes.currentCommand] != null) return@query false
+        Processes.update({ Processes.id eq processId }) {
+            it[failureReason] = truncateFailureReason(reason)
+            it[failureReasonRunId] = holderRunId
+        } > 0
+    }

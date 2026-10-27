@@ -52,8 +52,21 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             val second = Awaits.awaitTerminal(secondId)
             assertEquals("FAILED", second.status)
 
+            // The reason says why it never started. This client is admin, so the id of
+            // the run that held the lock is appended; a caller who may not open that run
+            // gets the same text without it. The reason is stored in a second transaction
+            // after the FAILED status commits, so the poll that first sees the status can
+            // still read a null reason — await the reason itself.
+            val reason =
+                Awaits.awaitNotNull("the skipped run's failure reason") {
+                    Awaits.awaitTerminal(secondId).failureReason
+                }
+            assertTrue(reason.contains("SKIP_CURRENT"), "skipped run must say why: $reason")
+            assertTrue(reason.contains("(run #$firstId)"), "the reason must name the holder: $reason")
+
             val first = Awaits.awaitTerminal(firstId)
             assertEquals("FINISHED", first.status, "the skipped run must not disturb the holder")
+            assertEquals(null, first.failureReason, "a run that never failed carries no reason")
         }
 
     @Test
@@ -81,6 +94,15 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             val second = Awaits.awaitTerminal(secondId)
             assertEquals("FAILED", second.status)
             assertTrue(second.executions.isEmpty(), "rejected run must not execute commands: ${second.executions}")
+            // Awaited, not read off the terminal poll: the reason write trails the FAILED status.
+            val reason =
+                Awaits.awaitNotNull("the rejected run's failure reason") {
+                    Awaits.awaitTerminal(secondId).failureReason
+                }
+            assertTrue(
+                reason.contains("maxParallelRuns"),
+                "rejected run must say why it never started: $reason",
+            )
 
             assertEquals("FINISHED", Awaits.awaitTerminal(firstId).status)
         }
