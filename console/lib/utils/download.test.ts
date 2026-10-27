@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import fc from 'fast-check';
 import { extractFilename, toArtifactApiPath, triggerDownload } from './download';
 
 afterEach(() => {
@@ -19,6 +20,10 @@ describe('extractFilename', () => {
   it('falls back to artifact when the path ends with a slash', () => {
     expect(extractFilename('/tmp/homer/artifacts/')).toBe('artifact');
   });
+
+  it('falls back to artifact for an empty path', () => {
+    expect(extractFilename('')).toBe('artifact');
+  });
 });
 
 describe('toArtifactApiPath', () => {
@@ -28,6 +33,57 @@ describe('toArtifactApiPath', () => {
 
   it('preserves a relative path including its subdirectory', () => {
     expect(toArtifactApiPath('out/report.txt')).toBe('out/report.txt');
+  });
+
+  it('preserves empty and trailing-slash relative paths', () => {
+    expect(toArtifactApiPath('')).toBe('');
+    expect(toArtifactApiPath('out/')).toBe('out/');
+  });
+});
+
+describe('download path utilities (property-based)', () => {
+  const pathInputs = fc.oneof(
+    fc.constantFrom(
+      '',
+      '/',
+      '//',
+      '/..',
+      '/tmp/..',
+      '/tmp/',
+      'out/',
+      '../report.txt',
+      '..',
+      '\u0000',
+      '\n',
+      '\r',
+      'out/\u0000',
+      '/tmp/\n',
+    ),
+    fc.string(),
+  );
+
+  it('returns a non-empty filename without path separators', async () => {
+    await fc.assert(
+      fc.property(pathInputs, (path) => {
+        const filename = extractFilename(path);
+        expect(filename).not.toBe('');
+        expect(filename).not.toContain('/');
+      }),
+    );
+  });
+
+  it('strips absolute paths to one filename and preserves relative paths verbatim', async () => {
+    await fc.assert(
+      fc.property(pathInputs, (path) => {
+        const result = toArtifactApiPath(path);
+        if (path.startsWith('/')) {
+          expect(result).not.toContain('/');
+          expect(result).not.toBe('');
+        } else {
+          expect(result).toBe(path);
+        }
+      }),
+    );
   });
 });
 
