@@ -31,6 +31,7 @@ import homer.app.exceptions.QueryParamValidationException
 import homer.app.exceptions.QuestionNotFoundException
 import homer.app.exceptions.QuestionNotOpenException
 import homer.app.exceptions.QuestionsClosedForProcessException
+import homer.app.exceptions.RunNotAcceptingMessagesException
 import homer.app.exceptions.RunnerClaimTimeoutException
 import homer.app.exceptions.RunnerOutputSequenceException
 import homer.app.exceptions.RunnerRegistrationRejectedException
@@ -40,6 +41,7 @@ import homer.app.exceptions.TooManyConcurrentWaitsException
 import homer.app.exceptions.TooManyOpenQuestionsException
 import homer.app.exceptions.TooManyPendingContinuationsException
 import homer.app.exceptions.TooManyPendingDispatchesException
+import homer.app.exceptions.TooManyRunMessagesException
 import homer.app.exceptions.TooManyRunnerInstancesException
 import homer.app.exceptions.TooManyRunnerPollsException
 import homer.app.exceptions.TooManyRunnerTransfersException
@@ -263,6 +265,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is AnotherProcessStillActive,
         is QuestionNotOpenException,
         is QuestionsClosedForProcessException,
+        is RunNotAcceptingMessagesException,
         is DispatchNotPendingException,
         is ContinuationNotPendingException,
         is RunnerOutputSequenceException,
@@ -281,6 +284,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is CostCapExceededException,
         is CooldownActiveException,
         is TooManyOpenQuestionsException,
+        is TooManyRunMessagesException,
         is TooManyConcurrentWaitsException,
         is TooManyPendingDispatchesException,
         is TooManyPendingContinuationsException,
@@ -332,6 +336,7 @@ private fun requestErrorStatus(e: HomerException): HttpStatusCode =
         is AnotherProcessStillActive,
         is QuestionNotOpenException,
         is QuestionsClosedForProcessException,
+        is RunNotAcceptingMessagesException,
         is DispatchNotPendingException,
         is ContinuationNotPendingException,
         is RunnerOutputSequenceException,
@@ -373,6 +378,7 @@ private fun transferCapacityOrServerStatus(e: HomerException): HttpStatusCode =
         is CostCapExceededException,
         is CooldownActiveException,
         is TooManyOpenQuestionsException,
+        is TooManyRunMessagesException,
         is TooManyConcurrentWaitsException,
         is TooManyPendingDispatchesException,
         is TooManyPendingContinuationsException,

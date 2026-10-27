@@ -24,6 +24,9 @@ import type {
   LoginResponse,
   MeResponse,
   Question,
+  RunMessage,
+  RunMessagesListResponse,
+  SendRunMessageRequest,
   QuestionsListResponse,
   QuestionStatus,
   ContinuationsListResponse,
@@ -353,6 +356,18 @@ class HomerApiClient {
         body: JSON.stringify({ answer }),
       },
     );
+  }
+
+  async getRunMessages(processId: number): Promise<RunMessagesListResponse> {
+    return this.request<RunMessagesListResponse>(`/api/v1/status/${processId}/messages`);
+  }
+
+  async sendRunMessage(processId: number, text: string): Promise<RunMessage> {
+    const body: SendRunMessageRequest = { text };
+    return this.request<RunMessage>(`/api/v1/status/${processId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
   }
 
   async cancelDispatch(id: number): Promise<void> {

@@ -25,6 +25,9 @@ class StreamingRoutesTest {
         assertEquals(3, streamedProcessId(ProcessEvent.QuestionAsked(3, "q", "a")))
         assertEquals(4, streamedProcessId(ProcessEvent.QuestionAnswered(4, "q")))
         assertEquals(5, streamedProcessId(ProcessEvent.QuestionExpired(5, "q")))
+        assertEquals(6, streamedProcessId(ProcessEvent.MessageQueued(6, "m")))
+        assertEquals(7, streamedProcessId(ProcessEvent.MessageDelivered(7, "m")))
+        assertEquals(8, streamedProcessId(ProcessEvent.MessageUndelivered(8, "m")))
         assertNull(streamedProcessId(ProcessEvent.AgentsReloaded(listOf("a"), emptyList(), emptyList())))
     }
 
@@ -49,6 +52,18 @@ class StreamingRoutesTest {
         assertEquals(
             SseFrame("question.expired", """{"processId":5,"questionId":"q"}"""),
             processEventFrame(ProcessEvent.QuestionExpired(5, "q")),
+        )
+        assertEquals(
+            SseFrame("message.queued", """{"processId":6,"messageId":"m"}"""),
+            processEventFrame(ProcessEvent.MessageQueued(6, "m")),
+        )
+        assertEquals(
+            SseFrame("message.delivered", """{"processId":7,"messageId":"m"}"""),
+            processEventFrame(ProcessEvent.MessageDelivered(7, "m")),
+        )
+        assertEquals(
+            SseFrame("message.undelivered", """{"processId":8,"messageId":"m"}"""),
+            processEventFrame(ProcessEvent.MessageUndelivered(8, "m")),
         )
         assertNull(processEventFrame(ProcessEvent.AgentsReloaded(emptyList(), emptyList(), emptyList())))
     }

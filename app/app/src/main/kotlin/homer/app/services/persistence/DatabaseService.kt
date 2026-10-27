@@ -148,6 +148,7 @@ class DatabaseService(
                 ProcessInputs,
                 ProcessTags,
                 Questions,
+                RunMessages,
                 Dispatches,
                 Continuations,
                 ContinuationWatches,
@@ -289,7 +290,7 @@ class DatabaseService(
     }
 
     companion object {
-        const val SCHEMA_VERSION = 28
+        const val SCHEMA_VERSION = 29
         const val OPTIMIZE_INTERVAL_MS = 60 * 60 * 1000L
         private const val BUSY_TIMEOUT_MS = 5000
 

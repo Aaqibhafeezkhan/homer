@@ -1,5 +1,6 @@
 package homer.app.services
 
+import homer.app.executors.RunMessageExpiry
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
@@ -7,13 +8,16 @@ import homer.app.infra.ProcessJobRegistry
 import homer.app.models.Agent
 import homer.app.models.ProcessStatus
 import homer.app.models.Retain
+import homer.app.models.RunMessagesConfig
 import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DatabaseService
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.Processes
 import homer.app.services.persistence.QuestionsRepository
+import homer.app.services.persistence.RunMessagesRepository
 import homer.app.services.persistence.setPurgeAt
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
@@ -30,6 +34,7 @@ class StartupReconciliationTest {
         dispatchService: DispatchService = mockk(relaxed = true),
         continuationService: ContinuationService = mockk(relaxed = true),
         agents: Map<String, Agent> = emptyMap(),
+        val runMessagesService: RunMessageExpiry = mockk(relaxed = true),
     ) {
         val processRepository = ProcessRepository(db, ProcessJobRegistry())
         val agentsService = mockk<AgentsService> { every { this@mockk.agents } returns agents }
@@ -39,6 +44,7 @@ class StartupReconciliationTest {
             StartupReconciliation(
                 processRepository = processRepository,
                 questionsService = questionsService,
+                runMessagesService = runMessagesService,
                 dispatchService = dispatchService,
                 continuationService = continuationService,
                 agentsService = agentsService,
@@ -137,6 +143,56 @@ class StartupReconciliationTest {
         }
 
     @Test
+    fun `reconcile closes the inbox of each interrupted run and only those`() =
+        runTest {
+            val h = Harness()
+            val a = h.processRepository.obtainProcessId("a", emptyMap(), 100).processId
+            h.processRepository.transitionStatus(a, ProcessStatus.WORKING, 1, null)
+            val b = h.processRepository.obtainProcessId("a", emptyMap(), 100).processId
+            h.processRepository.transitionStatus(b, ProcessStatus.WORKING, 1, null)
+            val done = h.processRepository.obtainProcessId("a", emptyMap(), 100).processId
+            h.processRepository.transitionStatus(done, ProcessStatus.FINISHED, 1, null)
+
+            h.reconciliation.reconcile()
+
+            coVerify(exactly = 1) { h.runMessagesService.closeForProcess(a) }
+            coVerify(exactly = 1) { h.runMessagesService.closeForProcess(b) }
+            coVerify(exactly = 0) { h.runMessagesService.closeForProcess(done) }
+        }
+
+    @Test
+    fun `reconcile marks QUEUED messages of runs that ended without closing their inbox UNDELIVERED`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val messages =
+                RunMessagesService(RunMessagesRepository(db), ProcessEventBroadcaster(), RunMessagesConfig(), TestFixtures.mockLogger())
+            val h = Harness(db = db, runMessagesService = messages)
+            val ended = h.processRepository.obtainProcessId("a", emptyMap(), 100).processId
+            h.processRepository.transitionStatus(ended, ProcessStatus.WORKING, 1, null)
+            val interrupted = h.processRepository.obtainProcessId("a", emptyMap(), 100).processId
+            h.processRepository.transitionStatus(interrupted, ProcessStatus.WORKING, 1, null)
+            messages.send(ended, null, "lost")
+            messages.send(interrupted, null, "cut off")
+            // The terminal status committed, but the run-end close never ran (it failed, or the server stopped).
+            h.processRepository.transitionStatus(ended, ProcessStatus.FINISHED, 2, null)
+
+            h.reconciliation.reconcile()
+
+            assertEquals(listOf(RunMessageStatus.UNDELIVERED), messages.list(ended).map { it.status })
+            assertEquals(listOf(RunMessageStatus.UNDELIVERED), messages.list(interrupted).map { it.status })
+        }
+
+    @Test
+    fun `reconcile runs the ended-runs inbox sweep once`() =
+        runTest {
+            val h = Harness()
+
+            h.reconciliation.reconcile()
+
+            coVerify(exactly = 1) { h.runMessagesService.closeForEndedRuns() }
+        }
+
+    @Test
     fun `reconcile is a no-op when there are no interrupted runs`() =
         runTest {
             val h = Harness()
@@ -160,6 +216,7 @@ class StartupReconciliationTest {
             StartupReconciliation(
                 processRepository,
                 questionsService,
+                mockk<RunMessageExpiry>(relaxed = true),
                 dispatchService,
                 continuationService,
                 mockk(relaxed = true),
@@ -183,6 +240,7 @@ class StartupReconciliationTest {
             StartupReconciliation(
                 processRepository,
                 questionsService,
+                mockk<RunMessageExpiry>(relaxed = true),
                 dispatchService,
                 continuationService,
                 mockk(relaxed = true),

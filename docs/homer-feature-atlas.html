@@ -1811,6 +1811,22 @@ homer-ask check "$ID" --wait 55     # exit 3 = still open, ask again</code></pre
         </article>
 
         <article class="f">
+          <h3>Messages to a running run <span class="where">http · console · shell · MCP</span></h3>
+          <p>The reverse channel: an operator sends a message to a running run and the run decides when to read it. The
+            message waits in the run's inbox as <code>QUEUED</code> and becomes <code>DELIVERED</code> when a step takes
+            it, or <code>UNDELIVERED</code> if the run ends first. Send and list over the API (<code>409</code> once the
+            run has ended); a shell step reads with <code>homer-inbox</code>, a Claude command through
+            <code>PostToolUse</code> / <code>Stop</code> hooks that call <code>homer-inbox --hook</code>, or the
+            <code>check_messages</code> MCP tool. The run's page in the console shows the messages with their status and, to
+            a user who may control the run, a send box while it is live. A run only ever takes its own messages, and <code>server.messages</code> caps
+            the text length and the messages per run.</p>
+          <pre><code>curl -X POST "$HOMER/api/v1/status/$PID/messages" \
+     -d '{"text":"use the staging db"}' -H 'Content-Type: application/json'
+# in the run:
+homer-inbox</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Question limits <span class="where">server config</span></h3>
           <p>Bounds how much a workspace command can pin open: open questions per process, held waits, text length and
             option count.</p>
@@ -2652,7 +2668,7 @@ apk add --no-cache tar gzip curl</code></pre>
           <h3>Question tools <span class="where">mcp</span></h3>
           <p>A separate endpoint authenticated by the per-process callback token, for the command that is running right
             now.</p>
-          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch</code></pre>
+          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch · check_messages</code></pre>
         </article>
 
       </div>

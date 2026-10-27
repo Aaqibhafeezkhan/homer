@@ -79,6 +79,16 @@ object HomerApi {
             setBody(TextContent("""{"answer":${E2e.json.encodeToString(answer)}}""", ContentType.Application.Json))
         }
 
+    suspend fun sendMessage(
+        processId: Int,
+        text: String,
+    ): HttpResponse =
+        E2e.client.post("/api/v1/status/$processId/messages") {
+            setBody(TextContent("""{"text":${E2e.json.encodeToString(text)}}""", ContentType.Application.Json))
+        }
+
+    suspend fun messages(processId: Int): RunMessagesList = decode(E2e.client.get("/api/v1/status/$processId/messages"))
+
     suspend fun continuations(status: String? = null): ContinuationList =
         decode(
             E2e.client.get("/api/v1/continuations") {

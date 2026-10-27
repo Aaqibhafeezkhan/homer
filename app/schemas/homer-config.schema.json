@@ -233,6 +233,7 @@
         },
         "mcp": { "$ref": "#/$defs/McpServerConfig" },
         "questions": { "$ref": "#/$defs/QuestionsConfig" },
+        "messages": { "$ref": "#/$defs/RunMessagesConfig" },
         "localRunner": { "$ref": "#/$defs/LocalRunnerConfig" },
         "runnerClaimTimeoutSec": {
           "type": "integer",
@@ -376,6 +377,25 @@
           "minimum": 1,
           "default": 32,
           "description": "Maximum simultaneously held answer-waits per process; further waits are rejected with 429. Bounds the connections a workspace command can pin open."
+        }
+      }
+    },
+    "RunMessagesConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Per-run inbox: operator messages sent to a running run, which the run takes through a hook or the MCP tool. See ADR-0097.",
+      "properties": {
+        "maxTextLength": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000,
+          "description": "Maximum length (characters) of one message; longer text is rejected with 400."
+        },
+        "maxPerRun": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 100,
+          "description": "Maximum messages stored per run, in any state; further sends are rejected with 429."
         }
       }
     },

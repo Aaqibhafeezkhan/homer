@@ -259,6 +259,22 @@ class TooManyOpenQuestionsException(
 ) : HomerException("Process $processId already has $maxOpen open questions")
 
 /**
+ * Raised when an operator message is sent to a run that has ended (or never existed).
+ * Maps to 409 Conflict. See ADR-0097.
+ */
+class RunNotAcceptingMessagesException(
+    val processId: Int,
+) : HomerException("Process $processId is no longer accepting messages")
+
+/**
+ * Raised when a run already stores `server.messages.maxPerRun` messages. Maps to 429 Too Many Requests.
+ */
+class TooManyRunMessagesException(
+    val processId: Int,
+    val maxMessages: Int,
+) : HomerException("Process $processId already has $maxMessages messages")
+
+/**
  * Raised when a process already holds `server.questions.maxConcurrentWaitsPerProcess`
  * concurrent answer-waits. Bounds the connections/coroutines a workspace
  * command can pin open (each hold can last up to `maxWaitSec`). Maps to

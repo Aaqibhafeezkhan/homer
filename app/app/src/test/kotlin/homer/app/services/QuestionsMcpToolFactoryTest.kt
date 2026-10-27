@@ -4,6 +4,8 @@ import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.fixtures.all
 import homer.app.models.QuestionsConfig
+import homer.app.models.RunMessagesConfig
+import homer.app.services.persistence.RunMessagesRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -45,10 +47,12 @@ class QuestionsMcpToolFactoryTest {
         service: QuestionsService,
         config: QuestionsConfig = QuestionsConfig(),
         dispatchService: DispatchService = mockk(relaxed = true),
+        runMessagesService: RunMessagesService = mockk(relaxed = true),
     ) = QuestionsMcpToolFactory(
         questionsService = service,
         questionsConfig = config,
         dispatchService = dispatchService,
+        runMessagesService = runMessagesService,
         logger = TestFixtures.mockLogger(),
     )
 
@@ -79,10 +83,13 @@ class QuestionsMcpToolFactoryTest {
     ): String? = (result.structuredContent?.get(key) as? JsonPrimitive)?.content
 
     @Test
-    fun `buildServer registers the four question tools`() {
+    fun `buildServer registers the question tools and check_messages`() {
         val server = factory(service()).buildServer(processId = 1)
 
-        assertEquals(setOf("ask_user", "check_answer", "ask_user_and_wait", "ask_and_dispatch"), server.tools.keys)
+        assertEquals(
+            setOf("ask_user", "check_answer", "ask_user_and_wait", "ask_and_dispatch", "check_messages"),
+            server.tools.keys,
+        )
     }
 
     @Test
@@ -324,5 +331,57 @@ class QuestionsMcpToolFactoryTest {
 
             assertFalse(result.isError ?: false)
             assertTrue(firstText(result).contains("qid-1"))
+        }
+
+    private suspend fun inbox(): Pair<RunMessagesService, Int> {
+        val db = PersistenceTestSupport.tempDatabase()
+        val pm = PersistenceTestSupport.processManager(db = db)
+        val id = pm.obtainProcessId("agent-a")
+        val messages =
+            RunMessagesService(RunMessagesRepository(db), ProcessEventBroadcaster(), RunMessagesConfig(), TestFixtures.mockLogger())
+        return messages to id
+    }
+
+    @Test
+    fun `check_messages returns the queued messages and marks them delivered`() =
+        runTest {
+            val (messages, id) = inbox()
+            val service = service()
+            service.registerProcess(id, "agent-a")
+            val sent = messages.send(id, "alice", "use the staging cluster")
+
+            val result = factory(service, runMessagesService = messages).checkMessages(id)
+
+            assertFalse(result.isError ?: false)
+            assertEquals(RunMessageHookOutput.contextText(listOf(sent)), firstText(result))
+            assertEquals(listOf(RunMessageStatus.DELIVERED), messages.list(id).map { it.status })
+        }
+
+    @Test
+    fun `check_messages with an empty inbox says so`() =
+        runTest {
+            val (messages, id) = inbox()
+            val service = service()
+            service.registerProcess(id, "agent-a")
+
+            val result = factory(service, runMessagesService = messages).checkMessages(id)
+
+            assertFalse(result.isError ?: false)
+            assertEquals("No messages from the operator.", firstText(result))
+        }
+
+    @Test
+    fun `check_messages on a closed run is a tool error and leaves the messages queued`() =
+        runTest {
+            val (messages, id) = inbox()
+            val service = service()
+            service.registerProcess(id, "agent-a")
+            messages.send(id, "alice", "too late")
+            service.expireForProcess(id)
+
+            val result = factory(service, runMessagesService = messages).checkMessages(id)
+
+            assertEquals(true, result.isError)
+            assertEquals(listOf(RunMessageStatus.QUEUED), messages.list(id).map { it.status })
         }
 }
