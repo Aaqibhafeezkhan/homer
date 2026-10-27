@@ -8,6 +8,7 @@ import homer.app.executors.LockManager
 import homer.app.executors.ParallelRunsManager
 import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
+import homer.app.executors.RunMessageExpiry
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
@@ -88,6 +89,7 @@ class CooldownEndpointTest {
                 telemetryService = TestFixtures.mockTelemetryService(),
                 processManager = processManager,
                 questionsService = mockk<QuestionsService>(relaxed = true),
+                runMessages = mockk<RunMessageExpiry>(relaxed = true),
                 coroutineScope = CoroutineScope(Dispatchers.Default + Job()),
                 logger = TestFixtures.mockLogger(),
             )

@@ -139,7 +139,8 @@ marked `Constraint:`.
   - **Constraint:** the total, per-principal and wait bounds are `server.maintenance` config,
     not constants; a shed or expired start leaves no process row and names no input value.
 - **`StartupReconciliation`** — runs once before traffic: interrupted runs to `UNKNOWN`, their
-  questions expired, purge times stamped, and dispatches and continuations left mid-fire settled
+  questions expired, queued run messages of every ended run undelivered, purge times stamped,
+  and dispatches and continuations left mid-fire settled
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).
 - **`LockManager`** — the three `onCollision` strategies (`WAIT`,
   `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`).

@@ -1,5 +1,6 @@
 package homer.app.services
 
+import homer.app.executors.RunMessageExpiry
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
@@ -596,6 +597,7 @@ class WorkspacePurgeServiceTest {
             StartupReconciliation(
                 repository,
                 realQuestions,
+                mockk<RunMessageExpiry>(relaxed = true),
                 mockk(relaxed = true),
                 mockk(relaxed = true),
                 agentsService,

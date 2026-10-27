@@ -90,10 +90,11 @@ See ADR-0020.
   boot (the coroutines it referred to are gone).
 - **`StartupReconciliation`** — runs once before traffic: marks interrupted
   `CREATED`/`WORKING` processes `UNKNOWN`, expires their OPEN non-dispatch-bound
-  questions, stamps purge times on every `UNKNOWN` row still missing them (from
-  the agent's current `workspace` config, counted from now; ADR-0048), fails
-  any dispatch left `DISPATCHING` by the restart (so a crash mid-fire can't
-  cause a duplicate re-fire), then re-fires any PENDING dispatch
+  questions, marks every `QUEUED` run message of a run no longer
+  `CREATED`/`WORKING` `UNDELIVERED` (ADR-0097), stamps purge times on every
+  `UNKNOWN` row still missing them (from the agent's current `workspace`
+  config, counted from now; ADR-0048), fails any dispatch left `DISPATCHING`
+  by the restart (so a crash mid-fire can't cause a duplicate re-fire), then re-fires any PENDING dispatch
   whose question is already ANSWERED (crash-safety for ask-and-dispatch). Same
   two-step crash-safety for continuations: fail any left `DISPATCHING`, then
   fire any PENDING continuation whose watched process is already terminal.

@@ -65,6 +65,7 @@ import homer.app.services.ProcessManager
 import homer.app.services.QuestionsMcpToolFactory
 import homer.app.services.QuestionsService
 import homer.app.services.ResultTokenService
+import homer.app.services.RunMessagesService
 import homer.app.services.StartupReconciliation
 import homer.app.services.WorkspacePurgeService
 import homer.app.services.persistence.ContinuationRepository
@@ -74,6 +75,7 @@ import homer.app.services.persistence.DispatchRepository
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.QuestionsRepository
 import homer.app.services.persistence.ResultTokenRepository
+import homer.app.services.persistence.RunMessagesRepository
 import homer.app.services.persistence.ServerMetaRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -289,6 +291,8 @@ val appModule =
 
         single { QuestionsRepository(db = get()) }
 
+        single { RunMessagesRepository(db = get()) }
+
         single { DispatchRepository(db = get()) }
 
         single { ContinuationRepository(db = get()) }
@@ -334,6 +338,7 @@ val appModule =
             StartupReconciliation(
                 processRepository = get(),
                 questionsService = get(),
+                runMessagesService = get<RunMessagesService>(),
                 dispatchService = get(),
                 continuationService = get(),
                 agentsService = get(),
@@ -382,6 +387,15 @@ val appModule =
                 logger = get { parametersOf("homer.app.services.QuestionsService") },
                 broadcaster = get(),
                 config = get<AppConfig>().server.questions,
+            )
+        }
+
+        single {
+            RunMessagesService(
+                repository = get(),
+                broadcaster = get(),
+                config = get<AppConfig>().server.messages,
+                logger = get { parametersOf("homer.app.services.RunMessagesService") },
             )
         }
 
@@ -498,6 +512,7 @@ val appModule =
                 telemetryService = get<TelemetryService>(),
                 processManager = get<ProcessManager>(),
                 questionsService = get<QuestionsService>(),
+                runMessages = get<RunMessagesService>(),
                 coroutineScope = get<CoroutineScope>(named("applicationScope")),
                 logger = get { parametersOf("homer.app.executors.ProcessExecutor") },
                 // Resolved at call time, not construction, to break the cycle
