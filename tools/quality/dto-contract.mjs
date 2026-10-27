@@ -27,6 +27,7 @@ export const RENAMES = {
   SweepDeletedPod: 'SweepDeletedPodResponse',
   SweepStatus: 'SweepStatusResponse',
   Question: 'QuestionResponse',
+  RunMessage: 'RunMessageResponse',
   Continuation: 'ContinuationResponse',
   ContinuationsListResponse: 'ContinuationListResponse',
   AgentInput: 'Param',

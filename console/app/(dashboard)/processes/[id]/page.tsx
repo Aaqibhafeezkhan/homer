@@ -32,6 +32,7 @@ import { toArtifactApiPath } from '@/lib/utils/download';
 import { ArtifactPickerDialog } from '@/components/processes/artifact-picker-dialog';
 import { RunnerPanel } from '@/components/processes/runner-panel';
 import { QuestionPanel } from '@/components/questions/question-panel';
+import { RunMessagePanel } from '@/components/messages/run-message-panel';
 import { ExecutionItem } from '@/components/processes/execution-item';
 import { CurrentCommandBox } from '@/components/processes/current-command-box';
 import { ProcessActions } from '@/components/processes/process-actions';
@@ -429,6 +430,8 @@ export default function ProcessDetailPage({
       {process.runner && <RunnerPanel runner={process.runner} />}
 
       <QuestionPanel processId={processId} />
+
+      <RunMessagePanel process={process} />
 
       <ActionErrorAlert action="Retry" isError={actions.retryProcess.isError} error={actions.retryProcess.error} />
 

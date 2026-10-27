@@ -52,6 +52,7 @@ components/
   costs/                            # cost dashboard cards
   editor/                           # agent file editor + debug-run panels
   questions/                        # QuestionItem, QuestionPanel
+  messages/                         # RunMessagePanel (operator messages to a running run)
   plugins/                          # PluginHost — mounts a runtime plugin into a DOM node
 lib/
   api/client.ts                     # HomerApiClient singleton + HomerApiError
@@ -436,7 +437,8 @@ operator. See
   root.
 - Known SSE event names today: `process.status`, `process.cmd`,
   `agent.reload`, `log.chunk`, `log.end`, `llm.event`, `llm.end`,
-  `question.asked`, `question.answered`, `question.expired`.
+  `question.asked`, `question.answered`, `question.expired`, `message.queued`,
+  `message.delivered`, `message.undelivered`.
 - Known response headers consumed by the client:
   `X-Process-Status`, `X-File-Complete` (artifact download endpoint).
 

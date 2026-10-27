@@ -18,6 +18,8 @@ import {
   useQuestions,
   useOpenQuestionsCount,
   useAnswerQuestion,
+  useRunMessages,
+  useSendRunMessage,
   useCancelDispatch,
   useContinuations,
   usePendingContinuationsCount,
@@ -67,6 +69,8 @@ vi.mock('./client', () => ({
     readAgentFile: vi.fn(),
     getQuestions: vi.fn(),
     answerQuestion: vi.fn(),
+    getRunMessages: vi.fn(),
+    sendRunMessage: vi.fn(),
     cancelDispatch: vi.fn(),
     getContinuations: vi.fn(),
     cancelContinuation: vi.fn(),
@@ -275,6 +279,53 @@ describe('useAgentFile', () => {
     renderHook(() => useAgentFile('my-agent', 'a.sh', false), { wrapper: wrapper(client) });
     expect(homerApi.readAgentFile).not.toHaveBeenCalled();
     expect(client.getQueryCache().find({ queryKey: queryKeys.agentFile('my-agent', '') })).toBeDefined();
+  });
+});
+
+describe('run message hooks', () => {
+  let client: QueryClient;
+
+  beforeEach(() => {
+    client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    vi.clearAllMocks();
+  });
+
+  it('useRunMessages fetches the run\'s inbox', async () => {
+    vi.mocked(homerApi.getRunMessages).mockResolvedValue({ messages: [] });
+    const { result } = renderHook(() => useRunMessages(7, true), { wrapper: wrapper(client) });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(homerApi.getRunMessages).toHaveBeenCalledWith(7);
+  });
+
+  it('useRunMessages polls every 30 s while the run accepts messages and stops once it ended', async () => {
+    vi.mocked(homerApi.getRunMessages).mockResolvedValue({ messages: [] });
+    const { result, rerender } = renderHook(({ active }) => useRunMessages(7, active), {
+      wrapper: wrapper(client),
+      initialProps: { active: true },
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const interval = () =>
+      client.getQueryCache().find({ queryKey: ['run-messages', 7] })?.observers[0]?.options.refetchInterval;
+    expect(interval()).toBe(30_000);
+    rerender({ active: false });
+    expect(interval()).toBe(false);
+  });
+
+  it('useSendRunMessage invalidates that run\'s messages, also when the send fails', async () => {
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const { result } = renderHook(() => useSendRunMessage(7), { wrapper: wrapper(client) });
+
+    vi.mocked(homerApi.sendRunMessage).mockResolvedValue({} as never);
+    await result.current.mutateAsync('hi');
+    expect(homerApi.sendRunMessage).toHaveBeenCalledWith(7, 'hi');
+
+    vi.mocked(homerApi.sendRunMessage).mockRejectedValue(new Error('409'));
+    await expect(result.current.mutateAsync('again')).rejects.toThrow('409');
+
+    const keys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
+    expect(keys.filter((k) => JSON.stringify(k) === '["run-messages",7]')).toHaveLength(2);
   });
 });
 
