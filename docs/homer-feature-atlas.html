@@ -3213,7 +3213,9 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             when the harness reported no cost and no session-spend endpoint answered), fallback reason, token
             usage and CLI session id. When
             <code>langfuse.projectId</code> is configured there is a link to the run's Langfuse trace. The agent name
-            links to its agent detail page. A run started by another run links to its parent, and a
+            links to its agent detail page, with the agent's <code>group</code> beside it when the agent has one (read
+            from the agent's current definition, so it can change or disappear on past runs). A run started by another
+            run links to its parent, and a
             <strong>Child runs</strong> card lists the runs it started; a run inside a flow also links to its root run
             (<strong>Root run #N</strong>). A root run's page instead shows a flat <strong>Flow</strong> section listing
             every visible descendant in id order — agent, status, cost and parent — with a toggle that hides the

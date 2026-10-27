@@ -178,7 +178,8 @@ other filters. A **Children of #id** filter drops the roots filter and its
 Flow column; **Root runs** clears it and returns to the flow view.
 
 Each run shows its **subject tags** (`key:value`) as chips beside the
-agent name. Clicking a tag chip adds it to the filter (`tag=` in the
+agent name. A run whose agent declares a `group` also shows that group
+beside the agent name. Clicking a tag chip adds it to the filter (`tag=` in the
 URL as one comma-separated value, ANDed, so a run must carry every selected tag); each
 active tag appears as a removable badge in the filter row, cleared
 individually or via **Clear**.
@@ -196,7 +197,10 @@ it; hover for the full sentence, which the run's own page shows in full.
   a plain link to the unfiltered list — e.g. a shared link opened directly)
 - **Agent**: The agent name in the header links to that agent's detail
   page; a run whose agent has since been deleted still links, and the
-  target shows an "Agent not found" state
+  target shows an "Agent not found" state. Beside the name, the header
+  shows the agent's `group` when the agent has one, and nothing when it
+  is ungrouped; the group is read from the agent's current definition,
+  so it can change or disappear on past runs
 - **Parent run**: When another run started this one (a `RunAgent`
   command, dispatch, continuation, or an external caller's
   `X-Homer-Parent-Process-Id` header), the header links to that parent;
