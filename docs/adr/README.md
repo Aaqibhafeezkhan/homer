@@ -156,3 +156,4 @@ One of:
 | [0095](0095-local-runner-can-be-turned-off.md) | The built-in local runner can be turned off | proposed |
 | [0096](0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md) | Unhealthy runners stop claiming, and idle consumers take turns | proposed |
 | [0097](0097-per-run-inbox.md) | A per-run inbox carries operator messages to a running run | proposed |
+| [0098](0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) | The stored pre-start failure reason is a fixed-vocabulary sentence | proposed |

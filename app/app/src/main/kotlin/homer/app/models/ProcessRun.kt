@@ -84,13 +84,14 @@ const val MAX_FAILURE_REASON_LENGTH = 500
 const val FAILURE_REASON_TRUNCATION_MARKER = " …"
 
 /** Cuts [text] to [MAX_FAILURE_REASON_LENGTH] characters, marking the cut with [FAILURE_REASON_TRUNCATION_MARKER]. */
-fun truncateFailureReason(text: String): String =
-    if (text.length <= MAX_FAILURE_REASON_LENGTH) {
-        text
-    } else {
-        text.take(MAX_FAILURE_REASON_LENGTH - FAILURE_REASON_TRUNCATION_MARKER.length) +
-            FAILURE_REASON_TRUNCATION_MARKER
-    }
+fun truncateFailureReason(text: String): String {
+    if (text.length <= MAX_FAILURE_REASON_LENGTH) return text
+    var body = text.take(MAX_FAILURE_REASON_LENGTH - FAILURE_REASON_TRUNCATION_MARKER.length)
+    // `take` counts UTF-16 chars and can cut inside a surrogate pair, which would store half
+    // a character in the column and in the JSON response — drop the orphaned half.
+    if (body.lastOrNull()?.isHighSurrogate() == true) body = body.dropLast(1)
+    return body + FAILURE_REASON_TRUNCATION_MARKER
+}
 
 /**
  * Pod lifecycle surfaced to clients and telemetry. `alias`

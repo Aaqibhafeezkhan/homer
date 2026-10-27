@@ -2250,4 +2250,14 @@ class ProcessRepositoryTest {
 
             assertEquals(MAX_FAILURE_REASON_LENGTH, repo.getInfo(id)!!.failureReason!!.length)
         }
+
+    @Test
+    fun `getRunVisibility reads the gate's two columns by key, or null for a missing row`() =
+        runTest {
+            val repo = repo()
+            val id = repo.obtainProcessId("a", emptyMap(), 100, owner = "alice").processId
+
+            assertEquals("alice" to "a", repo.getRunVisibility(id))
+            assertNull(repo.getRunVisibility(id + 100))
+        }
 }

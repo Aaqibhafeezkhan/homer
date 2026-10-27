@@ -35,7 +35,14 @@ always-on "does the production Dockerfile still build" gate.
   runs on a 60-second tick against minute-granularity `purgeAfter` /
   `retain.recordFor` durations, which makes a black-box wait-and-assert flaky.
   Its lifecycle coverage lives in `WorkspacePurgeServiceTest` /
-  `ProcessRepositoryTest`.
+  `ProcessRepositoryTest`. Three of the five pre-start failure causes are
+  excluded for the same flakiness reason: the claim timeout and both full
+  queues need a claim that is accepted but never answered, or saturating the
+  bounded wait/claim queues with concurrent runs — a timing race, not a
+  black-box assertion. Their sentences are pinned by
+  `PreStartFailureReasonTest` and the executor tests; the other two causes
+  and the withholding of the blocking run's id from a caller who cannot see
+  it are covered (`ConcurrencyAndLimitsTest`, `ProcessIsolationTest`).
 - **External pull-mode runners are covered; ssh and kubernetes are not.**
   `ExternalRunnerTest` runs against two real `homer-runner` containers
   (`homer-runner` serving `e2e-external`, `homer-runner-crash` serving

@@ -105,7 +105,13 @@ class RunnerClaimQueue(
             // raced in before cancel(), nobody else owns it, so close it here.
             request.deferred.cancel()
             closeIfDelivered(request)
-            throw RunnerClaimTimeoutException(timeout, filter, "claimed but no session was delivered")
+            // This observation names no runner, so both renderings are the same sentence.
+            throw RunnerClaimTimeoutException(
+                timeout,
+                filter,
+                "claimed but no session was delivered",
+                "claimed but no session was delivered",
+            )
         } catch (e: CancellationException) {
             request.tryFinish(ClaimRequest.State.CANCELLED)
             remove(request)

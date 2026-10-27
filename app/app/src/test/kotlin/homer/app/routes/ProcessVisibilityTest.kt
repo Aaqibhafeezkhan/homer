@@ -1013,6 +1013,35 @@ class ProcessVisibilityTest {
     // ---------- GET /status/all (Task 7: list visibility) ----------
 
     @Test
+    fun `status-all carries the failure reason and withholds the holder id from a non-admin row`() =
+        runBlocking {
+            val (pm, failed, holder) = managerWithLockSkip()
+            testApplication {
+                // Alice owns the failed run; the holder (bob's) is invisible to her, so the list
+                // row must carry the stored sentence and never the appended id.
+                val tokens = mapOf("alice" to ownerToken)
+                application {
+                    installGrantsApp(
+                        tokens,
+                        deps(authorizerFor(tokens), questionsService = questionsWithNoOpenCount(), processManagerOverride = pm),
+                    )
+                }
+
+                val res = client.get("/api/v1/status/all") { header(HttpHeaders.Authorization, "Bearer owner-token") }
+
+                assertEquals(HttpStatusCode.OK, res.status)
+                val reasons =
+                    apiJson
+                        .decodeFromString<ProcessListResponse>(res.bodyAsText())
+                        .processes
+                        .filter { it.id == failed }
+                        .map { it.failureReason }
+                assertEquals(listOf("Lock skip (SKIP_CURRENT)"), reasons)
+                assertTrue("(run #$holder" !in res.bodyAsText(), res.bodyAsText())
+            }
+        }
+
+    @Test
     fun `status-all scoped principal computes visibleOwner and the resolved visibleAgents set`() =
         testApplication {
             val tokens = mapOf("reader" to readToken)

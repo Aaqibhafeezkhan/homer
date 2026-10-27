@@ -151,8 +151,11 @@ private suspend fun ApiDeps.holderRunVisible(
 ): Boolean =
     processInfo.failureReasonRunId
         ?.let { holderId ->
-            val holder = processManager.getProcessInfo(holderId)
-            holder != null && authorizer.canSee(principal, holder.owner, holder.agentName)
+            // Two columns by primary key, not the holder's whole row: this runs on the polled
+            // /status/{id} path, and the holder is a run that was executing, so its row carries
+            // the full execution blobs.
+            val holder = processManager.getProcessVisibility(holderId)
+            holder != null && authorizer.canSee(principal, holder.first, holder.second)
         } ?: false
 
 /** `DELETE /kill/{processId}`: killing a process the caller can control. */

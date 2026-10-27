@@ -336,13 +336,14 @@ class TooManyPendingContinuationsException(
  * [publicReason] is the same observation without a runner alias. The alias is admin-only on
  * the status API (ADR-0077), and this reason rides the run's stored failure reason, which
  * every caller who can see the run reads — so only the alias-free rendering may be stored.
- * Defaults to [reason] for the callers whose observation names no runner.
+ * Both are required, so a call site cannot forget the alias-free one and default into
+ * storing the alias-bearing rendering.
  */
 class RunnerClaimTimeoutException(
     val timeout: Duration,
     val filter: RunnerFilter,
     val reason: String,
-    val publicReason: String = reason,
+    val publicReason: String,
 ) : HomerException("No runner claimed the run within ${timeout.inWholeSeconds} s (${filter.describe()}): $reason")
 
 /** Raised when the claim queue is at `server.maxPendingRunnerClaims`; the run fails without waiting. §12 rule 4. */

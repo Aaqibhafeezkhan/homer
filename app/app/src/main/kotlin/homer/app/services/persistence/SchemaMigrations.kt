@@ -19,7 +19,7 @@ internal fun upgradeSchema(
     migrateToV24(st, current)
     migrateToV27(st, current)
     migrateToV28(st, current)
-    migrateToV29(st, current)
+    migrateToV30(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -313,12 +313,17 @@ private fun migrateToV28(
     }
 }
 
-/** v28→v29 adds the stored pre-start failure reason and the run it names. */
-private fun migrateToV29(
+/**
+ * v29→v30 adds the stored pre-start failure reason and the run it names. Its own version, not
+ * main's v29 (the `run_messages` step): a database that release already stamped `user_version = 29`
+ * skips every step guarded below 30 when it has no column to add, so folding both features into
+ * v29 would leave such a database without the columns for good.
+ */
+private fun migrateToV30(
     st: Statement,
     current: Int,
 ) {
-    if (current in 1 until 29) {
+    if (current in 1 until 30) {
         // No backfill: a run that ended before this version was never observed by the code
         // that maps a cause to a reason, and a guessed reason is worse than none.
         addColumnIfMissing(st, "processes", "failure_reason", "TEXT")

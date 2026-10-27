@@ -54,9 +54,14 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
 
             // The reason says why it never started. This client is admin, so the id of
             // the run that held the lock is appended; a caller who may not open that run
-            // gets the same text without it.
-            val reason = second.failureReason
-            assertTrue(reason != null && reason.contains("SKIP_CURRENT"), "skipped run must say why: $reason")
+            // gets the same text without it. The reason is stored in a second transaction
+            // after the FAILED status commits, so the poll that first sees the status can
+            // still read a null reason — await the reason itself.
+            val reason =
+                Awaits.awaitNotNull("the skipped run's failure reason") {
+                    Awaits.awaitTerminal(secondId).failureReason
+                }
+            assertTrue(reason.contains("SKIP_CURRENT"), "skipped run must say why: $reason")
             assertTrue(reason.contains("(run #$firstId)"), "the reason must name the holder: $reason")
 
             val first = Awaits.awaitTerminal(firstId)
@@ -89,9 +94,13 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             val second = Awaits.awaitTerminal(secondId)
             assertEquals("FAILED", second.status)
             assertTrue(second.executions.isEmpty(), "rejected run must not execute commands: ${second.executions}")
-            val reason = second.failureReason
+            // Awaited, not read off the terminal poll: the reason write trails the FAILED status.
+            val reason =
+                Awaits.awaitNotNull("the rejected run's failure reason") {
+                    Awaits.awaitTerminal(secondId).failureReason
+                }
             assertTrue(
-                reason != null && reason.contains("maxParallelRuns"),
+                reason.contains("maxParallelRuns"),
                 "rejected run must say why it never started: $reason",
             )
 

@@ -11,6 +11,7 @@ import io.kotest.property.Arb
 import io.kotest.property.arbitrary.Codepoint
 import io.kotest.property.arbitrary.alphanumeric
 import io.kotest.property.arbitrary.int
+import io.kotest.property.arbitrary.printableAscii
 import io.kotest.property.arbitrary.string
 import io.kotest.property.checkAll
 import kotlinx.coroutines.test.runTest
@@ -104,11 +105,34 @@ class PreStartFailureReasonTest {
     }
 
     @Test
+    fun `a cut inside a surrogate pair does not store half a character`() {
+        // An emoji in a long agent name lands the cut inside a surrogate pair; the stored
+        // reason must stay a well-formed string, never a lone trailing surrogate. The one
+        // leading ASCII char puts the cut after an odd UTF-16 count, i.e. between the two
+        // halves of an emoji, not between two whole ones.
+        val failure = PreStartFailureReason.of(MaxParallelRunsExceededException("a" + "🏁".repeat(400), 2))!!
+
+        assertTrue(failure.reason.length <= MAX_FAILURE_REASON_LENGTH)
+        assertTrue(failure.reason.endsWith(" …"))
+        assertWellFormed(failure.reason)
+    }
+
+    /** Every surrogate in [text] is half of a pair, not a lone one. */
+    private fun assertWellFormed(text: String) {
+        text.forEachIndexed { i, c ->
+            if (c.isHighSurrogate()) assertTrue(i + 1 < text.length && text[i + 1].isLowSurrogate(), "lone high surrogate at $i: $text")
+            if (c.isLowSurrogate()) assertTrue(i > 0 && text[i - 1].isHighSurrogate(), "lone low surrogate at $i: $text")
+        }
+    }
+
+    @Test
     fun `every mapped reason fits the cap and carries no control character`() =
         runTest {
             // The stored text reaches a console and a JSON field whatever an agent name or a
             // filter's tags hold, so the bound must hold for any input, not just the examples.
-            val agentNames = Arb.string(0..600)
+            // Astral-plane input (the cut landing inside a surrogate pair) is covered by the
+            // dedicated test above.
+            val agentNames = Arb.string(0..600, Codepoint.printableAscii())
             val tags = Arb.string(1..64, Codepoint.alphanumeric())
             checkAll(agentNames, tags) { agentName, tag ->
                 val exceptions =
@@ -127,6 +151,7 @@ class PreStartFailureReasonTest {
                     val reason = PreStartFailureReason.of(e)!!.reason
                     assertTrue(reason.length <= MAX_FAILURE_REASON_LENGTH, "over cap (${reason.length}): $reason")
                     assertTrue(reason.none { it.isISOControl() }, "control character in: $reason")
+                    assertWellFormed(reason)
                 }
             }
         }
