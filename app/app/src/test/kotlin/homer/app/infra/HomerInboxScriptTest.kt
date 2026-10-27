@@ -189,6 +189,77 @@ class HomerInboxScriptTest {
         assertTrue(result.stderr.startsWith("homer-inbox: usage"), result.stderr)
     }
 
+    @Test
+    fun `plain mode exits 2 when Homer is unreachable`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(emptyList(), dir, stubExit = 7)
+
+        assertEquals(2, result.exit)
+        assertEquals("", result.stdout)
+        assertTrue(result.stderr.startsWith("homer-inbox: request failed") && "unreachable" in result.stderr, result.stderr)
+    }
+
+    @Test
+    fun `plain mode exits 2 without a request when the API URL is missing`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(emptyList(), dir, env = mapOf("HMR_CALLBACK_TOKEN" to "tok"))
+
+        assertEquals(2, result.exit)
+        assertTrue("HMR_API_URL" in result.stderr, result.stderr)
+        assertEquals("", result.curlArgs, "no request without an API URL")
+    }
+
+    @Test
+    fun `plain mode exits 2 without a request when the callback token is missing`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(emptyList(), dir, env = mapOf("HMR_API_URL" to "http://homer.test"))
+
+        assertEquals(2, result.exit)
+        assertTrue("HMR_CALLBACK_TOKEN" in result.stderr, result.stderr)
+        assertEquals("", result.curlArgs, "no request without a token")
+    }
+
+    @Test
+    fun `a rejection without a msg falls back to the HTTP status, exit 2 in plain mode`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(emptyList(), dir, stubBody = "{}", stubCode = "409")
+
+        assertEquals(2, result.exit)
+        assertEquals("homer-inbox: request rejected with HTTP 409\n", result.stderr)
+    }
+
+    @Test
+    fun `a rejection without a msg falls back to the HTTP status, exit 1 in hook mode`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(listOf("--hook", "stop"), dir, stubBody = "Conflict", stubCode = "409")
+
+        assertEquals(1, result.exit)
+        assertEquals("", result.stdout)
+        assertEquals("homer-inbox: request rejected with HTTP 409\n", result.stderr)
+    }
+
+    @Test
+    fun `hook mode without an event is a usage error, exit 1`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val result = runInbox(listOf("--hook"), dir)
+
+        assertEquals(1, result.exit)
+        assertTrue(result.stderr.startsWith("homer-inbox: usage"), result.stderr)
+        assertEquals("", result.curlArgs, "no request without an event")
+    }
+
     private fun assumeShellAvailable() {
         assumeFalse(System.getProperty("os.name").lowercase().contains("win"))
         assumeTrue(Paths.get("/bin/sh").exists(), "POSIX sh required")
