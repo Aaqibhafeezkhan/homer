@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.time.ZoneId
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -41,6 +42,20 @@ class CronSupportTest {
         val zone = ZoneId.of("Europe/Warsaw")
         val parsed = CronSupport.executionTimeFor(CronConfig(expression = "0 9 * * *", timezone = zone.id))
         assertEquals(zone, parsed.first)
+    }
+
+    @Test
+    fun `executionTimeFor throws for an invalid expression`() {
+        assertFailsWith<IllegalArgumentException> {
+            CronSupport.executionTimeFor(CronConfig(expression = "not a cron", timezone = "UTC"))
+        }
+    }
+
+    @Test
+    fun `executionTimeFor throws for an invalid timezone`() {
+        assertFailsWith<java.time.DateTimeException> {
+            CronSupport.executionTimeFor(CronConfig(expression = "* * * * *", timezone = "Not/AZone"))
+        }
     }
 
     @Test
