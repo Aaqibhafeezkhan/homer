@@ -286,3 +286,15 @@ data class LangGraphGraph(
     val topology: Topology? = null,
     val error: String? = null,
 )
+
+@Serializable
+data class RunMessage(
+    val id: String,
+    val text: String,
+    val status: String,
+)
+
+@Serializable
+data class RunMessagesList(
+    val messages: List<RunMessage>,
+)

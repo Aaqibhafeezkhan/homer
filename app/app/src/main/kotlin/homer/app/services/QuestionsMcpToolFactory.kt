@@ -28,15 +28,16 @@ import org.slf4j.Logger
 
 /**
  * Builds the per-request MCP [Server] for the `/mcp/questions` endpoint:
- * four tools (`ask_user`, `check_answer`, `ask_user_and_wait`, `ask_and_dispatch`)
- * closed over the processId resolved from the caller's `HMR_CALLBACK_TOKEN`. A fresh
- * Server is built per POST, same stateless pattern as [McpToolFactory].
- * See ADR-0019.
+ * five tools (`ask_user`, `check_answer`, `ask_user_and_wait`, `ask_and_dispatch`,
+ * `check_messages`) closed over the processId resolved from the caller's
+ * `HMR_CALLBACK_TOKEN`. A fresh Server is built per POST, same stateless pattern as
+ * [McpToolFactory]. See ADR-0019 and ADR-0097.
  */
 internal class QuestionsMcpToolFactory(
     private val questionsService: QuestionsService,
     private val questionsConfig: QuestionsConfig,
     private val dispatchService: DispatchService,
+    private val runMessagesService: RunMessagesService,
     private val logger: Logger,
     private val holdChunkSec: Int = HOLD_CHUNK_SEC,
 ) {
@@ -59,6 +60,7 @@ internal class QuestionsMcpToolFactory(
                 checkAnswerTool(processId),
                 askUserAndWaitTool(processId),
                 askAndDispatchTool(processId),
+                checkMessagesTool(processId),
             ),
         )
         return server
@@ -119,6 +121,31 @@ internal class QuestionsMcpToolFactory(
                 inputSchema = dispatchSchema(),
             ),
         ) { request -> askAndDispatch(processId, request) }
+
+    /** The `check_messages` tool: take the operator messages queued for this run. */
+    private fun checkMessagesTool(processId: Int): RegisteredTool =
+        RegisteredTool(
+            Tool(
+                name = "check_messages",
+                description =
+                    "Check for messages the operator sent you while you work. Returns every message queued " +
+                        "since the last check, each exactly once, or says there are none. Call it between steps " +
+                        "of long work so a correction from the operator reaches you before you continue.",
+                inputSchema = ToolSchema(properties = buildJsonObject { }),
+            ),
+        ) { checkMessages(processId) }
+
+    /** Takes the run's queued messages; a closed run is a tool error and its messages stay queued. */
+    internal suspend fun checkMessages(processId: Int): CallToolResult =
+        runTool {
+            val registration = questionsService.registrationFor(processId)
+            if (registration == null || registration.closed) {
+                return@runTool toolError("Process $processId is no longer accepting messages")
+            }
+            val messages = runMessagesService.take(processId)
+            val text = if (messages.isEmpty()) "No messages from the operator." else RunMessageHookOutput.contextText(messages)
+            CallToolResult(content = listOf(TextContent(text)))
+        }
 
     internal suspend fun askUser(
         processId: Int,

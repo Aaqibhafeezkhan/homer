@@ -463,6 +463,7 @@ val appModule =
                 questionsService = get(),
                 questionsConfig = get<AppConfig>().server.questions,
                 dispatchService = get(),
+                runMessagesService = get(),
                 logger = get { parametersOf("homer.app.services.QuestionsMcpToolFactory") },
             )
         }

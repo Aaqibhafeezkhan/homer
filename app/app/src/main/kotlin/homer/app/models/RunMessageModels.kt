@@ -23,3 +23,16 @@ data class RunMessageResponse(
 data class RunMessagesListResponse(
     val messages: List<RunMessageResponse>,
 )
+
+/** One message a run took from its inbox, in the body of `POST /api/v1/callback/messages/take`. */
+@Serializable
+data class TakenRunMessage(
+    val id: String,
+    val text: String,
+    val createdAt: Long,
+)
+
+@Serializable
+data class TakeRunMessagesResponse(
+    val messages: List<TakenRunMessage>,
+)

@@ -1,0 +1,15 @@
+name: inbox-reader
+description: Polls its run inbox with homer-inbox until an operator message arrives, then echoes it
+commands:
+  - !<script>
+    label: read-inbox
+    timeout: 120
+    content: |
+      i=0
+      while [ "$i" -lt 100 ]; do
+        OUT=$(homer-inbox)
+        case "$OUT" in *'"text"'*) break ;; esac
+        i=$((i + 1))
+        sleep 1
+      done
+      echo "got=$(printf '%s' "$OUT" | grep -o '"text": *"[^"]*"' | head -n1 | cut -d'"' -f4)"

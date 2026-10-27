@@ -64,6 +64,7 @@ class QuestionsMcpRoutesTest {
                 questionsService = service,
                 questionsConfig = QuestionsConfig(),
                 dispatchService = mockk(relaxed = true),
+                runMessagesService = mockk(relaxed = true),
                 logger = TestFixtures.mockLogger(),
                 holdChunkSec = holdChunkSec,
             )

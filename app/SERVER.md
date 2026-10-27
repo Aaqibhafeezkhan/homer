@@ -2626,11 +2626,12 @@ machine a pull-mode runner instance runs on — and Homer installs nothing
 there, so that environment must supply every binary a command relies on:
 
 - **`/bin/sh`** and **`curl`** — required by the `homer-ask` /
-  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` helpers,
-  which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
+  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` /
+  `homer-inbox` helpers, which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
   Homer API over `curl`; a different configured `shell` does not replace
   `/bin/sh`. Without them, operator questions, ask-and-dispatch, result
-  fetching and runtime run tags fail even though plain commands still run.
+  fetching, runtime run tags and operator messages fail even though plain
+  commands still run.
 - **`claude`** — for agents that use `Claude` commands.
 - **`codex`** — for agents that use `Codex` commands.
 - **`homer_langgraph`** — for agents that use `LangGraph` commands.
@@ -2647,7 +2648,7 @@ so agents needing those need an image derived from it; see
 Also set **`homerApiUrl`** (per-runner, below) to a URL the remote
 environment can reach Homer on. It is exposed remotely as `HMR_API_URL`
 and backs every feature that calls back over HTTP — the `homer-*`
-helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`) and the
+helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`, `homer-inbox`) and the
 MCP question tools. If it is unset or unreachable, those fail silently
 while ordinary commands succeed, which looks like partial breakage rather
 than a misconfiguration. `RunAgent` does not use it: the child run is

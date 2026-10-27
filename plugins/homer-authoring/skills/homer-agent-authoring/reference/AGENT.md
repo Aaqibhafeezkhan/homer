@@ -2296,8 +2296,8 @@ Homer provides built-in environment variables for workspace management:
 | `HMR_AGENT_NAME` | Name of the agent being executed | `deploy_service` |
 | `HMR_AGENT_DIR` | Absolute path to the agent's own config directory (the one holding its `agent.yaml` / `agent.json`); use it to read files shipped alongside the definition, e.g. `cat "$HMR_AGENT_DIR/prompt.txt"` | `/srv/homer/agents/deploy_service` |
 | `HMR_SERVER_ID` | Identifier of the Homer instance running this process (random UUID, regenerated on every server start) | `3f2b6c1e-8a4d-4c1b-9e2f-7d5a0b6c9e11` |
-| `HMR_API_URL` | Base URL of the Homer HTTP API, used by the `.homer/bin` helpers (`homer-ask`, `homer-tag`, `homer-dispatch`, `homer-join`, `homer-result`), the question MCP config, and remote-runner agents to call back into Homer (`RunAgent` dispatches in-process and does not use it). The ssh, kubernetes and external runners inject it from their `homerApiUrl`; the local runner defaults it to `http://127.0.0.1:{server.port}` when not already set | `http://homer:8080` |
-| `HMR_CALLBACK_TOKEN` | Per-process random token authorizing this process's callback routes (`/api/v1/callback/*`: questions, tags, dispatches, runs, joins, results) — never a real operator credential. Read by `homer-ask` and the pre-generated MCP config; see [Asking the operator questions](#asking-the-operator-questions) | (random per process) |
+| `HMR_API_URL` | Base URL of the Homer HTTP API, used by the `.homer/bin` helpers (`homer-ask`, `homer-tag`, `homer-dispatch`, `homer-join`, `homer-result`, `homer-inbox`), the question MCP config, and remote-runner agents to call back into Homer (`RunAgent` dispatches in-process and does not use it). The ssh, kubernetes and external runners inject it from their `homerApiUrl`; the local runner defaults it to `http://127.0.0.1:{server.port}` when not already set | `http://homer:8080` |
+| `HMR_CALLBACK_TOKEN` | Per-process random token authorizing this process's callback routes (`/api/v1/callback/*`: questions, tags, dispatches, runs, joins, results, messages) — never a real operator credential. Read by `homer-ask` and the pre-generated MCP config; see [Asking the operator questions](#asking-the-operator-questions) | (random per process) |
 | `HMR_MCP_CONFIG` | Absolute path to the pre-generated `.homer/mcp.json` wiring Claude to Homer's question MCP tools. Only set when `server.mcp.enabled` is `true`; reference it via `mcpConfig: "{{HMR_MCP_CONFIG}}"` | `/workspaces/42/.homer/mcp.json` |
 | `HMR_INVOCATION_CHAIN` | Comma-separated chain of agent names that led to the current invocation (`""` at the root call, `"parent"` at depth 1, `"root,child"` at depth 2). Threaded from parent to child by `RunAgent`'s in-process dispatch for recursion cycle/depth enforcement | `orchestrator,deploy-service` |
 | `HMR_PARENT_PROCESS_ID` | Process id of the run that caused this one — set for runs started by `RunAgent`, `homer-dispatch` / ask-and-dispatch, a continuation, or an HTTP call carrying `X-Homer-Parent-Process-Id`; a retry or resume keeps the source run's parent. **Unset** at the root of a flow (a plain API call, cron, MCP). The same id is served as `parentProcessId` on the status API, so an agent no longer has to forward its own `HMR_PROCESS_ID` as an input to be traceable | `12345` |
@@ -2339,7 +2339,7 @@ Each workspace contains:
 {workspaceRootPath}/{path}/
   ├── workdir/           # HMR_WORK_DIR - working directory for commands
   ├── artifacts/         # HMR_ARTIFACTS_DIR - for storing outputs
-  └── .homer/            # Homer-managed tooling: bin/homer-ask, bin/homer-dispatch, bin/homer-result, bin/homer-join, bin/homer-tag, mcp.json
+  └── .homer/            # Homer-managed tooling: bin/homer-ask, bin/homer-dispatch, bin/homer-result, bin/homer-join, bin/homer-tag, bin/homer-inbox, mcp.json
 ```
 
 ### Workspace Examples
@@ -3029,7 +3029,7 @@ env:
 | `HMR_AGENT_DIR` | Absolute path to the agent's own config directory (the one holding its `agent.yaml` / `agent.json`) |
 | `HMR_SERVER_ID` | Identifier of the Homer instance running this process |
 | `HMR_API_URL` | Base URL of the Homer HTTP API (the ssh, kubernetes and external runners inject it from their `homerApiUrl`; the local runner defaults it to `http://127.0.0.1:{server.port}`) |
-| `HMR_CALLBACK_TOKEN` | Per-process token authorizing this process's callback routes: questions (see [Asking the operator questions](#asking-the-operator-questions)), `homer-tag`, `homer-dispatch`/`homer-join`, and `homer-result` |
+| `HMR_CALLBACK_TOKEN` | Per-process token authorizing this process's callback routes: questions (see [Asking the operator questions](#asking-the-operator-questions)), `homer-tag`, `homer-dispatch`/`homer-join`, `homer-result`, and `homer-inbox` (see [Messages from the operator](#messages-from-the-operator)) |
 | `HMR_MCP_CONFIG` | Path to the pre-generated question-tools MCP config; set only when `server.mcp.enabled` is `true` |
 | `HMR_INVOCATION_CHAIN` | Comma-separated chain of agent names that led to the current invocation (`""` at the root, `"parent"` at depth 1, `"root,child"` at depth 2, …). Threaded from parent to child by `RunAgent`'s in-process dispatch and used for recursion cycle/depth enforcement. |
 | `HMR_PARENT_PROCESS_ID` | Process id of the run that caused this one (see [Workspace Environment Variables](#workspace-environment-variables)). **Unset** at the root of a flow. |
@@ -3167,7 +3167,7 @@ commands:
 > a model may otherwise reach for Claude Code's own question tool,
 > which has no operator on the other end in headless runs.
 
-The `homer-questions` MCP server exposes four tools:
+The `homer-questions` MCP server exposes five tools:
 
 | Tool | Behavior |
 |------|----------|
@@ -3175,6 +3175,7 @@ The `homer-questions` MCP server exposes four tools:
 | `check_answer` | Checks (or briefly waits, `waitSec` up to 50) for the answer to an earlier question |
 | `ask_user_and_wait` | Asks and blocks until answered, up to `ttlSec` (default and cap: `server.questions.maxWaitSec`) |
 | `ask_and_dispatch` | Asks and registers a dispatch without blocking; returns `dispatchId` and `questionId` (see [Ask and dispatch](#ask-and-dispatch)) |
+| `check_messages` | Takes the messages the operator sent this run (see [Messages from the operator](#messages-from-the-operator)) |
 
 Waits are resumable: if a blocking call times out or the connection drops,
 the question is not lost — repeated `check_answer` calls converge on the
@@ -3378,6 +3379,111 @@ process (`maxOpenPerProcess`, default 10) and the maximum wait
 (`maxWaitSec`, default 86400 = 1 day) — see
 [SERVER.md](SERVER.md). The `agentdebug` CLI runs agents without the Homer
 server, so there the helper is absent and these variables are unset.
+
+## Messages from the operator
+
+An operator can send messages to a running run — from its page in the
+console, or with `POST /api/v1/status/{processId}/messages` (see
+[README.md](README.md)) — to correct its course without killing it. A
+message waits in the run's inbox until a step takes it: the run decides
+when, through a hook, an MCP tool or the `homer-inbox` helper. Taking a
+message marks it `DELIVERED` (read, not necessarily acted on), and each
+message is delivered once. Messages still `QUEUED` when the run ends become
+`UNDELIVERED`, so a run that never reads its inbox behaves exactly as it
+would without one.
+
+The inbox belongs to the run, not to a step: a message sent while a step
+that does not read the inbox runs is taken by a later step that does.
+Reading authenticates with the per-process `HMR_CALLBACK_TOKEN`, so a run
+only ever reads its own inbox — a run started by `!<agent>`, a dispatch or
+a continuation has its own token and its own inbox. `server.messages`
+limits the text length and the number of messages per run (see
+[SERVER.md](SERVER.md)).
+
+### From shell commands: `homer-inbox`
+
+Every workspace gets a `homer-inbox` helper at
+`{projectRoot}/.homer/bin/homer-inbox`, on `PATH` like `homer-ask` (needs
+`curl` and `sed`). It takes every queued message, oldest first, and prints
+them as JSON; the list is empty when nothing was queued:
+
+```bash
+homer-inbox
+# {"messages": [{"id": "6f1c…", "text": "Use the staging cluster, not prod.", "createdAt": 1761580000}]}
+# (pretty-printed over several lines)
+```
+
+Exit codes: `0` ok, `2` on any usage, transport or HTTP error (e.g. `409`
+once the run has ended; the reason is on stderr).
+
+### From Claude commands: hooks
+
+Claude Code hooks deliver the messages without the model having to ask.
+`homer-inbox --hook <event>` prints the hook output Homer formats for that
+event when messages were queued, and nothing otherwise:
+
+| Hook | `homer-inbox` | Effect |
+|------|---------------|--------|
+| `PostToolUse` | `--hook post-tool-use` | After each tool call, the queued messages are added to the model's context next to the tool result (`additionalContext`). |
+| `Stop` | `--hook stop` | When the model is about to finish, queued messages block the stop and reach it as the reason to continue (`decision: "block"`). With nothing queued, it stops as usual, so the hook cannot keep the model running on its own; Claude Code also caps consecutive Stop-hook continuations: it sets `stop_hook_active` on a continued stop and ends the turn after 8 continuations in a row. |
+
+In hook mode the helper never reads stdin, and on any failure it writes
+`homer-inbox: <reason>` to stderr and exits `1` — a non-blocking hook error
+that Claude Code reports and moves past — never `2`, which Claude Code
+would treat as a blocking decision. Claude Code saves hook output over
+10,000 characters to a file and gives the model a preview, so keep long
+instructions out of messages.
+
+Ship a settings file beside the agent definition, e.g.
+`inbox-settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [{ "type": "command", "command": "homer-inbox --hook post-tool-use" }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "homer-inbox --hook stop" }]
+      }
+    ]
+  }
+}
+```
+
+and point the Claude command's `settings` at it (`HMR_AGENT_DIR` is the
+agent's own directory):
+
+```yaml
+name: library-migration
+commands:
+  - !<claude>
+    cmd: "claude"
+    prompt: !<prompt>
+      prompt: |
+        Migrate the service to the new HTTP client library. The operator may
+        send you messages while you work; follow them.
+    options:
+      settings: "{{HMR_AGENT_DIR}}/inbox-settings.json"
+```
+
+The hook command runs with the Claude process's environment, so it finds
+`homer-inbox` on `PATH` and its `HMR_API_URL` and `HMR_CALLBACK_TOKEN`; this
+needs the workspace env to define `PATH`, as for `homer-ask` above.
+
+### From Claude commands: the `check_messages` MCP tool
+
+For a harness without hooks, the `homer-questions` MCP server (see
+[From Claude commands: MCP question tools](#from-claude-commands-mcp-question-tools),
+`server.mcp.enabled`) has a `check_messages` tool. It takes no arguments,
+takes the queued messages like `homer-inbox`, and returns them as text — or
+`No messages from the operator.` Allow `mcp__homer-questions__check_messages`
+and tell the model in the prompt when to call it, e.g. between steps of
+long work.
 
 ## Complete Agent Examples
 
