@@ -3242,8 +3242,8 @@ process's.
 
 The MCP equivalent is the `ask_and_dispatch` tool (args: `text`, `agent`,
 `answerParam`, `options`, `params`, `ttlSec`) exposed by the
-`homer-questions` MCP server alongside `ask_user`, `check_answer`, and
-`ask_user_and_wait`.
+`homer-questions` MCP server alongside `ask_user`, `check_answer`,
+`ask_user_and_wait`, and `check_messages`.
 
 ### Dispatching another agent
 

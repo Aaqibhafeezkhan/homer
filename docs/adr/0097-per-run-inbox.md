@@ -69,6 +69,14 @@ every boot it marks `UNDELIVERED` each `QUEUED` message whose run is no longer
 `CREATED` or `WORKING`. Until then such a row cannot be delivered, since taking
 is refused once the run has ended.
 
+The two sides are deliberately asymmetric. Send checks the run's status inside
+the insert transaction. Take is refused through the callback registration's
+`closed` flag, the ADR-0019 authority for a live run: `expireForProcess` sets it
+in `releaseJob` immediately before `closeForProcess`, and both take callers (the
+callback route and `check_messages`) check it. After a restart the registrations
+are gone, so the token no longer resolves. `RunMessagesService.take` itself does
+not check the run and must only be called behind that guard.
+
 ### Consequences
 
 - Good: no change to executors, runners or the external-runner protocol.
