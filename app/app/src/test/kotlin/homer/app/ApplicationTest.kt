@@ -712,6 +712,26 @@ class ApplicationTest {
             assertEquals("My test description", listed.description)
         }
 
+    @Test
+    fun `GET agents serves each agent's group and an explicit null for an ungrouped one`() =
+        testApplication {
+            val grouped = AgentFixtures.simpleAgent(name = "grouped").copy(group = "Platform")
+            val ungrouped = AgentFixtures.simpleAgent(name = "ungrouped")
+            mountApiV1Routes {
+                every { agentsService.agents } returns mapOf("grouped" to grouped, "ungrouped" to ungrouped)
+            }
+
+            val response = client.get("/api/v1/agents")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+            val listed = apiJson.decodeFromString<AgentsListResponse>(body).agents.associateBy { it.name }
+            assertEquals("Platform", listed.getValue("grouped").group)
+            assertNull(listed.getValue("ungrouped").group)
+            // Explicit null, not an omitted key: the console mirrors `string | null`.
+            assertTrue(body.contains("\"group\":null") || body.contains("\"group\": null"), body)
+        }
+
     private fun secretSummaryParams() =
         listOf(
             Param(
@@ -887,6 +907,31 @@ class ApplicationTest {
             assertEquals(HttpStatusCode.BadRequest, response.status)
             assertEquals("Invalid process ID", apiJson.decodeFromString<ErrorResponse>(response.bodyAsText()).msg)
             coVerify(exactly = 0) { mockProcessManager.getProcessInfo(any()) }
+        }
+
+    @Test
+    fun `status responses carry the agent group from the current definition, null once it is gone`() =
+        testApplication {
+            // A real ProcessManager: the group is joined in from the current agent
+            // definition at response time, never stored on the process row.
+            val pm = realProcessManager()
+            val grouped = pm.obtainProcessId("grouped-agent")
+            val gone = pm.obtainProcessId("gone-agent")
+            val agents = mockk<AgentsService>(relaxed = true)
+            every { agents.agents } returns
+                mapOf("grouped-agent" to AgentFixtures.simpleAgent(name = "grouped-agent").copy(group = "Platform"))
+
+            mountApiV1Routes {
+                every { processManager } returns pm
+                every { agentsService } returns agents
+            }
+
+            val single = apiJson.decodeFromString<ProcessInfoResponse>(client.get("/api/v1/status/$grouped").bodyAsText())
+            assertEquals("Platform", single.group)
+
+            val listed = apiJson.decodeFromString<ProcessListResponse>(client.get("/api/v1/status/all").bodyAsText())
+            assertEquals("Platform", listed.processes.single { it.id == grouped }.group)
+            assertNull(listed.processes.single { it.id == gone }.group)
         }
 
     // ========== GET /status/{processId} secret redaction Tests (Task 9) ==========

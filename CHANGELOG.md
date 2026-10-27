@@ -5,10 +5,12 @@
 ### Homer
 
 - **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
+- **Added: an optional `group` on the agent definition** — Labels an agent for the console; `GET /api/v1/agents` and the process API return it, read from the agent's current definition.
 
 ### Console
 
 - **Added: message box on a running run** — Send a message to a running run from its page and see whether it was delivered.
+- **Added: agent group tabs** — The Agents page shows an All tab plus one tab per agent group, and a run's agent group is shown on the process list and detail.
 
 ## [1.37.1] - 2026-10-27
 

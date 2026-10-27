@@ -429,12 +429,17 @@ backend has swept at least once.
 ### Browsing Agents
 
 1. Navigate to **Agents** from the sidebar
-2. Use the search bar to filter agents by name; the search term is kept in
-   the URL's `q` param, so the filtered list is shareable and browser Back
-   restores it
-3. Click **Reload** to have the backend re-scan the agents directory; the
+2. Pick a tab: **All**, plus one tab per distinct agent `group`, sorted by
+   name. **All** lists every agent, *including the ones that declare no
+   group* — an ungrouped agent appears under no group tab. The selected tab
+   is kept in the URL's `group` param (a group that no longer exists falls
+   back to **All**), so a grouped view is shareable
+3. Use the search bar to filter agents by name **within the selected tab**;
+   the search term is kept in the URL's `q` param, so the filtered list is
+   shareable and browser Back restores it
+4. Click **Reload** to have the backend re-scan the agents directory; the
    result banner lists agents added, updated, and removed
-4. View agent details:
+5. View agent details:
    - A back button above the title returns to the agents list, restoring
      the search (via browser history where the console has in-app
      navigation history in this tab, otherwise a plain link to the

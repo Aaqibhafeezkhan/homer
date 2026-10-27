@@ -52,6 +52,10 @@ fun ProcessInfo.toResponse(
         id = this.id,
         status = this.status.name,
         agentName = this.agentName,
+        // Resolved from the current definition, not the stored row: an edit to the
+        // agent's group shows on every run of it, past ones included. Null when the
+        // agent is gone or ungrouped.
+        group = agent?.group,
         history =
             this.history.map { (timestamp, status) ->
                 ProcessHistoryEntry(

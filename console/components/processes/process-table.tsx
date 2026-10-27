@@ -118,6 +118,13 @@ function CostCell({ process }: { process: ProcessInfo }) {
   return <span className="font-mono text-sm">{formatCost(process.costUsd)}</span>;
 }
 
+/** The agent's group beside its name. Callers render it only when the run's agent has one. */
+function GroupLabel({ group }: { group: string }) {
+  return (
+    <span className="ml-2 rounded border px-1 text-xs font-normal text-muted-foreground">{group}</span>
+  );
+}
+
 function RunnerCell({ process }: { process: ProcessInfo }) {
   if (!process.runner) return <span className="text-muted-foreground">-</span>;
   const { alias, type, podName, podPhase } = process.runner;
@@ -240,6 +247,7 @@ function DesktopRow({ process, onTagClick, flowSummary, actions }: ProcessRowPro
       </TableCell>
       <TableCell className="font-medium">
         {process.agentName}
+        {process.group && <GroupLabel group={process.group} />}
         {process.tags && process.tags.length > 0 && (
           <TagChips tags={process.tags} onTagClick={onTagClick} className="mt-1" />
         )}
@@ -315,7 +323,10 @@ function MobileCard({ process, onTagClick, flowSummary, actions }: ProcessRowPro
           <StatusBadge status={process.status} />
         </span>
       </div>
-      <div className="text-sm"><span className="text-muted-foreground">Agent:</span> {process.agentName}</div>
+      <div className="text-sm">
+        <span className="text-muted-foreground">Agent:</span> {process.agentName}
+        {process.group && <GroupLabel group={process.group} />}
+      </div>
       {process.tags && process.tags.length > 0 && (
         <TagChips tags={process.tags} onTagClick={onTagClick} />
       )}

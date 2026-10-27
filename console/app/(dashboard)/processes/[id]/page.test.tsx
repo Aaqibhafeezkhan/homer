@@ -348,6 +348,19 @@ describe('ProcessDetailPage execution ordering', () => {
         '/agents/team%2Freviewer%20v2',
       );
     });
+
+    it('shows the agent group beside the agent link', () => {
+      useProcessMock.mockReturnValue({ data: { ...runningProcess, group: 'Platform' } });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+      expect(screen.getByText('Platform')).toBeInTheDocument();
+    });
+
+    it('renders no group label for an ungrouped agent', () => {
+      useProcessMock.mockReturnValue({ data: { ...runningProcess, group: null } });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+      expect(screen.queryByText('Platform')).not.toBeInTheDocument();
+      expect(screen.queryByText('group')).not.toBeInTheDocument();
+    });
   });
 
 });

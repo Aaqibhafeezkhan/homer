@@ -173,3 +173,81 @@ describe('AgentsPage run dialog', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('Run Agent: deploy-agent');
   });
 });
+
+describe('AgentsPage group tabs', () => {
+  const agents = [
+    { name: 'build-agent', group: 'Platform' },
+    { name: 'deploy-agent', group: 'Platform' },
+    { name: 'lint-agent', group: 'Quality' },
+    { name: 'orphan-agent', group: null },
+  ];
+
+  beforeEach(() => {
+    replace.mockReset();
+    mockCan(false);
+    useAgentsMock.mockReturnValue({ data: { agents }, isLoading: false, error: null });
+    useReloadAgentsMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  });
+
+  function tabNames() {
+    return screen.getAllByRole('tab').map((tab) => tab.textContent);
+  }
+
+  it('renders an All tab plus one tab per group, sorted by name', () => {
+    renderWithUrl('');
+    expect(tabNames()).toEqual(['All', 'Platform', 'Quality']);
+  });
+
+  it('lists every agent under All, including the ungrouped one', () => {
+    renderWithUrl('');
+    for (const agent of agents) {
+      expect(screen.getByText(agent.name)).toBeInTheDocument();
+    }
+  });
+
+  it('states that All also contains ungrouped agents', () => {
+    renderWithUrl('');
+    expect(screen.getByText(/without a group appear under "All" only/i)).toBeInTheDocument();
+  });
+
+  it('lists only the selected group, leaving the ungrouped agent out', () => {
+    renderWithUrl('group=Quality');
+    expect(screen.getByText('lint-agent')).toBeInTheDocument();
+    expect(screen.queryByText('build-agent')).not.toBeInTheDocument();
+    expect(screen.queryByText('orphan-agent')).not.toBeInTheDocument();
+  });
+
+  it('marks the group from the URL as the active tab', () => {
+    renderWithUrl('group=Platform');
+    expect(screen.getByRole('tab', { name: 'Platform' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('applies the name search within the selected tab', () => {
+    renderWithUrl('group=Platform&q=build');
+    expect(screen.getByText('build-agent')).toBeInTheDocument();
+    expect(screen.queryByText('deploy-agent')).not.toBeInTheDocument();
+    // The search does not reach outside the tab: lint-agent matches nothing here anyway.
+    expect(screen.queryByText('lint-agent')).not.toBeInTheDocument();
+  });
+
+  it('writes the group param when a group tab is selected', async () => {
+    const user = userEvent.setup();
+    renderWithUrl('');
+    await user.click(screen.getByRole('tab', { name: 'Quality' }));
+    expect(replace).toHaveBeenCalledWith('/agents?group=Quality', { scroll: false });
+  });
+
+  it('removes the group param when All is selected', async () => {
+    const user = userEvent.setup();
+    renderWithUrl('group=Quality');
+    await user.click(screen.getByRole('tab', { name: 'All' }));
+    expect(replace).toHaveBeenCalledWith('/agents', { scroll: false });
+  });
+
+  it('falls back to All for a group that no longer exists', () => {
+    renderWithUrl('group=Gone');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('orphan-agent')).toBeInTheDocument();
+  });
+});

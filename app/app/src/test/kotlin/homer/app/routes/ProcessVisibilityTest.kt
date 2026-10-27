@@ -103,6 +103,7 @@ import org.junit.jupiter.api.Test
 import java.nio.file.Files
 import kotlin.io.path.Path
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -120,7 +121,7 @@ import kotlin.time.ExperimentalTime
  */
 @OptIn(ExperimentalTime::class)
 class ProcessVisibilityTest {
-    private val deployAgent = AgentFixtures.simpleAgent(name = "deploy")
+    private val deployAgent = AgentFixtures.simpleAgent(name = "deploy").copy(group = "Platform")
     private val otherAgent = AgentFixtures.simpleAgent(name = "other")
 
     private fun deps(
@@ -220,6 +221,8 @@ class ProcessVisibilityTest {
 
             val res = client.get("/api/v1/status/42") { header(HttpHeaders.Authorization, "Bearer foreign-token") }
             assertEquals(HttpStatusCode.NotFound, res.status)
+            // The denial is unchanged by the group field: a hidden run leaks no part of it.
+            assertFalse(res.bodyAsText().contains("Platform"), "a hidden process must not leak its agent's group")
         }
 
     @Test

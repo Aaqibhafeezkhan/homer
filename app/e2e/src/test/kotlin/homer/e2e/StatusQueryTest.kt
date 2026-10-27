@@ -53,6 +53,24 @@ class StatusQueryTest : E2eTestBase() {
         }
 
     @Test
+    fun `status responses carry the run agent's group`() =
+        runBlocking {
+            val id = HomerApi.startRun("echo", query = mapOf("message" to "grouped"))
+            Awaits.awaitTerminal(id)
+
+            // Resolved from the current agent definition, so both the single read
+            // and the list carry it — and an ungrouped agent's run carries null.
+            assertEquals("core", HomerApi.status(id).group)
+
+            val listed: ProcessList = HomerApi.decode(HomerApi.statusAll(mapOf("agentName" to "echo")))
+            assertEquals("core", listed.processes.first { it.id == id }.group)
+
+            val ungrouped = HomerApi.startRun("fail")
+            Awaits.awaitTerminal(ungrouped)
+            assertEquals(null, HomerApi.status(ungrouped).group)
+        }
+
+    @Test
     fun `status all filters by types and agentName`() =
         runBlocking {
             seedRuns()

@@ -257,6 +257,25 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('agent group', () => {
+    it('renders the group beside the agent name in both the table and the card', () => {
+      const process = makeProcess({ group: 'Platform' });
+
+      render(<ProcessTable processes={[process]} />);
+
+      // Desktop table + mobile card both render the label.
+      const labels = screen.getAllByText('Platform');
+      expect(labels).toHaveLength(2);
+      expect(labels[0].parentElement).toHaveTextContent('demo-agent');
+    });
+
+    it('renders nothing for a run whose agent has no group', () => {
+      render(<ProcessTable processes={[makeProcess({ group: null })]} />);
+
+      expect(screen.queryByText('Platform')).not.toBeInTheDocument();
+    });
+  });
+
   describe('runner column', () => {
     it('renders the alias without a pod-phase dot for a non-k8s run', () => {
       const process = makeProcess({ runner: { alias: 'local', type: 'local', podName: null, podPhase: 'NONE' } });

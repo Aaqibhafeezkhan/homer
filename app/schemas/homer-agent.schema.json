@@ -15,6 +15,13 @@
   "properties": {
     "name": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z0-9_-]+$" },
     "description": { "type": "string" },
+    "group": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "description": "Optional operator-facing label for this agent. The console's Agents page renders an \"All\" tab plus one tab per distinct group, so related agents can be browsed together. Omitted or null = ungrouped; ungrouped agents appear under \"All\" only. Must be non-blank, at most 64 characters, and free of control characters."
+    },
     "workspace": { "$ref": "#/$defs/Workspace" },
     "commands": {
       "type": "array",

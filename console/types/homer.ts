@@ -75,6 +75,9 @@ export interface ProcessInfo {
   id: number;
   status: ProcessStatus;
   agentName: string;
+  // The agent's group, read from the current agent definition at response time;
+  // null when the agent is ungrouped or has since been removed.
+  group?: string | null;
   owner?: string | null;
   history: ProcessHistoryEntry[];
   executions: ProcessExecution[];
@@ -254,6 +257,9 @@ export interface AgentCronInfo {
 export interface AgentInfo {
   name: string;
   description?: string | null;
+  // Optional group label; null when unset. The Agents page renders one tab per
+  // distinct group, and ungrouped agents appear under "All" only.
+  group?: string | null;
   inputs: AgentInput[] | null;
   /** @deprecated Use `inputs`. */
   queryParams: AgentInput[] | null;
