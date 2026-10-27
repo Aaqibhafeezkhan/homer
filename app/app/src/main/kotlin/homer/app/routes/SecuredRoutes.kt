@@ -41,6 +41,7 @@ internal fun Route.apiV1Routes(deps: ApiDeps) {
             processRoutes(deps)
             agentRoutes(deps)
             questionRoutes(deps)
+            runMessageRoutes(deps)
             dispatchRoutes(deps)
             continuationRoutes(deps)
 

@@ -57,7 +57,7 @@ fun Route.streamingRoute(
     }
 }
 
-/** `GET /stream/processes`: status, command and question events of the processes the caller can see. */
+/** `GET /stream/processes`: status, command, question and message events of the processes the caller can see. */
 private fun Route.processEventsStreamRoute(
     sseLimiter: SseConnectionLimiter,
     broadcaster: ProcessEventBroadcaster,
@@ -73,13 +73,7 @@ private fun Route.processEventsStreamRoute(
             runSseSession(this) {
                 broadcaster
                     .subscribe()
-                    .filter {
-                        it is ProcessEvent.StatusChanged ||
-                            it is ProcessEvent.CurrentCommandChanged ||
-                            it is ProcessEvent.QuestionAsked ||
-                            it is ProcessEvent.QuestionAnswered ||
-                            it is ProcessEvent.QuestionExpired
-                    }.collect { event ->
+                    .collect { event ->
                         val pid = streamedProcessId(event) ?: return@collect
                         val (owner, agentName) =
                             visibilityMemo.getOrPut(pid) {
@@ -219,7 +213,7 @@ internal fun streamedProcessId(event: ProcessEvent): Int? =
         is ProcessEvent.QuestionAsked -> event.processId
         is ProcessEvent.QuestionAnswered -> event.processId
         is ProcessEvent.QuestionExpired -> event.processId
-        else -> null
+        else -> messageEvent(event)?.processId
     }
 
 /** The `/stream/processes` frame of [event]; null for an event that stream does not carry. */
@@ -279,8 +273,29 @@ internal fun processEventFrame(event: ProcessEvent): SseFrame? =
         }
 
         else -> {
-            null
+            messageEvent(event)?.let { SseFrame(it.name, it.payload()) }
         }
+    }
+
+/** An inbox event of a run, as `/stream/processes` carries it. */
+private class MessageEvent(
+    val name: String,
+    val processId: Int,
+    val messageId: String,
+) {
+    fun payload(): String =
+        buildJsonObject {
+            put("processId", JsonPrimitive(processId))
+            put("messageId", JsonPrimitive(messageId))
+        }.toString()
+}
+
+private fun messageEvent(event: ProcessEvent): MessageEvent? =
+    when (event) {
+        is ProcessEvent.MessageQueued -> MessageEvent("message.queued", event.processId, event.messageId)
+        is ProcessEvent.MessageDelivered -> MessageEvent("message.delivered", event.processId, event.messageId)
+        is ProcessEvent.MessageUndelivered -> MessageEvent("message.undelivered", event.processId, event.messageId)
+        else -> null
     }
 
 /** The log stream the `stream` query parameter names (default `out`, any case); null for any other value. */

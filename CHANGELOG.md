@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
+
 ## [1.37.1] - 2026-10-27
 
 ### Homer

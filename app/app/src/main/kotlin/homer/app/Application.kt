@@ -561,6 +561,7 @@ private fun Application.apiDeps(
         logTailService = get(),
         llmEventStreamService = get(),
         questionsService = get(),
+        runMessagesService = get(),
         dispatchService = get(),
         continuationService = get(),
         resultTokenService = get(),
