@@ -3,6 +3,7 @@ package homer.app.routes
 import homer.app.EnvConstants
 import homer.app.exceptions.QueryParamValidationException
 import homer.app.exceptions.QuestionNotFoundException
+import homer.app.exceptions.RunNotAcceptingMessagesException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.ResultToEnvMapper
 import homer.app.models.Agent
@@ -22,11 +23,15 @@ import homer.app.models.ResultEnvParam
 import homer.app.models.ResultTransformer
 import homer.app.models.SrcType
 import homer.app.models.TagValidation
+import homer.app.models.TakeRunMessagesResponse
+import homer.app.models.TakenRunMessage
 import homer.app.services.ArtifactTooLargeException
+import homer.app.services.HookEvent
 import homer.app.services.JoinWatch
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
 import homer.app.services.RESULT_TRANSFORM_MAX_BYTES
+import homer.app.services.RunMessageHookOutput
 import homer.app.toResponse
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -65,6 +70,7 @@ internal fun Route.callbackRoutes(deps: ApiDeps) {
     callbackRunRoutes(deps)
     callbackJoinRoutes(deps)
     callbackResultRoutes(deps)
+    callbackMessageRoutes(deps)
 }
 
 /** `POST /api/v1/callback/questions` and `GET …/{id}`: asking a question and polling its answer. */
@@ -358,6 +364,31 @@ private fun Route.callbackResultRoutes(deps: ApiDeps) {
                     return@get
                 }
                 respondTransformedResult(call, artifactPath, size, transformer)
+            }
+        }
+    }
+}
+
+/** `POST /api/v1/callback/messages/take`: a run taking the operator messages queued for it. */
+private fun Route.callbackMessageRoutes(deps: ApiDeps) {
+    with(deps) {
+        // Takes every QUEUED message of the token's own run, never another's (a child run has its own
+        // token), and marks them DELIVERED. `?hook=` answers as Claude Code hook JSON, or 204 when
+        // nothing was queued. Never long-polls: hooks must stay fast. See ADR-0097.
+        post("/api/v1/callback/messages/take") {
+            val processId = call.resolveCallbackProcess(questionsService) ?: return@post
+            val hook =
+                call.request.queryParameters["hook"]?.let { param ->
+                    HookEvent.fromParam(param)
+                        ?: throw QueryParamValidationException("hook must be one of: ${HookEvent.entries.joinToString { it.param }}")
+                }
+            val registration = questionsService.registrationFor(processId)
+            if (registration == null || registration.closed) throw RunNotAcceptingMessagesException(processId)
+            val messages = runMessagesService.take(processId)
+            when {
+                hook == null -> call.respond(TakeRunMessagesResponse(messages.map { TakenRunMessage(it.id, it.text, it.createdAt) }))
+                messages.isEmpty() -> call.respond(HttpStatusCode.NoContent)
+                else -> call.respond(RunMessageHookOutput.render(hook, messages))
             }
         }
     }

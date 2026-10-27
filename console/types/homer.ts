@@ -148,6 +148,28 @@ export interface QuestionsListResponse {
   limit: number;
 }
 
+// Operator message sent to a running run (its inbox)
+export type RunMessageStatus = 'QUEUED' | 'DELIVERED' | 'UNDELIVERED';
+
+export interface RunMessage {
+  id: string;
+  processId: number;
+  text: string;
+  status: RunMessageStatus;
+  sender?: string | null;
+  createdAt: number;   // Unix epoch seconds
+  deliveredAt?: number | null;
+}
+
+// Oldest first.
+export interface RunMessagesListResponse {
+  messages: RunMessage[];
+}
+
+export interface SendRunMessageRequest {
+  text: string;
+}
+
 // Continuation Status (completion continuations — a parked workflow
 // waiting on a watched sub-process to finish)
 export type ContinuationStatus =

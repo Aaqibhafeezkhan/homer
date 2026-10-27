@@ -148,6 +148,7 @@ class DatabaseService(
                 ProcessInputs,
                 ProcessTags,
                 Questions,
+                RunMessages,
                 Dispatches,
                 Continuations,
                 ContinuationWatches,

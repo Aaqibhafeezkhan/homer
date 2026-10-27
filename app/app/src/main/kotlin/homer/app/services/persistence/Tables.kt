@@ -239,6 +239,27 @@ internal object Questions : Table("questions") {
     override val primaryKey = PrimaryKey(id)
 }
 
+/**
+ * The per-run inbox: operator messages a running run takes through a hook or the MCP tool. Not a
+ * foreign key; deleted co-transactionally with the process row on both record purge and capacity
+ * eviction. See ADR-0097.
+ */
+internal object RunMessages : Table("run_messages") {
+    val id = varchar("id", 64)
+    val processId = integer("process_id")
+    val text = text("text")
+    val status = varchar("status", 16)
+    val sender = varchar("sender", 255).nullable()
+    val createdAt = long("created_at")
+    val deliveredAt = long("delivered_at").nullable()
+
+    init {
+        index("run_messages_process_status", false, processId, status)
+    }
+
+    override val primaryKey = PrimaryKey(id)
+}
+
 internal object Dispatches : Table("dispatches"), FiredRecordTable {
     override val id = integer("id").autoIncrement()
     val questionId = varchar("question_id", 64).uniqueIndex()

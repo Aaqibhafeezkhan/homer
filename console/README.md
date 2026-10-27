@@ -4,7 +4,7 @@ A modern, self-hosted web application for monitoring and managing Homer processe
 
 ## Features
 
-- **Real-time Process Monitoring**: Live updates via Server-Sent Events (`/api/v1/stream/*`) — process status, current command, and log tail stream in over SSE, with the process list and detail views also polling every 30 s as a fallback (the detail poll stops once a run is terminal, the list poll once every row on the page is terminal). Event channels: `process.status`, `process.cmd`, `agent.reload`, `log.chunk`, `log.end`, `llm.event`, `llm.end`, `question.asked`, `question.answered`, `question.expired`. Uses [`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source) so requests can carry the bearer `Authorization` header (the native `EventSource` API cannot).
+- **Real-time Process Monitoring**: Live updates via Server-Sent Events (`/api/v1/stream/*`) — process status, current command, and log tail stream in over SSE, with the process list and detail views also polling every 30 s as a fallback (the detail poll stops once a run is terminal, the list poll once every row on the page is terminal). Event channels: `process.status`, `process.cmd`, `agent.reload`, `log.chunk`, `log.end`, `llm.event`, `llm.end`, `question.asked`, `question.answered`, `question.expired`, `message.queued`, `message.delivered`, `message.undelivered`. Uses [`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source) so requests can carry the bearer `Authorization` header (the native `EventSource` API cannot).
 - **Process Management**: View detailed process information, retry finished/failed/killed processes, and kill running processes
 - **Agents Overview**: Browse available agents with parameter details; create, edit, and debug-run agents from the console
 - **Themes**: Light, Dark, System, Terminal, and Windows 95 — dark by default, switchable from the header; operator themes via `CONSOLE_THEMES` join the same dropdown, and `CONSOLE_THEME_MODES` can replace the built-ins with one approved light/dark pair
@@ -265,6 +265,18 @@ it; hover for the full sentence, which the run's own page shows in full.
   unknown-status LangGraph runs offer a Resume action. While the LangGraph command is still running, the live-command box
   offers a "Show workflow" toggle with the same overlay.
 - **Custom Artifacts**: Use the "Download Artifact" button to download any artifact file by path
+
+### Messages to a running run
+
+A running run's page has a **Messages** card with a text box and **Send**,
+shown only while the run is `CREATED` or `WORKING` and only to a user who may
+also kill it (`admin`, the run's owner, or `read` + `control` grants on its
+agent). A sent message waits in the run's inbox as **Queued** until the run
+takes it (**Delivered**) or the run ends first (**Undelivered**); the card
+lists every message oldest first with its status, sender and time, and keeps
+the history once the run has ended. A refused send (run ended, limit reached,
+text too long) shows the server's reason under the box and keeps what you
+typed.
 
 ### Questions inbox
 
@@ -915,8 +927,10 @@ which records the sandboxed-iframe option to revisit first.
 | `DELETE /api/v1/continuations/:id` | Cancel a pending continuation |
 | `GET /api/v1/questions` | Fetch questions with optional status/processId filter |
 | `POST /api/v1/questions/:id/answer` | Answer an open question |
+| `GET /api/v1/status/:id/messages` | List a run's operator messages |
+| `POST /api/v1/status/:id/messages` | Send a message to a running run |
 | `DELETE /api/v1/dispatches/:id` | Cancel an open dispatch-bound question |
-| `GET /api/v1/stream/processes` | SSE: `process.status`, `process.cmd`, `question.asked`, `question.answered`, `question.expired` |
+| `GET /api/v1/stream/processes` | SSE: `process.status`, `process.cmd`, `question.asked`, `question.answered`, `question.expired`, `message.queued`, `message.delivered`, `message.undelivered` |
 | `GET /api/v1/stream/processes/:id/logs` | SSE: `log.chunk` / `log.end` log tail for one command (replays from byte 0) |
 | `GET /api/v1/stream/processes/:id/llm-events` | SSE: `llm.event` / `llm.end` canonical events of one Claude or Codex command, for the Conversation view (replays from byte 0) |
 | `GET /api/v1/stream/agents` | SSE: `agent.reload` |

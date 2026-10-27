@@ -432,6 +432,7 @@ server:
 | `claudeStreamPollMs` | `Int` | No | `150` | Polling interval (ms) of the stdout file poll behind `GET /api/v1/stream/processes/{id}/llm-events`. Lower = lower first-event latency, higher = less CPU. Coerced to `50..2000` at startup. |
 | `mcp` | `McpServerConfig` | No | `{enabled=false, maxWaitSec=300, maxInlineArtifactBytes=65536}` | Streamable HTTP MCP endpoint at `/mcp` exposing opted-in agents as MCP tools — see [MCP endpoint](#mcp-endpoint). |
 | `questions` | `QuestionsConfig` | No | `{maxWaitSec=86400, maxOpenPerProcess=10, maxTextLength=10000, maxOptions=20, maxConcurrentWaitsPerProcess=32}` | Human-in-the-loop questions asked by running commands — see [Operator questions](#operator-questions). |
+| `messages` | `RunMessagesConfig` | No | `{maxTextLength=10000, maxPerRun=100}` | Per-run inbox limits for operator messages sent to a running run — see [Run messages](#run-messages). |
 | `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
@@ -624,6 +625,28 @@ server:
 **Reverse-proxy note:** an answer-wait holds its HTTP request open for
 up to `maxWaitSec` seconds, same as the MCP `_wait` note above —
 either raise the proxy's idle/read timeout or lower `maxWaitSec`.
+
+### Run messages
+
+`server.messages` bounds the per-run inbox: operator messages sent to a
+running run, which the run takes through a hook or the MCP tool (see
+[ADR-0097](../docs/adr/0097-per-run-inbox.md)). Messages are persisted in the
+SQLite database and purged with the run record. A message still queued when
+the run reaches a terminal state, or when a restart leaves it `UNKNOWN`,
+becomes `UNDELIVERED`. Message text never appears in logs, spans or error
+text.
+
+```yaml
+server:
+  messages:
+    maxTextLength: 10000  # one message, in characters (default 10000)
+    maxPerRun: 100        # every stored message of a run, in any state (default 100)
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `maxTextLength` | `Int` | No | `10000` | Maximum length (characters) of one message; longer text is rejected with `400`. |
+| `maxPerRun` | `Int` | No | `100` | Maximum messages stored for one run, whatever their state; further sends are rejected with `429`. |
 
 ### Ask-and-dispatch
 
@@ -2603,11 +2626,12 @@ machine a pull-mode runner instance runs on — and Homer installs nothing
 there, so that environment must supply every binary a command relies on:
 
 - **`/bin/sh`** and **`curl`** — required by the `homer-ask` /
-  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` helpers,
-  which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
+  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` /
+  `homer-inbox` helpers, which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
   Homer API over `curl`; a different configured `shell` does not replace
   `/bin/sh`. Without them, operator questions, ask-and-dispatch, result
-  fetching and runtime run tags fail even though plain commands still run.
+  fetching, runtime run tags and operator messages fail even though plain
+  commands still run.
 - **`claude`** — for agents that use `Claude` commands.
 - **`codex`** — for agents that use `Codex` commands.
 - **`homer_langgraph`** — for agents that use `LangGraph` commands.
@@ -2624,7 +2648,7 @@ so agents needing those need an image derived from it; see
 Also set **`homerApiUrl`** (per-runner, below) to a URL the remote
 environment can reach Homer on. It is exposed remotely as `HMR_API_URL`
 and backs every feature that calls back over HTTP — the `homer-*`
-helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`) and the
+helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`, `homer-inbox`) and the
 MCP question tools. If it is unset or unreachable, those fail silently
 while ordinary commands succeed, which looks like partial breakage rather
 than a misconfiguration. `RunAgent` does not use it: the child run is

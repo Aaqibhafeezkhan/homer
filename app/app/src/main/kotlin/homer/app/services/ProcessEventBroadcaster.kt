@@ -120,4 +120,19 @@ sealed class ProcessEvent {
         val processId: Int,
         val questionId: String,
     ) : ProcessEvent()
+
+    data class MessageQueued(
+        val processId: Int,
+        val messageId: String,
+    ) : ProcessEvent()
+
+    data class MessageDelivered(
+        val processId: Int,
+        val messageId: String,
+    ) : ProcessEvent()
+
+    data class MessageUndelivered(
+        val processId: Int,
+        val messageId: String,
+    ) : ProcessEvent()
 }

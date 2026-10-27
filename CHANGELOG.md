@@ -9,6 +9,11 @@
 ### Console
 
 - **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
+- **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
+
+### Console
+
+- **Added: message box on a running run** — Send a message to a running run from its page and see whether it was delivered.
 
 ## [1.37.1] - 2026-10-27
 

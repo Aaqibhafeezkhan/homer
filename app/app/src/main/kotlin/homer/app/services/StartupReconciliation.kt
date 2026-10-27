@@ -1,5 +1,6 @@
 package homer.app.services
 
+import homer.app.executors.RunMessageExpiry
 import homer.app.infra.PurgeSchedule
 import homer.app.services.persistence.ProcessRepository
 import org.slf4j.Logger
@@ -12,7 +13,9 @@ import kotlin.time.ExperimentalTime
  * that were driving any still-active run do not — so every process still
  * `CREATED`/`WORKING` is marked `UNKNOWN` (with a history entry) and its OPEN
  * questions are expired (preserving the "questions die with their process"
- * invariant — waiters that reconnect see EXPIRED, not a perpetual OPEN).
+ * invariant — waiters that reconnect see EXPIRED, not a perpetual OPEN). Every
+ * message still QUEUED on a run that is no longer active becomes UNDELIVERED
+ * (ADR-0097).
  *
  * `UNKNOWN` is treated as terminal, so these rows never block on a resume that
  * can't happen. The run's own coroutine would have stamped its purge times on
@@ -27,6 +30,7 @@ import kotlin.time.ExperimentalTime
 internal class StartupReconciliation(
     private val processRepository: ProcessRepository,
     private val questionsService: QuestionsService,
+    private val runMessagesService: RunMessageExpiry,
     private val dispatchService: DispatchService,
     private val continuationService: ContinuationService,
     private val agentsService: AgentsService,
@@ -40,8 +44,11 @@ internal class StartupReconciliation(
             logger.info("Reconciled {} interrupted process(es) to UNKNOWN after restart: {}", interrupted.size, interrupted)
             for (processId in interrupted) {
                 questionsService.expireForProcess(processId)
+                runMessagesService.closeForProcess(processId)
             }
         }
+        // Backstop for a run whose inbox close failed, or whose server stopped before it ran.
+        runMessagesService.closeForEndedRuns()
         val agents = agentsService.agents
         val stamped =
             processRepository.stampUnknownPurgeTimes(now) { agentName ->

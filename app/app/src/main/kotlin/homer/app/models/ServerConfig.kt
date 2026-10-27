@@ -136,6 +136,7 @@ data class Server(
     val claudeStreamPollMs: Int = 150,
     val mcp: McpServerConfig = McpServerConfig(),
     val questions: QuestionsConfig = QuestionsConfig(),
+    val messages: RunMessagesConfig = RunMessagesConfig(),
     val dispatch: DispatchConfig = DispatchConfig(),
     val langGraph: LangGraphConfig = LangGraphConfig(),
     val maintenance: MaintenanceConfig = MaintenanceConfig(),
@@ -229,6 +230,23 @@ data class McpServerConfig(
         require(maxInlineArtifactBytes > 0) {
             "server.mcp.maxInlineArtifactBytes must be > 0; got $maxInlineArtifactBytes"
         }
+    }
+}
+
+/**
+ * Per-run inbox: operator messages sent to a running run, which the run takes through a hook or
+ * the MCP tool. See ADR-0097.
+ */
+@Serializable
+data class RunMessagesConfig(
+    /** Maximum length (characters) of one message; longer text is rejected with 400. */
+    val maxTextLength: Int = 10_000,
+    /** Maximum messages stored per run, in any state; further sends are rejected with 429. */
+    val maxPerRun: Int = 100,
+) {
+    init {
+        require(maxTextLength > 0) { "server.messages.maxTextLength must be > 0; got $maxTextLength" }
+        require(maxPerRun > 0) { "server.messages.maxPerRun must be > 0; got $maxPerRun" }
     }
 }
 

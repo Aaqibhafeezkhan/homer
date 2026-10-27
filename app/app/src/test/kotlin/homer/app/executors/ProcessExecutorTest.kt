@@ -46,6 +46,7 @@ class ProcessExecutorTest {
     private lateinit var processExecutor: ProcessExecutor
     private lateinit var mockProcessManager: ProcessManager
     private lateinit var mockQuestionsService: QuestionsService
+    private lateinit var mockRunMessages: RunMessageExpiry
     private lateinit var mockTelemetryService: TelemetryService
     private lateinit var mockLogger: org.slf4j.Logger
     private lateinit var mockSpan: Span
@@ -58,6 +59,7 @@ class ProcessExecutorTest {
     fun setup() {
         mockProcessManager = mockk(relaxed = true)
         mockQuestionsService = mockk(relaxed = true)
+        mockRunMessages = mockk(relaxed = true)
         mockSpan = TestFixtures.mockSpan()
         mockTelemetryService = TestFixtures.mockTelemetryService(mockSpan)
         mockLogger = TestFixtures.mockLogger()
@@ -80,6 +82,7 @@ class ProcessExecutorTest {
                 telemetryService = mockTelemetryService,
                 processManager = mockProcessManager,
                 questionsService = mockQuestionsService,
+                runMessages = mockRunMessages,
                 coroutineScope = testScope,
                 logger = mockLogger,
             )
@@ -640,7 +643,11 @@ class ProcessExecutorTest {
             processExecutor.execute(mockProcess, testContext)
             delay(150)
 
-            coVerify { mockQuestionsService.expireForProcess(1) }
+            coVerifyOrder {
+                mockQuestionsService.expireForProcess(1)
+                mockRunMessages.closeForProcess(1)
+            }
+            coVerify(exactly = 1) { mockRunMessages.closeForProcess(1) }
         }
 
     @Test
@@ -652,7 +659,11 @@ class ProcessExecutorTest {
             processExecutor.execute(mockProcess, testContext)
             delay(150)
 
-            coVerify { mockQuestionsService.expireForProcess(2) }
+            coVerifyOrder {
+                mockQuestionsService.expireForProcess(2)
+                mockRunMessages.closeForProcess(2)
+            }
+            coVerify(exactly = 1) { mockRunMessages.closeForProcess(2) }
         }
 
     @Test
@@ -668,7 +679,24 @@ class ProcessExecutorTest {
             processExecutor.execute(mockProcess, testContext)
             delay(200)
 
-            coVerify { mockQuestionsService.expireForProcess(3) }
+            coVerifyOrder {
+                mockQuestionsService.expireForProcess(3)
+                mockRunMessages.closeForProcess(3)
+            }
+            coVerify(exactly = 1) { mockRunMessages.closeForProcess(3) }
+        }
+
+    @Test
+    fun `execute should still release the job when closing the inbox fails`() =
+        runBlocking {
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 4
+            coEvery { mockProcess.execute(any(), any()) } just Runs
+            coEvery { mockRunMessages.closeForProcess(4) } throws RuntimeException("db down")
+
+            processExecutor.execute(mockProcess, testContext)
+            delay(150)
+
+            coVerify { mockProcessManager.removeJob(4) }
         }
 
     // ========== purgeAt Tests ==========
@@ -1071,6 +1099,7 @@ class ProcessExecutorTest {
             telemetryService = mockTelemetryService,
             processManager = mockProcessManager,
             questionsService = mockQuestionsService,
+            runMessages = mockRunMessages,
             coroutineScope = testScope,
             logger = mockLogger,
             onTerminal = onTerminal,

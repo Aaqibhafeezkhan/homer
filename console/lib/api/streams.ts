@@ -20,6 +20,7 @@ function invalidateFlowSummariesFor(queryClient: QueryClient, processIds: Readon
 
 const PROCESS_EVENTS: ReadonlySet<string> = new Set(['process.status', 'process.cmd']);
 const QUESTION_EVENTS: ReadonlySet<string> = new Set(['question.asked', 'question.answered', 'question.expired']);
+const MESSAGE_EVENTS: ReadonlySet<string> = new Set(['message.queued', 'message.delivered', 'message.undelivered']);
 
 export function useProcessStatusStream() {
   const queryClient = useQueryClient();
@@ -62,6 +63,11 @@ export function useProcessStatusStream() {
           const processId = (data as { processId?: number })?.processId;
           if (typeof processId === 'number') pendingIds.add(processId);
           if (rafId === null) rafId = requestAnimationFrame(flush);
+        } else if (MESSAGE_EVENTS.has(name)) {
+          const processId = (data as { processId?: number })?.processId;
+          if (typeof processId === 'number') {
+            queryClient.invalidateQueries({ queryKey: queryKeys.runMessages(processId) });
+          }
         } else if (QUESTION_EVENTS.has(name)) {
           const processId = (data as { processId?: number })?.processId;
           queryClient.invalidateQueries({ queryKey: queryKeys.allQuestions() });

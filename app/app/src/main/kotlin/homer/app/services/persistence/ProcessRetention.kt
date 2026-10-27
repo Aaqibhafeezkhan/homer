@@ -202,9 +202,11 @@ internal fun evictForCapacityTx(maxProcesses: Int): ProcessRepository.EvictedPro
 
 // Co-transactional with the row delete, on both record purge and capacity eviction: an
 // orphaned tag row discloses what a run ran over after its record is gone, and an orphaned
-// input row keeps a blob with no retention path. See ADR-0048.
+// input row keeps a blob with no retention path. See ADR-0048. Run messages (ADR-0097) are
+// operator free text and follow the same rule.
 private fun deleteProcessRowsTx(processId: Int) {
     ProcessInputs.deleteWhere { ProcessInputs.processId eq processId }
     ProcessTags.deleteWhere { ProcessTags.processId eq processId }
+    RunMessages.deleteWhere { RunMessages.processId eq processId }
     Processes.deleteWhere { Processes.id eq processId }
 }

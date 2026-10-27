@@ -82,4 +82,17 @@ class ServerConfigTest {
         val ex = assertThrows<IllegalArgumentException> { DispatchConfig(settledRetentionSec = 3599) }
         assertTrue(ex.message!!.contains("server.dispatch.settledRetentionSec"), ex.message)
     }
+
+    @Test
+    fun `messages defaults to 10000 characters and 100 per run`() {
+        assertEquals(RunMessagesConfig(maxTextLength = 10_000, maxPerRun = 100), Server().messages)
+    }
+
+    @Test
+    fun `messages limits must be positive and name their key`() {
+        val text = assertThrows<IllegalArgumentException> { RunMessagesConfig(maxTextLength = 0) }
+        assertTrue(text.message!!.contains("server.messages.maxTextLength"), text.message)
+        val perRun = assertThrows<IllegalArgumentException> { RunMessagesConfig(maxPerRun = 0) }
+        assertTrue(perRun.message!!.contains("server.messages.maxPerRun"), perRun.message)
+    }
 }

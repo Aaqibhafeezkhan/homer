@@ -994,6 +994,33 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun `v28 database gains the run_messages table and its index`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("v28.db").toString()
+        val names = listOf("run_messages_process_status")
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        val fresh = DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c -> c.createStatement().use { indexDefinitions(it, names) } }
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                st.execute("DROP TABLE run_messages")
+                st.execute("PRAGMA user_version = 28")
+            }
+        }
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                assertEquals(29, userVersion(st))
+                assertEquals(
+                    listOf("id", "process_id", "text", "status", "sender", "created_at", "delivered_at"),
+                    columnNames(st, "run_messages"),
+                )
+                assertEquals(fresh, indexDefinitions(st, names))
+            }
+        }
+    }
+
+    @Test
     fun `every question page shape stays on an index with no sort at 150k rows, with and without statistics`(
         @TempDir dir: Path,
     ) = runTest {

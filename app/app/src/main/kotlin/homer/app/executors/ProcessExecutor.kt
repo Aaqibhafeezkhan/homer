@@ -18,6 +18,7 @@ class ProcessExecutor(
     private val telemetryService: TelemetryService,
     private val processManager: RunRecords,
     private val questionsService: QuestionExpiry,
+    private val runMessages: RunMessageExpiry,
     private val coroutineScope: CoroutineScope,
     private val logger: Logger,
     // Invoked once the terminal status is durably committed (after the CAS), with
@@ -212,6 +213,12 @@ class ProcessExecutor(
         // questions can never be answered anymore — expire them
         // and resume their waiters.
         questionsService.expireForProcess(processId)
+        // Messages still queued can never be delivered either. A failure here must not stop the release.
+        try {
+            runMessages.closeForProcess(processId)
+        } catch (e: Exception) {
+            logger.error("Closing the inbox of process {} failed: {}", processId, e.message, e)
+        }
         // Fire completion continuations off the durably-committed
         // final status (re-read for the actual KILLED-wins value).
         // Caught here so a hook failure can never corrupt the

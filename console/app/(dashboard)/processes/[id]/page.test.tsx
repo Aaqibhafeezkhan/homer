@@ -10,6 +10,11 @@ import type { ProcessInfo } from '@/types/homer';
 vi.mock('@/components/questions/question-panel', () => ({
   QuestionPanel: () => null,
 }));
+vi.mock('@/components/messages/run-message-panel', () => ({
+  RunMessagePanel: ({ process }: { process: { id: number; status: string } }) => (
+    <div data-testid="run-message-panel">{`${process.id}:${process.status}`}</div>
+  ),
+}));
 vi.mock('@/components/processes/process-actions', () => ({
   ProcessActions: () => null,
 }));
@@ -134,6 +139,11 @@ describe('ProcessDetailPage execution ordering', () => {
       second.compareDocumentPosition(running) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByText('Running...')).toBeInTheDocument();
+  });
+
+  it('renders the message panel with the run\'s id and status', () => {
+    render(<ProcessDetailPage params={fulfilledParams('7')} />);
+    expect(screen.getByTestId('run-message-panel')).toHaveTextContent(`7:${runningProcess.status}`);
   });
 
   it('shows only the running command box when nothing has finished yet', () => {

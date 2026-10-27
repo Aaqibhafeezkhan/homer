@@ -47,6 +47,7 @@ export const queryKeys = {
   // Prefix of every question key (lists and the open count).
   allQuestions: () => ['questions'] as const,
   questions: (filters?: QuestionFilters) => ['questions', filters] as const,
+  runMessages: (processId: number) => ['run-messages', processId] as const,
   openQuestionsCount: () => ['questions', 'open-count'] as const,
   // Prefix of every continuation key (lists and the pending count).
   allContinuations: () => ['continuations'] as const,
@@ -537,6 +538,27 @@ export function useCancelDispatch() {
       // Settled, not success: a 404/409 (already answered / fired / cancelled)
       // means our view was stale, so refetching is exactly what we want.
       invalidateQuestionViews(queryClient);
+    },
+  });
+}
+
+// A run's inbox. SSE (message.*) invalidates it; the 30 s refetch is the safety net while the
+// run accepts messages (`active`), and stops once it ended.
+export function useRunMessages(processId: number, active: boolean) {
+  return useQuery({
+    queryKey: queryKeys.runMessages(processId),
+    queryFn: () => homerApi.getRunMessages(processId),
+    refetchInterval: active ? 30_000 : false,
+  });
+}
+
+// Send Run Message Mutation. Settled, not success: a 409 (run ended) means our view was stale.
+export function useSendRunMessage(processId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => homerApi.sendRunMessage(processId, text),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runMessages(processId) });
     },
   });
 }

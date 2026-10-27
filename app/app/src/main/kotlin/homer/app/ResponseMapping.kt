@@ -12,6 +12,7 @@ import homer.app.models.ProcessHistoryEntry
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
 import homer.app.models.QuestionResponse
+import homer.app.models.RunMessageResponse
 import homer.app.models.RunnerState
 import homer.app.models.RunnerStateResponse
 import homer.app.models.stripUrlSecrets
@@ -20,6 +21,7 @@ import homer.app.services.Continuation
 import homer.app.services.Dispatch
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
+import homer.app.services.RunMessage
 import java.net.URI
 
 /**
@@ -217,3 +219,14 @@ fun QuestionsService.Question.toResponse(): QuestionResponse =
     )
 
 fun QuestionsService.Question.toResponse(dispatch: DispatchSummary?): QuestionResponse = toResponse().copy(dispatch = dispatch)
+
+fun RunMessage.toResponse(): RunMessageResponse =
+    RunMessageResponse(
+        id = id,
+        processId = processId,
+        text = text,
+        status = status.name,
+        sender = sender,
+        createdAt = createdAt,
+        deliveredAt = deliveredAt,
+    )
