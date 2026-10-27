@@ -67,6 +67,11 @@ data class ProcessInfoResponse(
     // Subject tags carried by this run: `key:value` strings resolved from inputs at
     // start and/or declared at run time. Filter runs by them with `?tag=`. See ADR-0060.
     val tags: List<String> = emptyList(),
+    // Why the run ended FAILED before any of its commands started (a claim timeout, a
+    // SKIP_CURRENT lock skip, a parallel-run cap or a full queue). Null for every other
+    // failure. The run that blocked this one is named inside the text only for a caller who
+    // may see it. See ADR-0058.
+    val failureReason: String? = null,
 )
 
 @Serializable

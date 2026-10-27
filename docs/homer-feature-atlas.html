@@ -710,7 +710,9 @@ agents/web-pipeline/nodes/analysis/agent.yaml   # a nested agent</code></pre>
         <article class="f">
           <h3>Process lifecycle <span class="where">status</span></h3>
           <p><code>CREATED → WORKING → FINISHED | FAILED | KILLED</code>. A run interrupted by a server restart is
-            reconciled to <code>UNKNOWN</code> (also terminal).</p>
+            reconciled to <code>UNKNOWN</code> (also terminal). A run that fails before any command starts — a claim
+            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap or a full queue — carries a stored
+            <code>failureReason</code> saying which.</p>
           <pre><code>curl "$HOMER/api/v1/status/12345"</code></pre>
         </article>
 

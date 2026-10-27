@@ -328,6 +328,21 @@ class ProcessRepository(
                 ?.toProcessInfo(jobRegistry, tagsForTx(processId), inputsForTx(processId))
         }
 
+    /**
+     * The (owner, agentName) pair a visibility gate reads, by primary key, or null when the row
+     * is gone. Projected, not [getInfo]: a gate runs on polled paths, and decoding the row's
+     * `history`/`executions` blobs plus the side queries to read two columns is the cost
+     * SQLite rule 4 forbids there.
+     */
+    suspend fun getRunVisibility(processId: Int): Pair<String?, String>? =
+        db.read {
+            Processes
+                .select(Processes.owner, Processes.agentName)
+                .where { Processes.id eq processId }
+                .singleOrNull()
+                ?.let { it[Processes.owner] to it[Processes.agentName] }
+        }
+
     /** Highest id ever allocated (AUTOINCREMENT high-water), or -1 if none. */
     suspend fun lastProcessId(): Int =
         db.read {

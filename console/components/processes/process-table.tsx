@@ -6,6 +6,7 @@ import { ProcessInfo } from '@/types/homer';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from './status-badge';
+import { FailureReason } from './failure-reason';
 import { TagChips } from './tag-chips';
 import { formatTimeUntil, formatCost } from '@/lib/utils/format';
 import {
@@ -111,6 +112,13 @@ function QuestionBadge({ process }: { process: ProcessInfo }) {
       {count}
     </span>
   );
+}
+
+// Why a run failed before it started, next to its status. Only the list's short form: the
+// full text is the badge's tooltip and lives on the run's own page.
+function FailureReasonBadge({ process }: { process: ProcessInfo }) {
+  if (!process.failureReason) return null;
+  return <FailureReason reason={process.failureReason} variant="inline" />;
 }
 
 function CostCell({ process }: { process: ProcessInfo }) {
@@ -247,6 +255,7 @@ function DesktopRow({ process, onTagClick, flowSummary, actions }: ProcessRowPro
       <TableCell>
         <span className="flex items-center gap-2">
           <StatusBadge status={process.status} />
+          <FailureReasonBadge process={process} />
           <QuestionBadge process={process} />
         </span>
       </TableCell>
@@ -313,6 +322,7 @@ function MobileCard({ process, onTagClick, flowSummary, actions }: ProcessRowPro
         <span className="flex items-center gap-2">
           <QuestionBadge process={process} />
           <StatusBadge status={process.status} />
+          <FailureReasonBadge process={process} />
         </span>
       </div>
       <div className="text-sm"><span className="text-muted-foreground">Agent:</span> {process.agentName}</div>

@@ -70,6 +70,12 @@ class Process(
     // definition (same principle as secretInputKeys / ADR-0052).
     val retainArtifacts: List<String> = purgeSchedule.retainArtifacts
 
+    // Screens the stored failure reason (ADR-0052). Built here rather than in the failure
+    // path: the workspace config it would otherwise be read from is created inside
+    // `execute`, which a pre-start failure never reaches, and building it there would need
+    // the runner lookup that may itself be what timed out. §12 rule 7, ADR-0052.
+    val failureReasonRedactor: SecretRedactor = SecretRedactor.from(agent.env + queryParams, secretInputKeys + agent.sysEnvBackedEnvNames)
+
     // `paramName:value` subject tags resolved from this run's declared `fromInputs`,
     // stored co-transactionally with the row INSERT (ADR-0051). Shares the single
     // derivation with the Langfuse trace tags, and passes the ADR-0052 secret union

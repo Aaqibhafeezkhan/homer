@@ -107,6 +107,11 @@ export interface ProcessInfo {
   // Subject tags this run carries: `key:value` strings resolved from inputs at
   // start and/or declared at run time. Filter the list with `?tag=`.
   tags?: string[];
+  // Why the run ended FAILED before any command started (claim timeout, lock
+  // skip, parallel-run cap, full queue); absent for every other failure. The
+  // run that blocked this one is named in the text only when the reader may
+  // see it. See ADR-0058.
+  failureReason?: string | null;
 }
 
 // Question Status (human-in-the-loop questions)

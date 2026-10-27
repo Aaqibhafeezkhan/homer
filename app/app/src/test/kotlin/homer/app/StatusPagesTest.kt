@@ -141,7 +141,7 @@ class StatusPagesTest {
                 ClaimQueueFullException(1) to HttpStatusCode.TooManyRequests,
                 MaintenanceQueueFullException(1) to HttpStatusCode.TooManyRequests,
                 MaintenanceWaitTimeoutException(1.seconds) to HttpStatusCode.ServiceUnavailable,
-                RunnerClaimTimeoutException(1.seconds, RunnerFilter.Alias("local"), "none") to HttpStatusCode.ServiceUnavailable,
+                RunnerClaimTimeoutException(1.seconds, RunnerFilter.Alias("local"), "none", "none") to HttpStatusCode.ServiceUnavailable,
                 RunnerRegistrationRejectedException("d", "no") to HttpStatusCode.UnprocessableEntity,
                 TooManyRunnerInstancesException("d", 1) to HttpStatusCode.TooManyRequests,
                 TooManyRunnerPollsException("i", 1) to HttpStatusCode.TooManyRequests,

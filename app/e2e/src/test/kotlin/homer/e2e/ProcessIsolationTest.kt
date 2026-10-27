@@ -98,6 +98,44 @@ class ProcessIsolationTest : E2eTestBase() {
             assertTrue(list.processes.any { it.id == echoId }, "scoped token must see its own echo run in /status/all")
         }
 
+    /**
+     * ADR-0098: a failed run's reason is served to every caller who can see the run, but the
+     * id of the run that blocked it is appended only to a caller who may open that run too
+     * (ADR-0058's existence-hiding applied to the holder link). `lock-skip-scoped` shares
+     * `lock-skip`'s lock key, so the blocker sits on an agent `skipScoped` holds no grant on.
+     */
+    @Test
+    fun `a scoped reader gets the failure reason but not the blocking run's id`() =
+        runBlocking {
+            val holderId = HomerApi.startRun("lock-skip")
+            Awaits.awaitStatus(holderId, setOf("WORKING"))
+            val skippedId = HomerApi.startRun("lock-skip-scoped")
+            val failed = Awaits.awaitTerminal(skippedId)
+            assertEquals("FAILED", failed.status)
+            // Awaited, not read off the terminal poll: the reason write trails the FAILED status.
+            val reason =
+                Awaits.awaitNotNull("the skipped run's failure reason") {
+                    Awaits.awaitTerminal(skippedId).failureReason
+                }
+            assertTrue(reason.contains("(run #$holderId)"), "the admin caller may open the holder: $reason")
+
+            val scoped =
+                E2e.client.get("/api/v1/status/$skippedId") {
+                    header(HttpHeaders.Authorization, "Bearer skip-scoped-token")
+                }
+            assertEquals(HttpStatusCode.OK, scoped.status, "skipScoped holds a read grant on lock-skip-scoped")
+            val scopedInfo = E2e.json.decodeFromString<ProcessInfo>(scoped.bodyAsText())
+            assertEquals(
+                reason.substringBefore(" (run #"),
+                scopedInfo.failureReason,
+                "the reason itself is not admin-only, only the holder id is",
+            )
+            assertFalse(
+                scopedInfo.failureReason.orEmpty().contains("(run #$holderId)"),
+                "the blocking run's id must be withheld from a caller who cannot see it",
+            )
+        }
+
     @Test
     fun `admin sees runs regardless of owner`() =
         runBlocking {

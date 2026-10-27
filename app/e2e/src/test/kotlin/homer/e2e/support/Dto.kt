@@ -57,6 +57,9 @@ data class ProcessInfo(
     val rootProcessId: Int? = null,
     val tags: List<String> = emptyList(),
     val runner: RunnerStateView? = null,
+    // Why a run failed before any of its commands started; null otherwise. The run
+    // that blocked it is named inside the text only for a caller who may see it.
+    val failureReason: String? = null,
 )
 
 @Serializable

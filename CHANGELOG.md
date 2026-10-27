@@ -4,6 +4,11 @@
 
 ### Homer
 
+- **Added: `failureReason` on the process status response** — A run that ended `FAILED` before any command started (a claim timeout, a `SKIP_CURRENT` lock skip, a parallel-run cap or a full queue) carries a stored sentence saying which.
+
+### Console
+
+- **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
 - **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
 
 ### Console

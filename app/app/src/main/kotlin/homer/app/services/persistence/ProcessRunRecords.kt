@@ -35,6 +35,17 @@ interface ProcessRunRecords {
     )
 
     /**
+     * Stores why the run ended FAILED before any of its commands started, and the run that
+     * blocked it when the cause names one; a guarded write that lands only on a row still
+     * `FAILED` with no step recorded. See ADR-0020.
+     */
+    suspend fun setFailureReason(
+        processId: Int,
+        reason: String,
+        holderRunId: Int?,
+    ): Boolean
+
+    /**
      * Writes a run-time tag against [processId] via the callback route, enforcing the
      * per-run ceiling [maxTags] atomically with the write. [fromInputsKeys] are the
      * agent's `fromInputs` tag keys, excluded from the ceiling so only runtime-declared
@@ -81,6 +92,12 @@ internal class DefaultProcessRunRecords(
     ) {
         repository.setArtifactsDir(processId, artifactsDir.toString())
     }
+
+    override suspend fun setFailureReason(
+        processId: Int,
+        reason: String,
+        holderRunId: Int?,
+    ): Boolean = repository.setFailureReason(processId, reason, holderRunId)
 
     override suspend fun addRuntimeTag(
         processId: Int,
