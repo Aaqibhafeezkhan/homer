@@ -190,7 +190,7 @@ Agent-loading logs (`[main] INFO agentdebug - ...`) go to stderr; append
 ### list
 Against the Quick Start config:
 ```
-Available agents (12):
+Available agents (13):
   body-input           - Demonstrates inputs sourced from JSON request body (1 command)
   header-input         - Demonstrates inputs sourced from request headers (1 command)
   hello                - A sample greeting agent that demonstrates commands and query parameters (2 commands)
