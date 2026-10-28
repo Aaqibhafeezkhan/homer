@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=../../../app/schemas/homer-agent.schema.json
+name: limits
+description: Demonstrates concurrency limits and cooldown with a slow command
+commands:
+  - !<script>
+    content: |
+      sleep 30
+      echo 2
+maxParallelRuns: 1 # Int: at most one run executes at a time
+onMaxParallelRuns: WAIT # OnMaxParallelRunsStrategy: WAIT queues a surplus run, REJECT fails it
+maxQueuedRuns: 2 # Int?: under WAIT, fail a surplus run once 2 runs are queued
+cooldown:
+  afterFailure: 15m # String?: minimum time since a FAILED run ended
