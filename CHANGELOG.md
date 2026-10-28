@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: a `limits` example agent** — Demonstrates `maxParallelRuns`, `onMaxParallelRuns`, `maxQueuedRuns` and `cooldown` on a slow script.
+
 ## [1.38.0] - 2026-10-28
 
 ### Homer
