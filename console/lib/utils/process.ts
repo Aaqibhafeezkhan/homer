@@ -80,9 +80,9 @@ export interface CommandDot {
 /**
  * One dot per command the run actually executed — `ok` (resultCode 0) or
  * `failed` — with the in-flight command appended as `running` while the run is
- * WORKING. Commands a `when:` condition skipped never ran and get no dot, as in
- * `lastCommandFromDots`. Commands not yet run get none either: the list response
- * carries no total command count.
+ * WORKING. Commands a `when:` condition skipped never ran and get no dot, so the
+ * Last Command icon (`lastCommandFromDots`) agrees. Commands not yet run get none
+ * either: the list response carries no total command count.
  */
 export function commandDotStates(process: ProcessInfo): CommandDot[] {
   const dots: CommandDot[] = (process.executions ?? [])

@@ -196,7 +196,7 @@ individually or via **Clear**.
 
 A run that **failed before it started** — a claim timeout, a `SKIP_CURRENT` lock
 collision, a parallel-run cap or a full queue — shows a short reason beside its
-`FAILED` badge, so the list says why without opening the run. The row truncates
+failed status icon, so the list says why without opening the run. The row truncates
 it; hover for the full sentence, which the run's own page shows in full.
 
 ### Process Details
