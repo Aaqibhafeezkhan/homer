@@ -8,16 +8,13 @@
 
 - **Added: `failureReason` on the process status response** — A run that ended `FAILED` before any command started (a claim timeout, a `SKIP_CURRENT` lock skip, a parallel-run cap or a full queue) carries a stored sentence saying which.
 - **Added: run-message API and `server.messages` limits** — `POST` and `GET /api/v1/status/{processId}/messages` send and list a run's inbox, `POST /api/v1/callback/messages/take` hands the run its queued messages (as plain text, Claude-hook JSON or the `check_messages` MCP tool), `message.queued`/`delivered`/`undelivered` stream on `/stream/processes`, and the new `server.messages` config bounds message size and count. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
-
-### Console
-
-- **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
-- **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
 - **Added: an optional `group` on the agent definition** — Labels an agent for the console; `GET /api/v1/agents` and the process API return it, read from the agent's current definition.
 - **Fixed: code names split mid-word in documentation-site tables** — A code or type name in a table cell stays on one line, and a table too wide for the page scrolls sideways instead.
 
 ### Console
 
+- **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
+- **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
 - **Added: message box on a running run** — Send a message to a running run from its page and see whether it was delivered.
 - **Added: agent group tabs** — The Agents page shows an All tab plus one tab per agent group, and a run's agent group is shown on the process list and detail.
 
