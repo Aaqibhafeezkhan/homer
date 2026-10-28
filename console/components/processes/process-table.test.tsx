@@ -11,6 +11,9 @@ const useKillProcessMock = vi.hoisted(() =>
 const useRetryProcessMock = vi.hoisted(() =>
   vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 );
+// The ticking clock behind the Duration column: mocked so a duration assertion
+// is exact and no interval runs during a test.
+const useNowMock = vi.hoisted(() => vi.fn(() => 0));
 
 vi.mock('next/navigation', () => ({
   useRouter: useRouterMock,
@@ -20,6 +23,8 @@ vi.mock('@/lib/api/queries', () => ({
   useKillProcess: useKillProcessMock,
   useRetryProcess: useRetryProcessMock,
 }));
+
+vi.mock('@/lib/hooks/use-now', () => ({ useNow: useNowMock }));
 
 vi.mock('@/lib/auth/use-can', () => ({ useCan: vi.fn() }));
 import { useCan, type Capabilities } from '@/lib/auth/use-can';
@@ -73,6 +78,8 @@ describe('ProcessTable', () => {
     useRouterMock.mockClear();
     useKillProcessMock.mockClear();
     useRetryProcessMock.mockClear();
+    useNowMock.mockClear();
+    useNowMock.mockReturnValue(0);
     mockCan();
   });
 
@@ -232,6 +239,24 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('icon-only row actions', () => {
+    it('renders Kill as an icon with a tooltip, not a text button', () => {
+      render(<ProcessTable processes={[makeProcess({ status: 'WORKING' })]} />);
+
+      const kill = screen.getAllByLabelText('Kill process 42')[0];
+      expect(kill).toHaveAttribute('title', 'Kill process');
+      expect(kill.textContent).toBe('');
+    });
+
+    it('renders Retry as an icon with a tooltip, not a text button', () => {
+      render(<ProcessTable processes={[makeProcess({ status: 'FAILED' })]} />);
+
+      const retry = screen.getAllByLabelText('Retry process 42')[0];
+      expect(retry).toHaveAttribute('title', 'Retry process');
+      expect(retry.textContent).toBe('');
+    });
+  });
+
   describe('tags', () => {
     it('renders a chip for each of a run\'s subject tags', () => {
       const process = makeProcess({ tags: ['mr:15'] });
@@ -367,9 +392,10 @@ describe('ProcessTable', () => {
 
       render(<ProcessTable processes={[process]} />);
 
-      // Desktop row + mobile card both carry the badge, each with its own tooltip.
+      // Desktop row + mobile card both carry the badge, each with its own tooltip,
+      // and the status beside it is the compact icon.
       expect(screen.getAllByTitle(REASON)).toHaveLength(2);
-      expect(screen.getAllByText('Failed')).toHaveLength(2);
+      expect(screen.getAllByLabelText('Status: Failed')).toHaveLength(2);
     });
 
     it('shows no reason for a run that carries none', () => {
@@ -378,6 +404,120 @@ describe('ProcessTable', () => {
       render(<ProcessTable processes={[process]} />);
 
       expect(screen.queryByText(/Failure reason:/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('duration column', () => {
+    it('measures a finished run from its first history entry to its last', () => {
+      const process = makeProcess({
+        history: [
+          { timestamp: 1_700_000_000, status: 'CREATED' },
+          { timestamp: 1_700_003_600, status: 'FINISHED' },
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.getByRole('columnheader', { name: 'Duration' })).toBeInTheDocument();
+      // Desktop table + mobile card.
+      expect(screen.getAllByText('1h 0m 0s')).toHaveLength(2);
+    });
+
+    it('measures an active run to the ticking clock', () => {
+      useNowMock.mockReturnValue(1_700_000_042);
+      const process = makeProcess({
+        status: 'WORKING',
+        history: [{ timestamp: 1_700_000_000, status: 'WORKING' }],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.getAllByText('42s')).toHaveLength(2);
+    });
+
+    it('shows a placeholder when history is empty', () => {
+      render(<ProcessTable processes={[makeProcess({ history: [] })]} />);
+
+      expect(screen.getAllByText('—')).toHaveLength(2);
+    });
+
+    it('shows a placeholder for a malformed history timestamp instead of crashing', () => {
+      const process = makeProcess({
+        history: [
+          { timestamp: NaN, status: 'CREATED' },
+          { timestamp: 1_700_000_500, status: 'FINISHED' },
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.getAllByText('—')).toHaveLength(2);
+    });
+  });
+
+  describe('ticking clock', () => {
+    it('ticks only while some row is still running', () => {
+      render(<ProcessTable processes={[makeProcess({ status: 'WORKING' })]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(true);
+    });
+
+    it('does not tick for a list of finished runs', () => {
+      render(<ProcessTable processes={[makeProcess(), makeProcess({ id: 43, status: 'FAILED' })]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(false);
+    });
+
+    it('does not tick for an empty list', () => {
+      render(<ProcessTable processes={[]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(false);
+    });
+  });
+
+  describe('removed columns', () => {
+    it('drops Status Time and Purge from the table and the card', () => {
+      render(<ProcessTable processes={[makeProcess({ purgeAt: 1_700_009_999 })]} />);
+
+      expect(screen.queryByRole('columnheader', { name: 'Status Time' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('columnheader', { name: 'Purge' })).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Status time:/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Purge:/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('command dots', () => {
+    it('shows one dot per executed command, plus the one running now', () => {
+      const process = makeProcess({
+        status: 'WORKING',
+        currentCommand: 'cmd-running',
+        executions: [
+          makeExecution({ label: 'first', resultCode: 0 }),
+          makeExecution({ label: 'boom', resultCode: 2 }),
+          skippedExecution('hold'),
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      // Desktop row + mobile card, each carrying one dot per command that ran.
+      // Each dot names the command and its state for assistive technology.
+      expect(screen.getAllByLabelText('first: ok')).toHaveLength(2);
+      expect(screen.getAllByLabelText('boom: failed')).toHaveLength(2);
+      expect(screen.getAllByLabelText('cmd-running: running')).toHaveLength(2);
+      // A command its `when:` condition skipped never ran, so it gets no dot.
+      expect(screen.queryByLabelText('hold: failed')).not.toBeInTheDocument();
+    });
+
+    it('renders no dots for a run that has executed nothing', () => {
+      render(<ProcessTable processes={[makeProcess({ executions: [] })]} />);
+
+      // Any dot at all — whatever command it named — is a `role="img"` whose
+      // accessible name ends in its state, so a stray one (say a `running` dot
+      // appended for a run that is not WORKING, named `null: running`) fails
+      // here. The status icons are the only other `role="img"` in a row, and
+      // their names are `Status: <label>`.
+      expect(screen.queryAllByRole('img', { name: /: (ok|failed|running)$/ })).toHaveLength(0);
     });
   });
 

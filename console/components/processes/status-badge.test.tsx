@@ -17,6 +17,50 @@ describe('StatusBadge', () => {
     expect(getByLabelText('Status: Unknown')).toBeInTheDocument();
   });
 
+  it('renders the text badge by default', () => {
+    const { getByText } = render(<StatusBadge status="FINISHED" />);
+    expect(getByText('Finished')).toBeInTheDocument();
+  });
+
+  describe('icon variant', () => {
+    it('exposes the status label as the accessible name and the tooltip', () => {
+      const { getByLabelText } = render(<StatusBadge status="FINISHED" variant="icon" />);
+      const icon = getByLabelText('Status: Finished');
+      expect(icon).toHaveAttribute('title', 'Finished');
+    });
+
+    it('names each status, so the icon alone is not ambiguous', () => {
+      const { getByLabelText } = render(<StatusBadge status="KILLED" variant="icon" />);
+      expect(getByLabelText('Status: Killed')).toHaveAttribute('title', 'Killed');
+    });
+
+    it('renders no text label', () => {
+      const { container } = render(<StatusBadge status="FINISHED" variant="icon" />);
+      expect(container.textContent).toBe('');
+    });
+
+    it('falls back to Unknown for unrecognized status values', () => {
+      const { getByLabelText } = render(
+        <StatusBadge status={'WAT' as ProcessStatus} variant="icon" />,
+      );
+      expect(getByLabelText('Status: Unknown')).toHaveAttribute('title', 'Unknown');
+    });
+
+    it.each([
+      ['WORKING', 'Status: Working', 'text-blue-500', 'animate-spin'],
+      ['FINISHED', 'Status: Finished', 'text-green-500', null],
+      ['FAILED', 'Status: Failed', 'text-red-500', null],
+      ['KILLED', 'Status: Killed', 'text-orange-500', null],
+      ['CREATED', 'Status: Created', 'text-gray-500', null],
+      ['UNKNOWN', 'Status: Unknown', 'text-gray-400', null],
+    ] as const)('renders the %s icon with its fixed status color', (status, name, color, extra) => {
+      const { getByLabelText } = render(<StatusBadge status={status} variant="icon" />);
+      const svg = getByLabelText(name).querySelector('svg');
+      expect(svg).toHaveClass(color);
+      if (extra) expect(svg).toHaveClass(extra);
+    });
+  });
+
   describe('a11y', () => {
     const statuses: ProcessStatus[] = [
       'WORKING',
@@ -30,6 +74,11 @@ describe('StatusBadge', () => {
     for (const status of statuses) {
       it(`has no axe violations for status ${status}`, async () => {
         const { container } = render(<StatusBadge status={status} />);
+        expect(await axe(container)).toHaveNoViolations();
+      });
+
+      it(`has no axe violations for the icon variant of ${status}`, async () => {
+        const { container } = render(<StatusBadge status={status} variant="icon" />);
         expect(await axe(container)).toHaveNoViolations();
       });
     }

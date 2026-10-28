@@ -164,6 +164,16 @@ when it has not spent anything); the filter row shows a **Total cost**
 figure summing the currently filtered/paginated page — not every run
 matching the filter across other pages.
 
+A **Duration** column shows how long the run has been going: from its first
+status-history entry to the last one once it has ended, and to now while it
+still runs. The **Last Command** cell carries one dot per command that
+executed — green for success, red for failure, a pulsing blue dot for the one
+running now — so a run's progress reads at a glance. Status is a single icon
+whose tooltip and accessible name give the status word; the failure-reason and
+open-question badges still sit beside it. There are no **Status Time** or
+**Purge** columns; the run's own page keeps its status timeline and purge time.
+**Kill** and **Retry** are icon-only buttons with tooltips.
+
 Status filters, sort order, and paging are kept in the URL, so the
 list view is shareable as a link and browser Back restores it. A
 `parent=<id>` URL parameter narrows the list to the direct children of
@@ -186,7 +196,7 @@ individually or via **Clear**.
 
 A run that **failed before it started** — a claim timeout, a `SKIP_CURRENT` lock
 collision, a parallel-run cap or a full queue — shows a short reason beside its
-`FAILED` badge, so the list says why without opening the run. The row truncates
+failed status icon, so the list says why without opening the run. The row truncates
 it; hover for the full sentence, which the run's own page shows in full.
 
 ### Process Details

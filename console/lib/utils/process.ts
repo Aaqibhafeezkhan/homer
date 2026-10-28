@@ -1,5 +1,4 @@
 import type { ProcessInfo, ProcessStatus } from '@/types/homer';
-import { formatTimestamp } from './format';
 import { splitCommaList } from './list';
 
 /** A run that has not ended yet (`CREATED` or `WORKING`) — the statuses Kill applies to. */
@@ -20,41 +19,84 @@ export interface LastCommand {
 }
 
 /**
- * Derives the "last command" status and label shown for a process.
- *
- * A WORKING process with a current command reports that command as
- * `running`; otherwise the most recent execution that actually ran is
- * classified as `success` (resultCode 0) or `failed` — a command skipped
- * by its `when:` condition never ran, so the trailing skips are passed
- * over. A process with no execution that ran reports null status and
- * label.
+ * Derives the "last command" status and label shown for a process from a dots
+ * row the caller already computed (`commandDotStates`): the state of the last
+ * dot, remapped to the Last Command icon's vocabulary. Taking the dots keeps a
+ * row to one classification of the executions, so the dots row and this icon
+ * cannot drift — and the caller can share the same array with both.
  */
-export function getLastCommand(process: ProcessInfo): LastCommand {
-  if (process.status === 'WORKING' && process.currentCommand) {
-    return { status: 'running', label: process.currentCommand };
-  }
-
-  const lastRan = (process.executions ?? []).findLast((e) => !e.skipped);
-  if (!lastRan) {
+export function lastCommandFromDots(dots: CommandDot[]): LastCommand {
+  const last = dots[dots.length - 1];
+  if (!last) {
     return { status: null, label: null };
   }
 
   return {
-    status: lastRan.resultCode === 0 ? 'success' : 'failed',
-    label: lastRan.label,
+    status: last.state === 'ok' ? 'success' : last.state,
+    label: last.label,
   };
 }
 
 /**
- * Returns the formatted timestamp of the process's most recent history
- * entry, or '-' when there is no history.
+ * The run's elapsed seconds: its first history entry to the last one for a
+ * run that ended, to `now` while it is still active. `null` when history is
+ * missing, malformed or would make the span negative, so the caller renders a
+ * placeholder rather than `NaN`. Before `useNow`'s first tick (`now === 0`) an
+ * active run falls back to its last history entry, so the first paint is
+ * stable instead of showing a run that started in 1970. The `now === 0`
+ * sentinel deliberately reuses `useNow`'s convention rather than typing the
+ * clock `number | null`: the hook is the only caller and already holds the
+ * sentinel, so a nullable parameter would push the special case onto it.
  */
-export function getStatusTime(process: ProcessInfo): string {
-  if (!process.history || process.history.length === 0) {
-    return '-';
+export function runDurationSeconds(process: ProcessInfo, now: number): number | null {
+  const history = process.history ?? [];
+  if (history.length === 0) {
+    return null;
   }
-  const lastHistory = process.history[process.history.length - 1];
-  return formatTimestamp(lastHistory.timestamp);
+  const start = history[0].timestamp;
+  const last = history[history.length - 1].timestamp;
+  if (!Number.isFinite(start) || !Number.isFinite(last)) {
+    return null;
+  }
+
+  const active = isActiveStatus(process.status) && now > 0;
+  return elapsedSeconds(start, active ? now : last);
+}
+
+/** `end - start` in seconds when the span is finite and not negative, else null. */
+function elapsedSeconds(start: number, end: number): number | null {
+  const seconds = end - start;
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+export type CommandDotState = 'ok' | 'failed' | 'running';
+
+/** One dot of a run's command-progress row: the command's label and how it ended. */
+export interface CommandDot {
+  label: string;
+  state: CommandDotState;
+}
+
+/**
+ * One dot per command the run actually executed — `ok` (resultCode 0) or
+ * `failed` — with the in-flight command appended as `running` while the run is
+ * WORKING. Commands a `when:` condition skipped never ran and get no dot, so the
+ * Last Command icon (`lastCommandFromDots`) agrees. Commands not yet run get none
+ * either: the list response carries no total command count.
+ */
+export function commandDotStates(process: ProcessInfo): CommandDot[] {
+  const dots: CommandDot[] = (process.executions ?? [])
+    .filter((execution) => !execution.skipped)
+    .map((execution) => ({
+      label: execution.label,
+      state: execution.resultCode === 0 ? 'ok' : 'failed',
+    }));
+
+  if (process.status === 'WORKING' && process.currentCommand) {
+    dots.push({ label: process.currentCommand, state: 'running' });
+  }
+
+  return dots;
 }
 
 /** The status filters the process list offers, in display order. */

@@ -161,17 +161,18 @@ when you fix it.
 
 #### Process List Display
 - [ ] Verify table shows all processes
-- [ ] Verify columns: Process ID, Agent Name, Status, Status Time, Last Command, Cost, Runner, Purge, Actions (plus Flow in the Root runs view)
+- [ ] Verify columns: Process ID, Agent Name, Status, Duration, Last Command, Cost, Runner, Actions (plus Flow in the Root runs view)
 - [ ] Verify process IDs are displayed correctly
 - [ ] Verify agent names are shown
-- [ ] Verify status badges have correct colors:
-  - WORKING: Blue with pulse animation
+- [ ] Verify status icons have correct colors:
+  - WORKING: Blue, spinning
   - FINISHED: Green
   - FAILED: Red
   - KILLED: Orange
   - CREATED: Gray
-- [ ] Verify status time shows formatted timestamp
-- [ ] Verify last command shows checkmark (✓) for success or X (✗) for failure
+- [ ] Hover a status icon and verify its tooltip names the status, and that the icon exposes the same name to a screen reader
+- [ ] Verify the Duration column shows the elapsed time from the run's first history entry to its last, and ticks upward while the run is active
+- [ ] Verify the Last Command cell shows one dot per executed command — green for success, red for failure, pulsing blue for the command running now — and that hovering a dot names the command and its state
 
 #### Filtering
 - [ ] Click on "WORKING" status filter
@@ -205,18 +206,18 @@ when you fix it.
 
 #### Kill Process
 - [ ] Find a WORKING or CREATED process
-- [ ] Verify "Kill" button is visible
-- [ ] Click "Kill" button
+- [ ] Verify the Kill icon button is visible, and that its tooltip and accessible name identify it as killing the process
+- [ ] Click the Kill button
 - [ ] Verify confirmation dialog appears
 - [ ] Click "Cancel"
 - [ ] Verify dialog closes and process is not killed
-- [ ] Click "Kill" button again
+- [ ] Click the Kill button again
 - [ ] Click "Kill Process" in dialog
 - [ ] Verify dialog closes
 - [ ] Verify process status changes to KILLED
 - [ ] Verify the process list updates
 - [ ] Find a FINISHED process
-- [ ] Verify no "Kill" button is shown
+- [ ] Verify no Kill button is shown
 
 #### Navigation
 - [ ] Click on a process row

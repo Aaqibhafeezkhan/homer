@@ -8,16 +8,21 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from './status-badge';
 import { FailureReason } from './failure-reason';
 import { TagChips } from './tag-chips';
-import { formatTimeUntil, formatCost } from '@/lib/utils/format';
+import { formatDuration, formatCost } from '@/lib/utils/format';
 import {
-  getLastCommand,
-  getStatusTime,
+  commandDotStates,
   isActiveStatus,
   isRetryableStatus,
+  lastCommandFromDots,
+  runDurationSeconds,
+  type CommandDot,
+  type LastCommand,
   type LastCommandStatus,
 } from '@/lib/utils/process';
-import { X, Check, Loader2, MessageCircleQuestion, RotateCcw } from 'lucide-react';
+import { X, Check, Loader2, MessageCircleQuestion, RotateCcw, Skull } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
+import { commandDotColor } from './workflow-dots';
+import { useNow } from '@/lib/hooks/use-now';
 import type { PodPhase } from '@/types/homer';
 import {
   Dialog,
@@ -64,38 +69,75 @@ function renderLastCommandIcon(status: LastCommandStatus) {
   }
 }
 
+/**
+ * One square per command the run executed, coloured like the LangGraph dot
+ * rows (`workflow-dots.ts`). The tooltip names the command and its state only
+ * — no arguments, which the list never shows either (threat model, Secrets).
+ * Each dot is `role="img"` with the same text as its accessible name: a bare
+ * `title` on a generic span is not announced, and the dots are the only place
+ * the row says which commands ran and how each ended.
+ */
+function CommandDots({ dots }: { dots: CommandDot[] }) {
+  if (dots.length === 0) return null;
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-0.5">
+      {dots.map((dot, i) => (
+        <span
+          key={i}
+          role="img"
+          aria-label={`${dot.label}: ${dot.state}`}
+          title={`${dot.label}: ${dot.state}`}
+          className={cn(
+            'inline-block h-2 w-2 rounded-sm',
+            dot.state === 'running' && 'animate-pulse',
+          )}
+          style={{ backgroundColor: commandDotColor(dot.state) }}
+        />
+      ))}
+    </span>
+  );
+}
+
 interface CommandStatusProps {
-  status: LastCommandStatus | null;
-  label: string | null;
+  lastCmd: LastCommand;
+  dots: CommandDot[];
   variant: 'desktop' | 'mobile';
 }
 
 /**
- * Renders the last-command status fragment. The desktop and mobile
- * layouts intentionally differ in markup: desktop shows a dash fallback
- * and a muted label inside a span; mobile prefixes "Last:", omits the
- * dash fallback, and only renders when a label exists. The icon logic is
- * the shared part.
+ * Renders the command-progress dots above the last-command status fragment.
+ * The desktop and mobile layouts intentionally differ in markup: desktop shows
+ * a dash fallback and a muted label inside a span; mobile prefixes "Last:",
+ * omits the dash fallback, and only renders when a label exists. The dots and
+ * the icon logic are the shared parts. Both come from the row, which computes
+ * the dots once per render.
  */
-function CommandStatus({ status, label, variant }: CommandStatusProps) {
+function CommandStatus({ lastCmd, dots, variant }: CommandStatusProps) {
   if (variant === 'desktop') {
-    if (!status) {
+    if (!lastCmd.status) {
       return <span className="text-sm text-muted-foreground">-</span>;
     }
     return (
-      <span className="flex items-center gap-1 text-sm">
-        {renderLastCommandIcon(status)}
-        <span className="text-muted-foreground">{label}</span>
-      </span>
+      <div className="space-y-1">
+        <CommandDots dots={dots} />
+        <span className="flex items-center gap-1 text-sm">
+          {renderLastCommandIcon(lastCmd.status)}
+          <span className="text-muted-foreground">{lastCmd.label}</span>
+        </span>
+      </div>
     );
   }
 
-  if (!label) return null;
+  if (!lastCmd.label) return null;
   return (
-    <div className="text-sm flex items-center gap-1">
-      <span className="text-muted-foreground">Last:</span>
-      {status && renderLastCommandIcon(status)}
-      <span>{label}</span>
+    <div className="space-y-1">
+      <CommandDots dots={dots} />
+      <div className="text-sm flex items-center gap-1">
+        <span className="text-muted-foreground">Last:</span>
+        {lastCmd.status && renderLastCommandIcon(lastCmd.status)}
+        <span>{lastCmd.label}</span>
+      </div>
     </div>
   );
 }
@@ -124,6 +166,12 @@ function FailureReasonBadge({ process }: { process: ProcessInfo }) {
 function CostCell({ process }: { process: ProcessInfo }) {
   if (!process.costUsd) return <span className="text-muted-foreground">-</span>;
   return <span className="font-mono text-sm">{formatCost(process.costUsd)}</span>;
+}
+
+/** How long the whole run has been going, or a placeholder when its history says nothing usable. */
+function DurationCell({ process, now }: { process: ProcessInfo; now: number }) {
+  const seconds = runDurationSeconds(process, now);
+  return <span>{seconds === null ? '—' : formatDuration(0, seconds)}</span>;
 }
 
 /** The agent's group beside its name. Callers render it only when the run's agent has one. */
@@ -206,23 +254,26 @@ function RowActions({ process, actions }: { process: ProcessInfo; actions: Proce
       {isActiveStatus(process.status) && cap.canKillProcess(process) && (
         <Button
           variant="destructive"
-          size="sm"
+          size="icon"
+          className="h-8 w-8"
           onClick={(e) => actions.handleKillClick(e, process.id)}
+          title="Kill process"
           aria-label={`Kill process ${process.id}`}
         >
-          Kill
+          <Skull className="h-4 w-4" aria-hidden="true" />
         </Button>
       )}
       {isRetryableStatus(process.status) && cap.canRetryProcess(process) && (
         <Button
           variant="outline"
-          size="sm"
+          size="icon"
+          className="h-8 w-8"
           onClick={(e) => actions.handleRetryClick(e, process.id)}
           disabled={actions.retryPending}
+          title="Retry process"
           aria-label={`Retry process ${process.id}`}
         >
-          <RotateCcw className="h-3 w-3 mr-1" aria-hidden="true" />
-          Retry
+          <RotateCcw className="h-4 w-4" aria-hidden="true" />
         </Button>
       )}
     </>
@@ -234,10 +285,15 @@ interface ProcessRowProps {
   onTagClick?: (tag: string) => void;
   flowSummary?: (process: ProcessInfo) => React.ReactNode;
   actions: ProcessActions;
+  /** Whole seconds, ticking once a second while any row is active; 0 before the first tick. */
+  now: number;
 }
 
-function DesktopRow({ process, onTagClick, flowSummary, actions }: ProcessRowProps) {
-  const lastCmd = getLastCommand(process);
+function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessRowProps) {
+  // One pass over the executions per row: the dots row and the Last Command
+  // icon share it, so a re-render classifies them once, not once per surface.
+  const dots = commandDotStates(process);
+  const lastCmd = lastCommandFromDots(dots);
   return (
     <TableRow
       className="cursor-pointer"
@@ -262,23 +318,20 @@ function DesktopRow({ process, onTagClick, flowSummary, actions }: ProcessRowPro
       </TableCell>
       <TableCell>
         <span className="flex items-center gap-2">
-          <StatusBadge status={process.status} />
+          <StatusBadge status={process.status} variant="icon" />
           <FailureReasonBadge process={process} />
           <QuestionBadge process={process} />
         </span>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">
-        {getStatusTime(process)}
+        <DurationCell process={process} now={now} />
       </TableCell>
       <TableCell>
-        <CommandStatus status={lastCmd.status} label={lastCmd.label} variant="desktop" />
+        <CommandStatus lastCmd={lastCmd} dots={dots} variant="desktop" />
       </TableCell>
       <TableCell><CostCell process={process} /></TableCell>
       <TableCell><RunnerCell process={process} /></TableCell>
       {flowSummary && <TableCell>{flowSummary(process)}</TableCell>}
-      <TableCell className="text-sm text-muted-foreground">
-        {process.purgeAt ? formatTimeUntil(process.purgeAt) : '—'}
-      </TableCell>
       <TableCell><RowActions process={process} actions={actions} /></TableCell>
     </TableRow>
   );
@@ -296,12 +349,11 @@ function DesktopTable({
             <TableHead>Process ID</TableHead>
             <TableHead>Agent Name</TableHead>
             <TableHead>Status</TableHead>
-            <TableHead>Status Time</TableHead>
+            <TableHead>Duration</TableHead>
             <TableHead>Last Command</TableHead>
             <TableHead>Cost</TableHead>
             <TableHead>Runner</TableHead>
             {rowProps.flowSummary && <TableHead>Flow</TableHead>}
-            <TableHead>Purge</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -315,8 +367,10 @@ function DesktopTable({
   );
 }
 
-function MobileCard({ process, onTagClick, flowSummary, actions }: ProcessRowProps) {
-  const lastCmd = getLastCommand(process);
+function MobileCard({ process, onTagClick, flowSummary, actions, now }: ProcessRowProps) {
+  // Same single pass as the desktop row (see `DesktopRow`).
+  const dots = commandDotStates(process);
+  const lastCmd = lastCommandFromDots(dots);
   return (
     <div className="rounded-lg border p-3 space-y-2 bg-card">
       <div className="flex items-center justify-between">
@@ -329,7 +383,7 @@ function MobileCard({ process, onTagClick, flowSummary, actions }: ProcessRowPro
         </Link>
         <span className="flex items-center gap-2">
           <QuestionBadge process={process} />
-          <StatusBadge status={process.status} />
+          <StatusBadge status={process.status} variant="icon" />
           <FailureReasonBadge process={process} />
         </span>
       </div>
@@ -345,15 +399,14 @@ function MobileCard({ process, onTagClick, flowSummary, actions }: ProcessRowPro
           <span className="text-muted-foreground">Runner:</span> <RunnerCell process={process} />
         </div>
       )}
-      <CommandStatus status={lastCmd.status} label={lastCmd.label} variant="mobile" />
-      <div className="text-sm text-muted-foreground">Status time: {getStatusTime(process)}</div>
+      <CommandStatus lastCmd={lastCmd} dots={dots} variant="mobile" />
+      <div className="text-sm text-muted-foreground">
+        Duration: <DurationCell process={process} now={now} />
+      </div>
       {flowSummary && (
         <div className="text-sm">
           <span className="text-muted-foreground">Flow:</span> {flowSummary(process)}
         </div>
-      )}
-      {process.purgeAt && (
-        <div className="text-sm text-muted-foreground">Purge: {formatTimeUntil(process.purgeAt)}</div>
       )}
       <div className="flex gap-2 pt-1"><RowActions process={process} actions={actions} /></div>
     </div>
@@ -385,7 +438,10 @@ function KillDialog({ actions }: { actions: ProcessActions }) {
 
 export function ProcessTable({ processes, onTagClick, flowSummary }: ProcessTableProps) {
   const actions = useProcessActions();
-  const rowProps = { onTagClick, flowSummary, actions };
+  // The clock only ticks while some row is still running: a list of finished
+  // runs has nothing to re-render for.
+  const now = useNow(processes.some((process) => isActiveStatus(process.status)));
+  const rowProps = { onTagClick, flowSummary, actions, now };
 
   return (
     <>
