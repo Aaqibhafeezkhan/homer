@@ -42,6 +42,7 @@ Agent structure showing the most common fields (see [Agent Fields](#agent-fields
 ```yaml
 name: example-agent
 description: Example agent demonstrating all features
+group: platform              # Optional label; the console groups agents by it (default: ungrouped)
 
 commands:
   - !<cmd>
@@ -77,6 +78,7 @@ mcp:
 {
   "name": "example-agent",
   "description": "Example agent demonstrating all features",
+  "group": "platform",
   "commands": [
     {
       "type": "cmd",
@@ -117,6 +119,7 @@ mcp:
 |-------|------|----------|---------|-------------|
 | `name` | `String` | Yes | - | Unique agent identifier; must match `^[a-zA-Z0-9_-]+$` (letters, digits, `_`, `-`) |
 | `description` | `String?` | No | `null` | Human-readable description |
+| `group` | `String?` | No | `null` | Optional operator-facing label for this agent. The console's Agents page renders an "All" tab plus one tab per distinct group (sorted by name), so a large catalog can be browsed by area; an ungrouped agent appears under "All" only. Must be non-blank, at most 64 characters, and free of control characters; a violation fails agent load. Returned by `GET /api/v1/agents` and, read from the current definition, by the process API. See [Agent Fields](#agent-fields). |
 | `commands` | `List<Command>` | Yes | - | Sequential commands to execute. An empty list fails agent load (the agent is skipped). |
 | `inputs` | `List<Param>` | No | `null` | Input parameter definitions (query, body, headers). Setting both `inputs` and `queryParams` fails agent load. |
 | `queryParams` | `List<Param>` | No | `null` | **Deprecated alias for `inputs`.** Kept for backward compatibility. Mutually exclusive with `inputs`; setting both fails agent load. |

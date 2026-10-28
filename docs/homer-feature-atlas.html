@@ -678,10 +678,14 @@ curl "http://localhost:8080/api/v1/artifacts?processId=1&amp;path=report.txt"</c
             Names stay one flat namespace and a parent's file API and remote upload cannot reach a nested agent.
             The file API refuses to write a definition discovery would never load — one deeper than the walk's
             depth cap, or under a hidden directory — so it cannot leave a subtree it then answers <code>404</code> for.
-            The <code>name</code> field must match <code>^[a-zA-Z0-9_-]+$</code>.</p>
+            The <code>name</code> field must match <code>^[a-zA-Z0-9_-]+$</code>.
+            An optional <code>group</code> labels the agent for the console: at most 64 characters, non-blank and
+            free of control characters, and returned by <code>GET /api/v1/agents</code> and by every process response
+            (read from the agent's current definition).</p>
           <pre><code>agents/hello/agent.yaml
 name: hello
 description: Greets the caller
+group: platform          # optional; the console groups agents by it
 commands:
   - !&lt;script&gt;
     content: 'echo "Hello, $NAME!"'
@@ -3209,7 +3213,9 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             when the harness reported no cost and no session-spend endpoint answered), fallback reason, token
             usage and CLI session id. When
             <code>langfuse.projectId</code> is configured there is a link to the run's Langfuse trace. The agent name
-            links to its agent detail page. A run started by another run links to its parent, and a
+            links to its agent detail page, with the agent's <code>group</code> beside it when the agent has one (read
+            from the agent's current definition, so it can change or disappear on past runs). A run started by another
+            run links to its parent, and a
             <strong>Child runs</strong> card lists the runs it started; a run inside a flow also links to its root run
             (<strong>Root run #N</strong>). A root run's page instead shows a flat <strong>Flow</strong> section listing
             every visible descendant in id order — agent, status, cost and parent — with a toggle that hides the
@@ -3238,9 +3244,11 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
         <article class="f">
           <h3>Agents list &amp; detail <span class="where">console</span></h3>
           <p>One card per agent with Run and Edit buttons and, for a scheduled agent, its next and last cron run. Reload
-            rescans the agents directory and lists what was added, updated, removed or failed. An agent's page shows its
+            rescans the agents directory and lists what was added, updated, removed or failed. An <b>All</b> tab plus one
+            tab per distinct agent <code>group</code> (sorted by name) narrows the list, the selection living in the URL's
+            <code>group</code> param; an agent with no group appears under <b>All</b> only. An agent's page shows its
             parameters and transformers, its LangGraph graph, and its run history.</p>
-          <pre><code>/agents  ·  /agents/{name}</code></pre>
+          <pre><code>/agents  ·  /agents?group=platform  ·  /agents/{name}</code></pre>
         </article>
 
         <article class="f">

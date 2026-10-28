@@ -6,6 +6,7 @@ import { useUrlQueryState } from '@/lib/hooks/use-url-query-state';
 import { useCan } from '@/lib/auth/use-can';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, RefreshCw, X, Plus } from 'lucide-react';
 import { AgentCard } from '@/components/agents/agent-card';
 import { RunAgentDialog } from '@/components/agents/run-agent-dialog';
@@ -17,6 +18,85 @@ const RELOAD_CHANGE_ROWS = [
   { key: 'updated', label: 'Updated:', className: 'text-blue-500 font-medium' },
   { key: 'removed', label: 'Removed:', className: 'text-muted-foreground font-medium' },
 ] as const;
+
+// Radix tab values. Group tabs are prefixed so a group literally named "all"
+// cannot collide with the All tab; `?group=` keeps carrying the bare name.
+const ALL_TAB = 'all';
+const GROUP_TAB_PREFIX = 'group:';
+
+function groupTabValue(group: string) {
+  return `${GROUP_TAB_PREFIX}${group}`;
+}
+
+/** The group a tab value selects, or null for the All tab. */
+function tabGroup(value: string): string | null {
+  return value.startsWith(GROUP_TAB_PREFIX) ? value.slice(GROUP_TAB_PREFIX.length) : null;
+}
+
+/** The distinct group names in [agents], sorted by name. Ungrouped agents contribute none. */
+function agentGroups(agents: AgentInfo[]): string[] {
+  const names = new Set<string>();
+  for (const agent of agents) {
+    if (agent.group) names.add(agent.group);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/** Whether [agent] belongs to the selected tab and matches the name search. */
+function matchesTab(agent: AgentInfo, group: string | null, searchTerm: string): boolean {
+  return (group === null || agent.group === group) && agent.name.toLowerCase().includes(searchTerm.toLowerCase());
+}
+
+// The page's URL state: the name search and the selected group tab, plus the
+// distinct groups to render a tab for and the agents that tab and search leave.
+function useAgentFilters(agents: AgentInfo[] | undefined) {
+  const { searchParams, setParams } = useUrlQueryState();
+  const searchTerm = searchParams.get('q') ?? '';
+  const groups = agentGroups(agents ?? []);
+  const requested = searchParams.get('group');
+  // A `?group=` naming a group that no longer exists falls back to "All".
+  const activeGroup = requested && groups.includes(requested) ? requested : null;
+  return {
+    searchTerm,
+    setSearchTerm: (q: string) => setParams({ q }),
+    groups,
+    activeGroup,
+    selectGroup: (group: string | null) => setParams({ group }),
+    filteredAgents: agents?.filter((agent) => matchesTab(agent, activeGroup, searchTerm)),
+  };
+}
+
+// The "All" tab plus one per group; the selected tab lives in the URL's `group`.
+function GroupTabs({
+  groups,
+  activeGroup,
+  onSelect,
+}: {
+  groups: string[];
+  activeGroup: string | null;
+  onSelect: (group: string | null) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Tabs
+        value={activeGroup === null ? ALL_TAB : groupTabValue(activeGroup)}
+        onValueChange={(value) => onSelect(tabGroup(value))}
+      >
+        <TabsList className="h-auto flex-wrap justify-start">
+          <TabsTrigger value={ALL_TAB}>All</TabsTrigger>
+          {groups.map((group) => (
+            <TabsTrigger key={group} value={groupTabValue(group)}>
+              {group}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      <p className="text-xs text-muted-foreground">
+        Agents without a group appear under &quot;All&quot; only. The name search applies within the selected tab.
+      </p>
+    </div>
+  );
+}
 
 // One line per non-empty change list of a reload, or nothing when nothing changed.
 function ReloadChanges({ result }: { result: AgentReloadResult }) {
@@ -166,8 +246,6 @@ function useAgentReload() {
 }
 
 export default function AgentsPage() {
-  const { searchParams, setParams } = useUrlQueryState();
-  const searchTerm = searchParams.get('q') ?? '';
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [newAgentDialogOpen, setNewAgentDialogOpen] = useState(false);
@@ -175,9 +253,8 @@ export default function AgentsPage() {
     useAgentReload();
   const { data, isLoading, error } = useAgents();
   const { isAdmin } = useCan();
-
-  const filteredAgents = data?.agents.filter((agent) =>
-    agent.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const { searchTerm, setSearchTerm, groups, activeGroup, selectGroup, filteredAgents } = useAgentFilters(
+    data?.agents,
   );
 
   return (
@@ -193,7 +270,9 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      <AgentSearch value={searchTerm} onChange={(q) => setParams({ q })} />
+      <AgentSearch value={searchTerm} onChange={setSearchTerm} />
+
+      <GroupTabs groups={groups} activeGroup={activeGroup} onSelect={selectGroup} />
 
       {reloadError && <ReloadErrorBanner message={reloadError} onDismiss={() => setReloadError(null)} />}
 

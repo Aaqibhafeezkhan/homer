@@ -154,4 +154,34 @@ class AgentSerializationTest {
         val agent = Yaml.default.decodeFromString(Agent.serializer(), src)
         assertNull(agent.inputSchema)
     }
+
+    @Test
+    fun `group round-trips through YAML and JSON`() {
+        val src =
+            """
+            name: grouped
+            group: Platform
+            commands:
+              - !<cmd>
+                cmd: [echo, ok]
+            """.trimIndent()
+
+        val fromYaml = yaml.decodeFromString(Agent.serializer(), src)
+        assertEquals("Platform", fromYaml.group)
+        val fromJson = json.decodeFromString(Agent.serializer(), json.encodeToString(Agent.serializer(), fromYaml))
+        assertEquals("Platform", fromJson.group)
+    }
+
+    @Test
+    fun `group defaults to null when absent`() {
+        val src =
+            """
+            name: ungrouped
+            commands:
+              - !<cmd>
+                cmd: [echo, ok]
+            """.trimIndent()
+
+        assertNull(yaml.decodeFromString(Agent.serializer(), src).group)
+    }
 }

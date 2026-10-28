@@ -178,7 +178,8 @@ other filters. A **Children of #id** filter drops the roots filter and its
 Flow column; **Root runs** clears it and returns to the flow view.
 
 Each run shows its **subject tags** (`key:value`) as chips beside the
-agent name. Clicking a tag chip adds it to the filter (`tag=` in the
+agent name. A run whose agent declares a `group` also shows that group
+beside the agent name. Clicking a tag chip adds it to the filter (`tag=` in the
 URL as one comma-separated value, ANDed, so a run must carry every selected tag); each
 active tag appears as a removable badge in the filter row, cleared
 individually or via **Clear**.
@@ -196,7 +197,10 @@ it; hover for the full sentence, which the run's own page shows in full.
   a plain link to the unfiltered list — e.g. a shared link opened directly)
 - **Agent**: The agent name in the header links to that agent's detail
   page; a run whose agent has since been deleted still links, and the
-  target shows an "Agent not found" state
+  target shows an "Agent not found" state. Beside the name, the header
+  shows the agent's `group` when the agent has one, and nothing when it
+  is ungrouped; the group is read from the agent's current definition,
+  so it can change or disappear on past runs
 - **Parent run**: When another run started this one (a `RunAgent`
   command, dispatch, continuation, or an external caller's
   `X-Homer-Parent-Process-Id` header), the header links to that parent;
@@ -439,12 +443,17 @@ backend has swept at least once.
 ### Browsing Agents
 
 1. Navigate to **Agents** from the sidebar
-2. Use the search bar to filter agents by name; the search term is kept in
-   the URL's `q` param, so the filtered list is shareable and browser Back
-   restores it
-3. Click **Reload** to have the backend re-scan the agents directory; the
+2. Pick a tab: **All**, plus one tab per distinct agent `group`, sorted by
+   name. **All** lists every agent, *including the ones that declare no
+   group* — an ungrouped agent appears under no group tab. The selected tab
+   is kept in the URL's `group` param (a group that no longer exists falls
+   back to **All**), so a grouped view is shareable
+3. Use the search bar to filter agents by name **within the selected tab**;
+   the search term is kept in the URL's `q` param, so the filtered list is
+   shareable and browser Back restores it
+4. Click **Reload** to have the backend re-scan the agents directory; the
    result banner lists agents added, updated, and removed
-4. View agent details:
+5. View agent details:
    - A back button above the title returns to the agents list, restoring
      the search (via browser history where the console has in-app
      navigation history in this tab, otherwise a plain link to the

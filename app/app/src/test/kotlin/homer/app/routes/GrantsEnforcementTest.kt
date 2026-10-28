@@ -58,7 +58,7 @@ import kotlin.test.assertTrue
  */
 class GrantsEnforcementTest {
     private val echoAgent = AgentFixtures.simpleAgent(name = "echo")
-    private val otherAgent = AgentFixtures.simpleAgent(name = "other")
+    private val otherAgent = AgentFixtures.simpleAgent(name = "other").copy(group = "Other group")
 
     /** A valid YAML definition for `echo`, used as a PUT body by the route tests. */
     private val echoAgentYaml =
@@ -214,6 +214,8 @@ class GrantsEnforcementTest {
             val body = res.bodyAsText()
             assertTrue(body.contains("\"echo\""), body)
             assertFalse(body.contains("\"other\""), body)
+            // An ungranted agent's group must not leak through the list either.
+            assertFalse(body.contains("Other group"), body)
         }
 
     @Test

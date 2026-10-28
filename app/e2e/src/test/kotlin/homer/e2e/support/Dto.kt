@@ -47,6 +47,8 @@ data class ProcessInfo(
     val id: Int,
     val status: String,
     val agentName: String,
+    // The agent's group, read from the current definition; null when ungrouped or gone.
+    val group: String? = null,
     val history: List<HistoryEntry> = emptyList(),
     val executions: List<Execution> = emptyList(),
     val inputParams: Map<String, String> = emptyMap(),
@@ -117,6 +119,7 @@ data class AgentParam(
 data class AgentInfo(
     val name: String,
     val description: String? = null,
+    val group: String? = null,
     val writable: Boolean = true,
     val inputs: List<AgentParam>? = null,
 )
