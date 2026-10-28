@@ -19,13 +19,13 @@ export interface LastCommand {
 }
 
 /**
- * Derives the "last command" status and label shown for a process: the state
- * of the run's last dot (`commandDotStates`), remapped to the Last Command
- * icon's vocabulary. One classification of the executions, so the dots row
- * and this icon cannot drift.
+ * Derives the "last command" status and label shown for a process from a dots
+ * row the caller already computed (`commandDotStates`): the state of the last
+ * dot, remapped to the Last Command icon's vocabulary. Taking the dots keeps a
+ * row to one classification of the executions, so the dots row and this icon
+ * cannot drift — and the caller can share the same array with both.
  */
-export function getLastCommand(process: ProcessInfo): LastCommand {
-  const dots = commandDotStates(process);
+export function lastCommandFromDots(dots: CommandDot[]): LastCommand {
   const last = dots[dots.length - 1];
   if (!last) {
     return { status: null, label: null };
@@ -81,7 +81,7 @@ export interface CommandDot {
  * One dot per command the run actually executed — `ok` (resultCode 0) or
  * `failed` — with the in-flight command appended as `running` while the run is
  * WORKING. Commands a `when:` condition skipped never ran and get no dot, as in
- * `getLastCommand`. Commands not yet run get none either: the list response
+ * `lastCommandFromDots`. Commands not yet run get none either: the list response
  * carries no total command count.
  */
 export function commandDotStates(process: ProcessInfo): CommandDot[] {

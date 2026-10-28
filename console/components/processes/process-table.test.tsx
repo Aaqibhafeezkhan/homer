@@ -512,7 +512,12 @@ describe('ProcessTable', () => {
     it('renders no dots for a run that has executed nothing', () => {
       render(<ProcessTable processes={[makeProcess({ executions: [] })]} />);
 
-      expect(screen.queryByLabelText('cmd-0: ok')).not.toBeInTheDocument();
+      // Any dot at all — whatever command it named — is a `role="img"` whose
+      // accessible name ends in its state, so a stray one (say a `running` dot
+      // appended for a run that is not WORKING, named `null: running`) fails
+      // here. The status icons are the only other `role="img"` in a row, and
+      // their names are `Status: <label>`.
+      expect(screen.queryAllByRole('img', { name: /: (ok|failed|running)$/ })).toHaveLength(0);
     });
   });
 

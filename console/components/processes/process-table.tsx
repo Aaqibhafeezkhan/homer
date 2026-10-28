@@ -11,10 +11,12 @@ import { TagChips } from './tag-chips';
 import { formatDuration, formatCost } from '@/lib/utils/format';
 import {
   commandDotStates,
-  getLastCommand,
   isActiveStatus,
   isRetryableStatus,
+  lastCommandFromDots,
   runDurationSeconds,
+  type CommandDot,
+  type LastCommand,
   type LastCommandStatus,
 } from '@/lib/utils/process';
 import { X, Check, Loader2, MessageCircleQuestion, RotateCcw, Skull } from 'lucide-react';
@@ -75,8 +77,7 @@ function renderLastCommandIcon(status: LastCommandStatus) {
  * `title` on a generic span is not announced, and the dots are the only place
  * the row says which commands ran and how each ended.
  */
-function CommandDots({ process }: { process: ProcessInfo }) {
-  const dots = commandDotStates(process);
+function CommandDots({ dots }: { dots: CommandDot[] }) {
   if (dots.length === 0) return null;
 
   return (
@@ -99,9 +100,8 @@ function CommandDots({ process }: { process: ProcessInfo }) {
 }
 
 interface CommandStatusProps {
-  status: LastCommandStatus | null;
-  label: string | null;
-  process: ProcessInfo;
+  lastCmd: LastCommand;
+  dots: CommandDot[];
   variant: 'desktop' | 'mobile';
 }
 
@@ -110,32 +110,33 @@ interface CommandStatusProps {
  * The desktop and mobile layouts intentionally differ in markup: desktop shows
  * a dash fallback and a muted label inside a span; mobile prefixes "Last:",
  * omits the dash fallback, and only renders when a label exists. The dots and
- * the icon logic are the shared parts.
+ * the icon logic are the shared parts. Both come from the row, which computes
+ * the dots once per render.
  */
-function CommandStatus({ status, label, process, variant }: CommandStatusProps) {
+function CommandStatus({ lastCmd, dots, variant }: CommandStatusProps) {
   if (variant === 'desktop') {
-    if (!status) {
+    if (!lastCmd.status) {
       return <span className="text-sm text-muted-foreground">-</span>;
     }
     return (
       <div className="space-y-1">
-        <CommandDots process={process} />
+        <CommandDots dots={dots} />
         <span className="flex items-center gap-1 text-sm">
-          {renderLastCommandIcon(status)}
-          <span className="text-muted-foreground">{label}</span>
+          {renderLastCommandIcon(lastCmd.status)}
+          <span className="text-muted-foreground">{lastCmd.label}</span>
         </span>
       </div>
     );
   }
 
-  if (!label) return null;
+  if (!lastCmd.label) return null;
   return (
     <div className="space-y-1">
-      <CommandDots process={process} />
+      <CommandDots dots={dots} />
       <div className="text-sm flex items-center gap-1">
         <span className="text-muted-foreground">Last:</span>
-        {status && renderLastCommandIcon(status)}
-        <span>{label}</span>
+        {lastCmd.status && renderLastCommandIcon(lastCmd.status)}
+        <span>{lastCmd.label}</span>
       </div>
     </div>
   );
@@ -289,7 +290,10 @@ interface ProcessRowProps {
 }
 
 function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessRowProps) {
-  const lastCmd = getLastCommand(process);
+  // One pass over the executions per row: the dots row and the Last Command
+  // icon share it, so a re-render classifies them once, not once per surface.
+  const dots = commandDotStates(process);
+  const lastCmd = lastCommandFromDots(dots);
   return (
     <TableRow
       className="cursor-pointer"
@@ -323,12 +327,7 @@ function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessR
         <DurationCell process={process} now={now} />
       </TableCell>
       <TableCell>
-        <CommandStatus
-          status={lastCmd.status}
-          label={lastCmd.label}
-          process={process}
-          variant="desktop"
-        />
+        <CommandStatus lastCmd={lastCmd} dots={dots} variant="desktop" />
       </TableCell>
       <TableCell><CostCell process={process} /></TableCell>
       <TableCell><RunnerCell process={process} /></TableCell>
@@ -369,7 +368,9 @@ function DesktopTable({
 }
 
 function MobileCard({ process, onTagClick, flowSummary, actions, now }: ProcessRowProps) {
-  const lastCmd = getLastCommand(process);
+  // Same single pass as the desktop row (see `DesktopRow`).
+  const dots = commandDotStates(process);
+  const lastCmd = lastCommandFromDots(dots);
   return (
     <div className="rounded-lg border p-3 space-y-2 bg-card">
       <div className="flex items-center justify-between">
@@ -398,12 +399,7 @@ function MobileCard({ process, onTagClick, flowSummary, actions, now }: ProcessR
           <span className="text-muted-foreground">Runner:</span> <RunnerCell process={process} />
         </div>
       )}
-      <CommandStatus
-        status={lastCmd.status}
-        label={lastCmd.label}
-        process={process}
-        variant="mobile"
-      />
+      <CommandStatus lastCmd={lastCmd} dots={dots} variant="mobile" />
       <div className="text-sm text-muted-foreground">
         Duration: <DurationCell process={process} now={now} />
       </div>
