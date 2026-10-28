@@ -124,9 +124,10 @@ Execute agent commands locally.
 
 (`--env` is a global option — see [Global Options](#global-options) — but its values apply as the highest-priority env override on `run`.)
 
-`run` exits 1 if a command fails (non-zero exit without `continueIfFail`) or
-a `when` predicate fails to evaluate; it exits 0 otherwise, including when
-commands were skipped.
+`validate` exits 1 when the agent is not found or schema validation fails,
+and exits 0 when it passes. `run` exits 1 if a command fails (non-zero exit
+without `continueIfFail`) or a `when` predicate fails to evaluate; it exits
+0 otherwise, including when commands were skipped.
 
 Commands with a `when:` predicate are evaluated before each real run (dry-run
 only prints the predicate, never evaluates it): a false predicate prints
@@ -203,6 +204,7 @@ result that follows the answer.
  (5 commands)
   result               (5 commands)
   sleep                (1 command)
+  tagged-run           - Demonstrates subject tags resolved from inputs and one runtime tag key (1 command)
   when-example         - Demonstrates the `when:` predicate. Each command runs only if its predicate
 evaluates to true. Predicates use bash test syntax; exit 0 = true, 1 = false,
 ≥2 = eval error (fails the agent). Per-expression timeout is 5 s.

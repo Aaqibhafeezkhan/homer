@@ -10,6 +10,7 @@ import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
 import homer.app.models.FALLBACK_REASON_SESSION_FIGURE_PENDING
 import homer.app.models.LlmAccounting
+import homer.app.models.MAX_FAILURE_REASON_LENGTH
 import homer.app.models.PodPhase
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
@@ -2152,5 +2153,111 @@ class ProcessRepositoryTest {
             SqlStatementRecorder.reset()
             assertEquals(emptyMap(), repo.subRunProgress(emptyList()))
             assertTrue(SqlStatementRecorder.statements().isEmpty())
+        }
+
+    // ========== Pre-start failure reason (ADR-0020) ==========
+
+    private suspend fun failedRun(repo: ProcessRepository): Int {
+        val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+        repo.transitionStatus(id, ProcessStatus.WORKING, 10, setOf(ProcessStatus.CREATED))
+        repo.transitionStatus(id, ProcessStatus.FAILED, 20, setOf(ProcessStatus.WORKING))
+        return id
+    }
+
+    @Test
+    fun `setFailureReason stores the reason and the holder on a run that never started`() =
+        runTest {
+            val repo = repo()
+            val id = failedRun(repo)
+
+            assertTrue(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+
+            val info = repo.getInfo(id)!!
+            assertEquals("Lock skip (SKIP_CURRENT)", info.failureReason)
+            assertEquals(999, info.failureReasonRunId)
+        }
+
+    @Test
+    fun `setFailureReason stores a null holder for a cause that names no run`() =
+        runTest {
+            val repo = repo()
+            val id = failedRun(repo)
+
+            assertTrue(repo.setFailureReason(id, "Runner claim queue full", null))
+
+            assertEquals(null, repo.getInfo(id)!!.failureReasonRunId)
+        }
+
+    @Test
+    fun `setFailureReason refuses a run that recorded an execution`() =
+        runTest {
+            val repo = repo()
+            val id = failedRun(repo)
+            repo.addExecution(
+                id,
+                ExecutionInfo(label = "cmd", start = 1, end = 2, resultCode = 1, stdOut = null, stdErr = null, errMsg = null),
+            )
+
+            assertFalse(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+
+            assertEquals(null, repo.getInfo(id)!!.failureReason)
+        }
+
+    @Test
+    fun `setFailureReason refuses a run that still shows a current command`() =
+        runTest {
+            val repo = repo()
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(id, ProcessStatus.WORKING, 10, setOf(ProcessStatus.CREATED))
+            repo.setCurrentCommand(id, "cmd-running", 15)
+            repo.transitionStatus(id, ProcessStatus.FAILED, 20, setOf(ProcessStatus.WORKING))
+
+            assertFalse(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+
+            assertEquals(null, repo.getInfo(id)!!.failureReason)
+        }
+
+    @Test
+    fun `setFailureReason refuses a run a kill won`() =
+        runTest {
+            val repo = repo()
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(id, ProcessStatus.WORKING, 10, setOf(ProcessStatus.CREATED))
+            repo.killTransition(id, 20)
+
+            assertFalse(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+
+            assertEquals(null, repo.getInfo(id)!!.failureReason)
+        }
+
+    @Test
+    fun `setFailureReason refuses a live run and a missing row`() =
+        runTest {
+            val repo = repo()
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+
+            assertFalse(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+            assertFalse(repo.setFailureReason(id + 100, "Lock skip (SKIP_CURRENT)", 999))
+        }
+
+    @Test
+    fun `setFailureReason caps an over-long reason`() =
+        runTest {
+            val repo = repo()
+            val id = failedRun(repo)
+
+            assertTrue(repo.setFailureReason(id, "x".repeat(2000), null))
+
+            assertEquals(MAX_FAILURE_REASON_LENGTH, repo.getInfo(id)!!.failureReason!!.length)
+        }
+
+    @Test
+    fun `getRunVisibility reads the gate's two columns by key, or null for a missing row`() =
+        runTest {
+            val repo = repo()
+            val id = repo.obtainProcessId("a", emptyMap(), 100, owner = "alice").processId
+
+            assertEquals("alice" to "a", repo.getRunVisibility(id))
+            assertNull(repo.getRunVisibility(id + 100))
         }
 }

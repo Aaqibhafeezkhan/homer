@@ -47,6 +47,8 @@ data class ProcessInfo(
     val id: Int,
     val status: String,
     val agentName: String,
+    // The agent's group, read from the current definition; null when ungrouped or gone.
+    val group: String? = null,
     val history: List<HistoryEntry> = emptyList(),
     val executions: List<Execution> = emptyList(),
     val inputParams: Map<String, String> = emptyMap(),
@@ -57,6 +59,9 @@ data class ProcessInfo(
     val rootProcessId: Int? = null,
     val tags: List<String> = emptyList(),
     val runner: RunnerStateView? = null,
+    // Why a run failed before any of its commands started; null otherwise. The run
+    // that blocked it is named inside the text only for a caller who may see it.
+    val failureReason: String? = null,
 )
 
 @Serializable
@@ -114,6 +119,7 @@ data class AgentParam(
 data class AgentInfo(
     val name: String,
     val description: String? = null,
+    val group: String? = null,
     val writable: Boolean = true,
     val inputs: List<AgentParam>? = null,
 )
@@ -285,4 +291,16 @@ data class LangGraphGraph(
     val module: String,
     val topology: Topology? = null,
     val error: String? = null,
+)
+
+@Serializable
+data class RunMessage(
+    val id: String,
+    val text: String,
+    val status: String,
+)
+
+@Serializable
+data class RunMessagesList(
+    val messages: List<RunMessage>,
 )

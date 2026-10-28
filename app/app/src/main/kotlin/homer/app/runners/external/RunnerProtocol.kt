@@ -4,6 +4,7 @@ import homer.app.models.RUNNER_LONG_POLL_SEC
 import homer.app.runners.DownloadMode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.security.SecureRandom
 import java.util.HexFormat
 
@@ -34,6 +35,16 @@ object RunnerProtocol {
         return HexFormat.of().formatHex(bytes)
     }
 }
+
+/**
+ * Wire format of the bodies this protocol carries. Deliberately not `apiJson`: that one is
+ * strict, so a key this binary does not know fails the whole body — and an instance and the
+ * Homer it reports to are upgraded independently, while every DTO here only ever gains
+ * optional fields. An unknown key is ignored instead of answered with a 400. The instance's
+ * own client reads with the same rule — `HomerClient` uses this one definition, so both ends
+ * of one wire cannot drift apart.
+ */
+val runnerProtocolJson = Json { ignoreUnknownKeys = true }
 
 @Serializable
 data class RegisterInstanceRequest(
@@ -124,8 +135,9 @@ sealed class RunnerOp {
 }
 
 /**
- * Result of one op. `createWorkspace` fills [root]; `cmd` fills [exitCode] and
- * [timedOut]; `download` may set [missing]; any op may set [error] with [ok] false.
+ * Result of one op. `createWorkspace` fills [root]; `cmd` fills [exitCode], [timedOut]
+ * and the two chunk counts; `download` may set [missing]; any op may set [error] with
+ * [ok] false.
  */
 @Serializable
 data class OpResult(
@@ -135,5 +147,13 @@ data class OpResult(
     val missing: Boolean = false,
     val exitCode: Int? = null,
     val timedOut: Boolean = false,
+    /**
+     * How many chunks a `cmd` handed to the `output` route for this stream — one past the
+     * last `seq` it posted, a chunk whose post it gave up on included. Null when the
+     * instance reports no count (an older runner), which leaves the check inert.
+     */
+    val stdoutChunks: Long? = null,
+    /** The same for `stderr`. */
+    val stderrChunks: Long? = null,
     val error: String? = null,
 )

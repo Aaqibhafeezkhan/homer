@@ -11,7 +11,10 @@
 - Looking for something to pick up? See the
   [good first issues](https://github.com/livesport/homer/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22)
   and [help wanted](https://github.com/livesport/homer/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
-  issues, then follow [Submitting changes](#submitting-changes).
+  issues, then follow [Submitting changes](#submitting-changes). Issues
+  aren't assigned or reserved, so there's no need to ask first: open a pull
+  request when you're ready. The first one that closes the issue and passes
+  review is merged.
 
 ## Before submitting
 

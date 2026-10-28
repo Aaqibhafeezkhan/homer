@@ -4,6 +4,7 @@ import homer.app.fixtures.PersistenceTestSupport
 import homer.app.infra.ProcessJobRegistry
 import homer.app.models.CostSource
 import homer.app.models.PodPhase
+import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -52,5 +53,19 @@ class DefaultProcessRunRecordsTest {
             assertTrue(records.addRuntimeTag(id, "k:1", maxTags = 1, fromInputsKeys = emptySet()).written)
             assertFalse(records.addRuntimeTag(id, "k:2", maxTags = 1, fromInputsKeys = emptySet()).written)
             assertEquals(listOf("k:1"), repository.getTags(id))
+        }
+
+    @Test
+    fun `a failure reason reaches the run's row through the port`() =
+        runTest {
+            val id = repository.obtainProcessId("a", emptyMap(), 100).processId
+            repository.transitionStatus(id, ProcessStatus.WORKING, 10, setOf(ProcessStatus.CREATED))
+            repository.transitionStatus(id, ProcessStatus.FAILED, 20, setOf(ProcessStatus.WORKING))
+
+            assertTrue(records.setFailureReason(id, "Lock skip (SKIP_CURRENT)", 999))
+
+            val info = repository.getInfo(id)
+            assertEquals("Lock skip (SKIP_CURRENT)", info?.failureReason)
+            assertEquals(999, info?.failureReasonRunId)
         }
 }

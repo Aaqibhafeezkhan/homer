@@ -173,3 +173,144 @@ describe('AgentsPage run dialog', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent('Run Agent: deploy-agent');
   });
 });
+
+describe('AgentsPage group tabs', () => {
+  const agents = [
+    { name: 'build-agent', group: 'Platform' },
+    { name: 'deploy-agent', group: 'Platform' },
+    { name: 'lint-agent', group: 'Quality' },
+    { name: 'orphan-agent', group: null },
+  ];
+
+  beforeEach(() => {
+    replace.mockReset();
+    mockCan(false);
+    useAgentsMock.mockReturnValue({ data: { agents }, isLoading: false, error: null });
+    useReloadAgentsMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  });
+
+  function tabNames() {
+    return screen.getAllByRole('tab').map((tab) => tab.textContent);
+  }
+
+  it('renders an All tab plus one tab per group, sorted by name', () => {
+    renderWithUrl('');
+    expect(tabNames()).toEqual(['All', 'Platform', 'Quality']);
+  });
+
+  it('lists every agent under All, including the ungrouped one', () => {
+    renderWithUrl('');
+    for (const agent of agents) {
+      expect(screen.getByText(agent.name)).toBeInTheDocument();
+    }
+  });
+
+  it('states that All also contains ungrouped agents', () => {
+    renderWithUrl('');
+    expect(screen.getByText(/without a group appear under "All" only/i)).toBeInTheDocument();
+  });
+
+  it('lists only the selected group, leaving the ungrouped agent out', () => {
+    renderWithUrl('group=Quality');
+    expect(screen.getByText('lint-agent')).toBeInTheDocument();
+    expect(screen.queryByText('build-agent')).not.toBeInTheDocument();
+    expect(screen.queryByText('orphan-agent')).not.toBeInTheDocument();
+  });
+
+  it('marks the group from the URL as the active tab', () => {
+    renderWithUrl('group=Platform');
+    expect(screen.getByRole('tab', { name: 'Platform' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('applies the name search within the selected tab', () => {
+    renderWithUrl('group=Platform&q=build');
+    expect(screen.getByText('build-agent')).toBeInTheDocument();
+    expect(screen.queryByText('deploy-agent')).not.toBeInTheDocument();
+    // The search does not reach outside the tab: lint-agent matches nothing here anyway.
+    expect(screen.queryByText('lint-agent')).not.toBeInTheDocument();
+  });
+
+  it('writes the group param when a group tab is selected', async () => {
+    const user = userEvent.setup();
+    renderWithUrl('');
+    await user.click(screen.getByRole('tab', { name: 'Quality' }));
+    expect(replace).toHaveBeenCalledWith('/agents?group=Quality', { scroll: false });
+  });
+
+  it('removes the group param when All is selected', async () => {
+    const user = userEvent.setup();
+    renderWithUrl('group=Quality');
+    await user.click(screen.getByRole('tab', { name: 'All' }));
+    expect(replace).toHaveBeenCalledWith('/agents', { scroll: false });
+  });
+
+  it('falls back to All for a group that no longer exists', () => {
+    renderWithUrl('group=Gone');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('orphan-agent')).toBeInTheDocument();
+  });
+});
+
+describe('AgentsPage group tab value and URL mapping', () => {
+  beforeEach(() => {
+    replace.mockReset();
+    mockCan(false);
+    useReloadAgentsMock.mockReturnValue({ mutate: vi.fn(), isPending: false });
+  });
+
+  function setupAgents(agents: { name: string; group: string }[]) {
+    useAgentsMock.mockReturnValue({ data: { agents }, isLoading: false, error: null });
+  }
+
+  function tabNames() {
+    return screen.getAllByRole('tab').map((tab) => tab.textContent);
+  }
+
+  it('keeps a group literally named "all" selectable and distinct from the All tab', async () => {
+    setupAgents([{ name: 'all-agent', group: 'all' }]);
+    const user = userEvent.setup();
+    renderWithUrl('');
+    expect(tabNames()).toEqual(['All', 'all']);
+    await user.click(screen.getByRole('tab', { name: 'all' }));
+    expect(replace).toHaveBeenCalledWith('/agents?group=all', { scroll: false });
+  });
+
+  it('selects the "all" group tab from the URL param, not the All tab', () => {
+    setupAgents([{ name: 'all-agent', group: 'all' }]);
+    renderWithUrl('group=all');
+    expect(screen.getByRole('tab', { name: 'all' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('all-agent')).toBeInTheDocument();
+  });
+
+  it('keeps the tab active across the URL round-trip of a group with a space and a slash', async () => {
+    const group = 'Platform / Billing';
+    setupAgents([{ name: 'pb-agent', group }]);
+    const user = userEvent.setup();
+    renderWithUrl('');
+    await user.click(screen.getByRole('tab', { name: group }));
+    // URLSearchParams.toString() encodes the space as `+` and the slash as %2F.
+    expect(replace).toHaveBeenCalledWith('/agents?group=Platform+%2F+Billing', { scroll: false });
+  });
+
+  it('selects a group with a space and a slash from the URL param', () => {
+    const group = 'Platform / Billing';
+    setupAgents([{ name: 'pb-agent', group }]);
+    renderWithUrl(`group=${encodeURIComponent(group)}`);
+    expect(screen.getByRole('tab', { name: group })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('pb-agent')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('matches the group param exactly when two groups differ only by case', () => {
+    setupAgents([
+      { name: 'upper-agent', group: 'Platform' },
+      { name: 'lower-agent', group: 'platform' },
+    ]);
+    renderWithUrl('group=platform');
+    expect(screen.getByRole('tab', { name: 'platform' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('lower-agent')).toBeInTheDocument();
+    expect(screen.queryByText('upper-agent')).not.toBeInTheDocument();
+  });
+});

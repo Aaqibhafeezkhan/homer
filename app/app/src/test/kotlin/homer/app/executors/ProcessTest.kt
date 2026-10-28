@@ -1429,6 +1429,44 @@ class ProcessTest {
             assertTrue("MR_IID" in secretNames.captured, "the source run's secret must still be masked on replay")
         }
 
+    // ========== Failure-reason redactor Tests (ADR-0052, §12 rule 8) ==========
+
+    @Test
+    fun `failureReasonRedactor masks a secret query param and a sys-env-backed agent env entry`() {
+        // Built from agent.env + queryParams over secretInputKeys + sysEnvBackedEnvNames,
+        // the same union the workspace redactor gets. Every executor test stubs this
+        // property, so a dropped source would store an unredacted secret in the stored
+        // failure reason — text every caller who can see the run reads — with nothing
+        // failing; this pins the sources on a real Process.
+        val agent =
+            AgentFixtures.simpleAgent().copy(
+                inputs = listOf(Param(paramName = "mr", envName = "MR_IID", secret = true)),
+                env = mapOf("MR_TOKEN" to "host-token-value"),
+                sysEnvBackedEnvNames = setOf("MR_TOKEN"),
+            )
+        val processWithSecrets =
+            Process(
+                workspaceConfigFactory = mockWorkspaceConfigFactory,
+                executorFactory = mockExecutorFactory,
+                telemetryService = mockTelemetryService,
+                config = testConfig,
+                lockManager = mockLockManager,
+                parallelRunsManager = mockParallelRunsManager,
+                processManager = mockProcessManager,
+                runnerRegistry = mockRunnerRegistry,
+                activeSessions = ActiveSessionsRegistry(),
+                questionsService = mockQuestionsService,
+                questionsWorkspaceSetup = mockQuestionsWorkspaceSetup,
+                agent = agent,
+                queryParams = mapOf("MR_IID" to "param-secret-value"),
+                parentContext = testContext,
+            )
+
+        val redactor = processWithSecrets.failureReasonRedactor
+        assertEquals("claimed but *** was in the query", redactor.redact("claimed but param-secret-value was in the query"))
+        assertEquals("the runner env held ***", redactor.redact("the runner env held host-token-value"))
+    }
+
     // ========== Retain-derived properties Tests (ADR-0053) ==========
 
     @Test

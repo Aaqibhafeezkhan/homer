@@ -1,5 +1,6 @@
 package homer.agentdebug.commands
 
+import com.github.ajalt.clikt.core.ProgramResult
 import homer.app.config.AgentSchemaValidator
 import homer.app.models.Agent
 import homer.app.models.AppConfig
@@ -27,7 +28,7 @@ class ValidateCommand(
         if (agent == null) {
             println("✗ Agent '$agentName' not found in ${appConfig.agentsSearchPath}")
             println("  Available: ${agentsService.agents.keys.sorted().joinToString(", ")}")
-            return
+            throw ProgramResult(1)
         }
 
         println("✓ Loaded successfully")
@@ -77,6 +78,7 @@ class ValidateCommand(
             println("✗ Schema validation failed:")
             schemaErrors.forEach { println("  - $it") }
             println("Validation FAILED.")
+            throw ProgramResult(1)
         }
     }
 

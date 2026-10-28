@@ -108,4 +108,21 @@ class AgentTest {
         assertEquals(600, AgentFixtures.simpleAgent().copy(runnerClaimTimeoutSec = 600).runnerClaimTimeoutSec)
         assertThrows<IllegalArgumentException> { AgentFixtures.simpleAgent().copy(runnerClaimTimeoutSec = 0) }
     }
+
+    @Test
+    fun `group defaults to null and accepts a valid label`() {
+        assertNull(AgentFixtures.simpleAgent().group)
+        assertEquals("platform", AgentFixtures.simpleAgent().copy(group = "platform").group)
+    }
+
+    @Test
+    fun `an over-long or control-character group is rejected at construction`() {
+        val ex =
+            assertThrows<IllegalArgumentException> {
+                AgentFixtures.simpleAgent().copy(group = "g".repeat(65))
+            }
+        assertEquals("Agent '${AgentFixtures.simpleAgent().name}': group must be at most 64 characters, got 65", ex.message)
+        assertThrows<IllegalArgumentException> { AgentFixtures.simpleAgent().copy(group = "a\nb") }
+        assertThrows<IllegalArgumentException> { AgentFixtures.simpleAgent().copy(group = "  ") }
+    }
 }

@@ -33,6 +33,9 @@ interface ProcessRecordReads {
 
     suspend fun getProcessInfo(processId: Int): ProcessInfo?
 
+    /** The (owner, agentName) a visibility gate reads, or null when the run is gone. See [ProcessRepository.getRunVisibility]. */
+    suspend fun getProcessVisibility(processId: Int): Pair<String?, String>?
+
     /** [SubRunProgress] of each of [processIds] that still exists, in one batched read. */
     suspend fun getSubRunProgress(processIds: Collection<Int>): Map<Int, SubRunProgress>
 
@@ -80,6 +83,8 @@ internal class DefaultProcessRecordReads(
     override suspend fun getProcessExecutions(processId: Int): List<ExecutionInfo> = repository.getExecutions(processId)
 
     override suspend fun getProcessInfo(processId: Int): ProcessInfo? = repository.getInfo(processId)
+
+    override suspend fun getProcessVisibility(processId: Int): Pair<String?, String>? = repository.getRunVisibility(processId)
 
     override suspend fun getSubRunProgress(processIds: Collection<Int>): Map<Int, SubRunProgress> = repository.subRunProgress(processIds)
 

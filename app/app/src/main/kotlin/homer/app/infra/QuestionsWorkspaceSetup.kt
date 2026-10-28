@@ -42,6 +42,9 @@ class QuestionsWorkspaceSetup(
         val tagHelper = binDir.resolve("homer-tag")
         writeAtomically(tagHelper, tagHelperScript, PosixFilePermissions.fromString("rwxr-xr-x"))
 
+        val inboxHelper = binDir.resolve("homer-inbox")
+        writeAtomically(inboxHelper, inboxHelperScript, PosixFilePermissions.fromString("rwxr-xr-x"))
+
         val env = mutableMapOf<String, String>()
         // Prepend the helper dir only when the composed env defines PATH.
         // Inventing a PATH when the operator excluded it would override a
@@ -104,6 +107,12 @@ class QuestionsWorkspaceSetup(
     private val tagHelperScript: String by lazy {
         checkNotNull(this::class.java.classLoader.getResource("scripts/homer-tag.sh")) {
             "scripts/homer-tag.sh missing from resources"
+        }.readText()
+    }
+
+    private val inboxHelperScript: String by lazy {
+        checkNotNull(this::class.java.classLoader.getResource("scripts/homer-inbox.sh")) {
+            "scripts/homer-inbox.sh missing from resources"
         }.readText()
     }
 

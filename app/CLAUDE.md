@@ -25,7 +25,7 @@ auto-loads when you read files in its package (root §9 lists each as canonical 
 
 ```
 HTTP API     Application.kt + its configureXxx files + routes (Ktor + bearer auth)
-Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
+Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
 Execution    ProcessExecutor · AgentExecutor · CommandExecutorFactory · RunnerRegistry · RunnerClaimQueue · ExternalRunnerDomain · ExternalRunnerInstance · RunnerStatusReport · LockManager · ParallelRunsManager
 Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
 Infra        ShellExecutor · Workspace · FileOperations · ResultToEnvMapper · SysEnvResolver · TelemetryService · LangfuseClient
@@ -139,7 +139,8 @@ marked `Constraint:`.
   - **Constraint:** the total, per-principal and wait bounds are `server.maintenance` config,
     not constants; a shed or expired start leaves no process row and names no input value.
 - **`StartupReconciliation`** — runs once before traffic: interrupted runs to `UNKNOWN`, their
-  questions expired, purge times stamped, and dispatches and continuations left mid-fire settled
+  questions expired, queued run messages of every ended run undelivered, purge times stamped,
+  and dispatches and continuations left mid-fire settled
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).
 - **`LockManager`** — the three `onCollision` strategies (`WAIT`,
   `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`).
@@ -171,6 +172,9 @@ marked `Constraint:`.
   per-process callback-token registry. Question state is **SQLite-backed via
   `QuestionsRepository`**; tokens, wait counts and the answer-wait deferreds
   stay in memory. See ADR-0019, ADR-0020.
+- **`RunMessagesService`** — per-run inbox: operators send, the running command
+  lists and takes. The run-end close goes through the `RunMessageExpiry` port, and
+  `StartupReconciliation` sweeps leftovers on boot. ADR-0097.
 - **`DispatchService`** — ask-and-dispatch: a question plus a target agent and
   parameters, fired (via `AgentRunStarter`) after the operator answers; PENDING
   dispatches cancel and TTL-sweep. **SQLite-backed via `DispatchRepository`**;
@@ -181,7 +185,7 @@ marked `Constraint:`.
   sweep / boot-reconciliation model, with a distinct `EXPIRED` state; the fire
   itself (claim, resume payload, start, retry or fail) is `ContinuationFireService`. ADR-0023.
 - **`QuestionsWorkspaceSetup`** — materializes the question tooling into each
-  workspace before commands run (`Process.execute`): the `homer-ask` helper at
+  workspace before commands run (`Process.execute`): the `homer-ask` and `homer-inbox` helpers at
   `{projectRoot}/.homer/bin`, and a `.homer/mcp.json` when `server.mcp.enabled`.
   - **Constraint:** the callback token is read from the env at run time,
     never written to disk.

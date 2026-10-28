@@ -4,6 +4,7 @@ import homer.app.apiJson
 import homer.app.runners.DownloadMode
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RunnerProtocolTest {
@@ -47,6 +48,27 @@ class RunnerProtocolTest {
         val reg = apiJson.decodeFromString(RegisterInstanceRequest.serializer(), """{"tags":["linux"]}""")
         assertEquals(1, reg.concurrency)
         assertEquals(null, reg.name)
+    }
+
+    @Test
+    fun `a cmd result with counts stays wire-compatible with an older binary`() {
+        // An older runner reports no counts: both fields default, so this Homer reads the result.
+        val older = apiJson.decodeFromString(OpResult.serializer(), """{"opId":"op-3","exitCode":0}""")
+        assertEquals(OpResult(opId = "op-3", exitCode = 0), older)
+        assertNull(older.stdoutChunks)
+        assertNull(older.stderrChunks)
+
+        // A newer runner's counts ride the same shape through the `next` body Homer decodes.
+        val counted = OpResult("op-3", exitCode = 0, stdoutChunks = 2, stderrChunks = 1)
+        val body = apiJson.encodeToString(NextRequest.serializer(), NextRequest(counted))
+        assertEquals(counted, apiJson.decodeFromString(NextRequest.serializer(), body).completed)
+
+        // And a payload carrying a field this binary does not know is ignored by the Json the
+        // runner routes decode with, so an instance newer than this server is not a 400.
+        assertEquals(
+            "op-3",
+            runnerProtocolJson.decodeFromString(OpResult.serializer(), """{"opId":"op-3","future":1}""").opId,
+        )
     }
 
     @Test

@@ -4,6 +4,7 @@ import homer.app.apiJson
 import homer.app.services.ContinuationStatus
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
+import homer.app.services.RunMessageStatus
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.PolymorphicKind
@@ -39,6 +40,8 @@ internal object DtoContract {
             LangGraphRunStatus.serializer(),
             QuestionsListResponse.serializer(),
             QuestionResponse.serializer(),
+            RunMessageResponse.serializer(),
+            RunMessagesListResponse.serializer(),
             ContinuationListResponse.serializer(),
             HeartbeatResponse.serializer(),
             HealthResponse.serializer(),
@@ -63,6 +66,7 @@ internal object DtoContract {
         listOf(
             DebugAgentRequest.serializer(),
             LoginRequest.serializer(),
+            SendRunMessageRequest.serializer(),
         )
 
     /**
@@ -74,6 +78,7 @@ internal object DtoContract {
             "ProcessStatus" to ProcessStatus.entries.map { it.name },
             "PodPhase" to PodPhase.entries.map { it.name },
             "QuestionStatus" to QuestionsService.QuestionStatus.entries.map { it.name },
+            "RunMessageStatus" to RunMessageStatus.entries.map { it.name },
             "ContinuationStatus" to ContinuationStatus.entries.map { it.name },
         )
 

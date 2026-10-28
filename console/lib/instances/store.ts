@@ -34,9 +34,19 @@ export function tokenKeyFor(id: string): string {
   return `${appConfig.auth.tokenKey}::${id}`;
 }
 
+/**
+ * The seeded default's auth mode: bearer when the deployment configures a
+ * bearer backend or offers bearer sign-in at all (`CONSOLE_ALLOW_BEARER`, which
+ * marks a bearer-only stack), so a fresh install opens on the Token form and
+ * probes `/heartbeat` instead of asking for a password the backend rejects.
+ */
+function defaultInstanceMode(): InstanceMode {
+  return appConfig.auth?.mode === 'bearer' || appConfig.auth?.allowBearer ? 'bearer' : 'cookie';
+}
+
 function seedDefault(): InstancesState {
   const baseUrl = appConfig.api?.baseUrl ?? '';
-  const mode: InstanceMode = appConfig.auth?.mode === 'bearer' ? 'bearer' : 'cookie';
+  const mode = defaultInstanceMode();
   return {
     instances: [{ id: DEFAULT_INSTANCE_ID, label: 'Default', baseUrl, mode }],
     activeInstanceId: DEFAULT_INSTANCE_ID,

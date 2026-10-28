@@ -33,6 +33,7 @@ import homer.app.services.ProcessManager
 import homer.app.services.QuestionsMcpToolFactory
 import homer.app.services.QuestionsService
 import homer.app.services.ResultTokenService
+import homer.app.services.RunMessagesService
 import homer.app.services.WorkspacePurgeService
 import io.ktor.server.routing.get
 import io.ktor.server.sessions.get
@@ -76,6 +77,7 @@ internal data class ApiDeps(
     val logTailService: LogTailService,
     val llmEventStreamService: LlmEventStreamService,
     val questionsService: QuestionsService,
+    val runMessagesService: RunMessagesService,
     val dispatchService: DispatchService,
     val continuationService: ContinuationService,
     val resultTokenService: ResultTokenService,

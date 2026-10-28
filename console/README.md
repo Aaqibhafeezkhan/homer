@@ -4,7 +4,7 @@ A modern, self-hosted web application for monitoring and managing Homer processe
 
 ## Features
 
-- **Real-time Process Monitoring**: Live updates via Server-Sent Events (`/api/v1/stream/*`) — process status, current command, and log tail stream in over SSE, with the process list and detail views also polling every 30 s as a fallback (the detail poll stops once a run is terminal, the list poll once every row on the page is terminal). Event channels: `process.status`, `process.cmd`, `agent.reload`, `log.chunk`, `log.end`, `llm.event`, `llm.end`, `question.asked`, `question.answered`, `question.expired`. Uses [`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source) so requests can carry the bearer `Authorization` header (the native `EventSource` API cannot).
+- **Real-time Process Monitoring**: Live updates via Server-Sent Events (`/api/v1/stream/*`) — process status, current command, and log tail stream in over SSE, with the process list and detail views also polling every 30 s as a fallback (the detail poll stops once a run is terminal, the list poll once every row on the page is terminal). Event channels: `process.status`, `process.cmd`, `agent.reload`, `log.chunk`, `log.end`, `llm.event`, `llm.end`, `question.asked`, `question.answered`, `question.expired`, `message.queued`, `message.delivered`, `message.undelivered`. Uses [`@microsoft/fetch-event-source`](https://github.com/Azure/fetch-event-source) so requests can carry the bearer `Authorization` header (the native `EventSource` API cannot).
 - **Process Management**: View detailed process information, retry finished/failed/killed processes, and kill running processes
 - **Agents Overview**: Browse available agents with parameter details; create, edit, and debug-run agents from the console
 - **Themes**: Light, Dark, System, Terminal, and Windows 95 — dark by default, switchable from the header; operator themes via `CONSOLE_THEMES` join the same dropdown, and `CONSOLE_THEME_MODES` can replace the built-ins with one approved light/dark pair
@@ -178,10 +178,16 @@ other filters. A **Children of #id** filter drops the roots filter and its
 Flow column; **Root runs** clears it and returns to the flow view.
 
 Each run shows its **subject tags** (`key:value`) as chips beside the
-agent name. Clicking a tag chip adds it to the filter (`tag=` in the
+agent name. A run whose agent declares a `group` also shows that group
+beside the agent name. Clicking a tag chip adds it to the filter (`tag=` in the
 URL as one comma-separated value, ANDed, so a run must carry every selected tag); each
 active tag appears as a removable badge in the filter row, cleared
 individually or via **Clear**.
+
+A run that **failed before it started** — a claim timeout, a `SKIP_CURRENT` lock
+collision, a parallel-run cap or a full queue — shows a short reason beside its
+`FAILED` badge, so the list says why without opening the run. The row truncates
+it; hover for the full sentence, which the run's own page shows in full.
 
 ### Process Details
 
@@ -191,12 +197,20 @@ individually or via **Clear**.
   a plain link to the unfiltered list — e.g. a shared link opened directly)
 - **Agent**: The agent name in the header links to that agent's detail
   page; a run whose agent has since been deleted still links, and the
-  target shows an "Agent not found" state
+  target shows an "Agent not found" state. Beside the name, the header
+  shows the agent's `group` when the agent has one, and nothing when it
+  is ungrouped; the group is read from the agent's current definition,
+  so it can change or disappear on past runs
 - **Parent run**: When another run started this one (a `RunAgent`
   command, dispatch, continuation, or an external caller's
   `X-Homer-Parent-Process-Id` header), the header links to that parent;
   a retry or resume keeps the source run's parent. Beside it, **Root
   run #N** links to the first run of the flow, when one is recorded
+- **Failed before it started**: A run that ended `FAILED` without running a
+  single command shows a **Failed before it started** box under the header with
+  the stored reason — a claim timeout, a `SKIP_CURRENT` lock collision, a
+  parallel-run cap or a full queue. The box appears only when the server stored
+  a reason, so a run that failed while it was running shows none
 - The run's cost carries a source label — `proxy` when priced by the
   server's `llmPrice.sessionSpend` endpoint, `CLI estimate` when it is
   the harness's own figure, or `mixed` when a run had both. An attempt
@@ -255,6 +269,18 @@ individually or via **Clear**.
   unknown-status LangGraph runs offer a Resume action. While the LangGraph command is still running, the live-command box
   offers a "Show workflow" toggle with the same overlay.
 - **Custom Artifacts**: Use the "Download Artifact" button to download any artifact file by path
+
+### Messages to a running run
+
+A running run's page has a **Messages** card with a text box and **Send**,
+shown only while the run is `CREATED` or `WORKING` and only to a user who may
+also kill it (`admin`, the run's owner, or `read` + `control` grants on its
+agent). A sent message waits in the run's inbox as **Queued** until the run
+takes it (**Delivered**) or the run ends first (**Undelivered**); the card
+lists every message oldest first with its status, sender and time, and keeps
+the history once the run has ended. A refused send (run ended, limit reached,
+text too long) shows the server's reason under the box and keeps what you
+typed.
 
 ### Questions inbox
 
@@ -417,12 +443,17 @@ backend has swept at least once.
 ### Browsing Agents
 
 1. Navigate to **Agents** from the sidebar
-2. Use the search bar to filter agents by name; the search term is kept in
-   the URL's `q` param, so the filtered list is shareable and browser Back
-   restores it
-3. Click **Reload** to have the backend re-scan the agents directory; the
+2. Pick a tab: **All**, plus one tab per distinct agent `group`, sorted by
+   name. **All** lists every agent, *including the ones that declare no
+   group* — an ungrouped agent appears under no group tab. The selected tab
+   is kept in the URL's `group` param (a group that no longer exists falls
+   back to **All**), so a grouped view is shareable
+3. Use the search bar to filter agents by name **within the selected tab**;
+   the search term is kept in the URL's `q` param, so the filtered list is
+   shareable and browser Back restores it
+4. Click **Reload** to have the backend re-scan the agents directory; the
    result banner lists agents added, updated, and removed
-4. View agent details:
+5. View agent details:
    - A back button above the title returns to the agents list, restoring
      the search (via browser history where the console has in-app
      navigation history in this tab, otherwise a plain link to the
@@ -524,6 +555,18 @@ toggle when `CONSOLE_ALLOW_BEARER=true`:
   single-token flow. The username field is hidden and the token is
   stored in `localStorage`. Use for transition only; CLI / MCP / webhook
   clients are the supported audience for bearer.
+
+Opening a console page without a session sends you to the login screen with
+the page you asked for and a neutral "Sign in to continue" prompt. The "Your
+session expired" banner is reached only when the console itself redirected
+for a rejected session — the only thing that puts `?expired=1` on the login
+URL. The flag is part of the address, so typing or bookmarking it shows the
+banner with no session behind it; it changes the wording, nothing else.
+Signing in returns to that page — the return path is accepted only
+as a same-origin relative console path, so an absolute or protocol-relative
+value is ignored rather than followed. `CONSOLE_ALLOW_BEARER=true` also makes
+**Token** the mode the form opens in, because it marks a bearer-only backend;
+an explicit `?mode=` parameter or the active instance's saved mode still wins.
 
 The console reads the caller's capabilities from `GET /api/v1/auth/me`
 (`{username, role, grants}`) and hides controls the user can't use:
@@ -893,8 +936,10 @@ which records the sandboxed-iframe option to revisit first.
 | `DELETE /api/v1/continuations/:id` | Cancel a pending continuation |
 | `GET /api/v1/questions` | Fetch questions with optional status/processId filter |
 | `POST /api/v1/questions/:id/answer` | Answer an open question |
+| `GET /api/v1/status/:id/messages` | List a run's operator messages |
+| `POST /api/v1/status/:id/messages` | Send a message to a running run |
 | `DELETE /api/v1/dispatches/:id` | Cancel an open dispatch-bound question |
-| `GET /api/v1/stream/processes` | SSE: `process.status`, `process.cmd`, `question.asked`, `question.answered`, `question.expired` |
+| `GET /api/v1/stream/processes` | SSE: `process.status`, `process.cmd`, `question.asked`, `question.answered`, `question.expired`, `message.queued`, `message.delivered`, `message.undelivered` |
 | `GET /api/v1/stream/processes/:id/logs` | SSE: `log.chunk` / `log.end` log tail for one command (replays from byte 0) |
 | `GET /api/v1/stream/processes/:id/llm-events` | SSE: `llm.event` / `llm.end` canonical events of one Claude or Codex command, for the Conversation view (replays from byte 0) |
 | `GET /api/v1/stream/agents` | SSE: `agent.reload` |

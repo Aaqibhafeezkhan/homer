@@ -74,6 +74,19 @@ is for consumers and diagnostics only. Tests that construct a
 (or a real scope under `runBlocking`), otherwise `openSession` waits for
 the full claim TTL.
 
+A consumer with no match parks in `take()`. A new request wakes at most
+one parked consumer: the matching one that claimed least recently (ties:
+the oldest waiter), and reserves the request for it, so a fresh `take()`
+skips it. The reservation already counts as that consumer's claim, so an
+instance with several parked polls does not take a whole burst. A woken consumer that leaves without claiming it (cancelled,
+timed out, or no longer matching) hands the reservation to the next
+parked match. Claim records are one entry per registered consumer,
+removed on `unregisterConsumer` (ADR-0096).
+
+- **Constraint:** the claim CAS (`tryClaim()`) stays in the taker's own
+  `take()`, never in `submit`: the claim route's long-poll relies on
+  nothing suspending after the claim inside `take()`.
+
 An `!<external>` domain (`ExternalRunnerDomain`) is a `Runner` only for the
 facets `QueuedRunner` reads; its sessions are created by the claim route
 (`RunnerProtocolRoutes`) when an instance's long-poll takes a request. An
@@ -81,7 +94,17 @@ facets `QueuedRunner` reads; its sessions are created by the claim route
 `OpMailbox`; the instance drains ops through `next` and answers with
 `OpResult`s, tars ride the `tar` routes through `TarStreams`, and command
 output arrives as ordered chunks through `OutputSink` into the usual
-`cmd_N.out`/`cmd_N.err` files, so nothing above the session changes. The
-routes are mounted outside `authenticate(...)` next to `callbackRoutes`: a
+`cmd_N.out`/`cmd_N.err` files, so nothing above the session changes. A `cmd`
+result also reports one past the last `seq` each stream posted or gave up posting (a
+chunk abandoned after its retries is counted, so a lost one reads as a short count,
+never as a complete one), and the instance finishes posting before it reports its
+exit — or gives up on a stalled drain once the bounded wait expires, logging one
+warning naming the session, op, stream and count, and such a chunk reaches no count
+at all. A count ahead of what
+`OutputSink` received is waited on once, briefly, and then fails the step as
+*output incomplete* rather than passing truncated output off as a clean exit; a
+count the drain gave up on matches what `OutputSink` received, so the instance's
+warning is the only trace of the missing tail.
+The routes are mounted outside `authenticate(...)` next to `callbackRoutes`: a
 domain token is a separate principal class (§12). The registry runs a
 heartbeat sweeper that drops silent instances and fails their runs.

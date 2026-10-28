@@ -432,6 +432,7 @@ server:
 | `claudeStreamPollMs` | `Int` | No | `150` | Polling interval (ms) of the stdout file poll behind `GET /api/v1/stream/processes/{id}/llm-events`. Lower = lower first-event latency, higher = less CPU. Coerced to `50..2000` at startup. |
 | `mcp` | `McpServerConfig` | No | `{enabled=false, maxWaitSec=300, maxInlineArtifactBytes=65536}` | Streamable HTTP MCP endpoint at `/mcp` exposing opted-in agents as MCP tools — see [MCP endpoint](#mcp-endpoint). |
 | `questions` | `QuestionsConfig` | No | `{maxWaitSec=86400, maxOpenPerProcess=10, maxTextLength=10000, maxOptions=20, maxConcurrentWaitsPerProcess=32}` | Human-in-the-loop questions asked by running commands — see [Operator questions](#operator-questions). |
+| `messages` | `RunMessagesConfig` | No | `{maxTextLength=10000, maxPerRun=100}` | Per-run inbox limits for operator messages sent to a running run — see [Run messages](#run-messages). |
 | `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
@@ -624,6 +625,28 @@ server:
 **Reverse-proxy note:** an answer-wait holds its HTTP request open for
 up to `maxWaitSec` seconds, same as the MCP `_wait` note above —
 either raise the proxy's idle/read timeout or lower `maxWaitSec`.
+
+### Run messages
+
+`server.messages` bounds the per-run inbox: operator messages sent to a
+running run, which the run takes through a hook or the MCP tool (see
+[ADR-0097](../docs/adr/0097-per-run-inbox.md)). Messages are persisted in the
+SQLite database and purged with the run record. A message still queued when
+the run reaches a terminal state, or when a restart leaves it `UNKNOWN`,
+becomes `UNDELIVERED`. Message text never appears in logs, spans or error
+text.
+
+```yaml
+server:
+  messages:
+    maxTextLength: 10000  # one message, in characters (default 10000)
+    maxPerRun: 100        # every stored message of a run, in any state (default 100)
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `maxTextLength` | `Int` | No | `10000` | Maximum length (characters) of one message; longer text is rejected with `400`. |
+| `maxPerRun` | `Int` | No | `100` | Maximum messages stored for one run, whatever their state; further sends are rejected with `429`. |
 
 ### Ask-and-dispatch
 
@@ -2603,11 +2626,12 @@ machine a pull-mode runner instance runs on — and Homer installs nothing
 there, so that environment must supply every binary a command relies on:
 
 - **`/bin/sh`** and **`curl`** — required by the `homer-ask` /
-  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` helpers,
-  which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
+  `homer-dispatch` / `homer-result` / `homer-join` / `homer-tag` /
+  `homer-inbox` helpers, which are POSIX-shell scripts with a hard-coded `#!/bin/sh` that call the
   Homer API over `curl`; a different configured `shell` does not replace
   `/bin/sh`. Without them, operator questions, ask-and-dispatch, result
-  fetching and runtime run tags fail even though plain commands still run.
+  fetching, runtime run tags and operator messages fail even though plain
+  commands still run.
 - **`claude`** — for agents that use `Claude` commands.
 - **`codex`** — for agents that use `Codex` commands.
 - **`homer_langgraph`** — for agents that use `LangGraph` commands.
@@ -2624,7 +2648,7 @@ so agents needing those need an image derived from it; see
 Also set **`homerApiUrl`** (per-runner, below) to a URL the remote
 environment can reach Homer on. It is exposed remotely as `HMR_API_URL`
 and backs every feature that calls back over HTTP — the `homer-*`
-helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`) and the
+helpers (`homer-ask`, dispatch/join/continuation, result fetching, `homer-tag`, `homer-inbox`) and the
 MCP question tools. If it is unset or unreachable, those fail silently
 while ordinary commands succeed, which looks like partial breakage rather
 than a misconfiguration. `RunAgent` does not use it: the child run is
@@ -3284,6 +3308,9 @@ runners:
 **Matching.** An alias filter matches the runner with that alias. A tag filter
 matches a runner whose `tags` contain every requested tag; a runner without
 `tags` never matches a tag filter. Among matches the oldest request wins.
+Among idle matching consumers, a new request goes to the one that claimed
+least recently, so idle runners take turns
+([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
 
 **Env and host visibility for tag-filtered runs.** An alias-filtered run knows
 its runner before the workspace env is composed, so per-runner `env` keeps its
@@ -3343,7 +3370,8 @@ runners:
 An instance registers with a name, the tags it serves and a `concurrency`,
 then long-polls for claims. It matches an agent with `runner: workers` or an
 agent whose `runnerTags` are all among its announced tags; among matches the
-oldest run wins, exactly as for static runners. Adding a domain needs a
+oldest run wins, exactly as for static runners, and among idle matching
+instances the one that claimed least recently gets it. Adding a domain needs a
 restart; adding an instance or a tag never does.
 
 Every wait is bounded: an instance silent for `heartbeatTimeoutSec` is
@@ -3403,6 +3431,13 @@ both to same-user processes. Spawned runs are unaffected — `execve` resets the
 flag for the child. On Linux a failed call is fatal (exit `1`); on a host
 without `prctl` the runner logs a warning and continues.
 
+Before registering and before every claim the runner also checks that it can
+start a process (a `/bin/sh -c "exit 0"` probe with an empty environment, so the
+token never reaches it) and create a file under `--root`. A JVM that can no
+longer spawn processes would otherwise keep claiming runs and fail each at once
+while healthy instances sit idle; a restart fixes it, so the runner exits `3`
+instead ([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
+
 | Option | Env var | Default | Meaning |
 | --- | --- | --- | --- |
 | `--url` | `HOMER_RUNNER_URL` | required | Homer base URL (`https://`, or loopback `http://`), without embedded credentials. |
@@ -3411,12 +3446,19 @@ without `prctl` the runner logs a warning and continues.
 | `--concurrency` | `HOMER_RUNNER_CONCURRENCY` | `1` | Runs at once; above the domain's `maxConcurrencyPerInstance` the registration is refused. |
 | `--root` | `HOMER_RUNNER_ROOT` | `/var/homer-runner` | Where each session gets a fresh owner-only `<processId>-<random id>` directory, deleted when the session ends. |
 | `--name` | `HOMER_RUNNER_NAME` | the host name, shaped to the instance-name pattern | Instance name shown in Homer. |
-| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` before they are killed. |
+| `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` or a failed health check before they are killed. |
 
 Exit codes: `1` for a usage error (a missing option or token, an unknown flag),
 an unexpected failure, or a refused startup when the JVM cannot be made
 non-dumpable; `2` when Homer rejects the registration (bad token, disallowed
-tag) or `--url` is refused; `143` after a `SIGTERM` drain.
+tag) or `--url` is refused; `3` when this host cannot start a process or write
+`--root` (checked before registering and before every claim): the runner stops
+claiming, deregisters, lets in-flight runs finish within `--drain-timeout` and
+exits, so run it under a supervisor that restarts it (launchd `KeepAlive`, or
+systemd `Restart=on-failure` with `RestartSec=10s`: with the default `100ms` and
+`StartLimitBurst=5` per 10 s a host that fails the check at startup hits the
+start limit within a second, and the unit stays failed after the cause is
+fixed); `143` after a `SIGTERM` drain.
 
 #### ExternalRunner fields
 
@@ -3477,13 +3519,27 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
 
-Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`.
+Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
+result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance
+posted or gave up posting for that stream — a chunk whose post was abandoned after its
+retries is counted too, so a lost chunk shows up as a short count and never as a complete
+one. The one exception: a chunk still unsent when the instance's bounded post-exit drain
+expires is dropped with one warning naming the session, op, stream and count, and reaches
+no count — that result then matches what Homer holds while output is missing, and the
+instance's log is the only trace. Both fields are optional, so a result from an
+older runner binary omits them. When one is present and ahead of the chunks Homer has
+received, Homer waits once, briefly, for the rest and then fails the step with
+`output incomplete on <stream>` instead of running on truncated output.
+
+Both ends of this protocol are upgraded independently, so every body it carries is
+decoded with unknown keys ignored: an instance newer than the server it reports to is
+read for the fields this server knows, never refused as a malformed body.
 
 **Nested runs hold a permit.** A run holds its runner's permit for its whole
 duration, not just while it is opening the session. If `concurrency` is set on

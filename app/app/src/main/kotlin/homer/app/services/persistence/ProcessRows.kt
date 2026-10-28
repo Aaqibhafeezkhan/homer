@@ -167,5 +167,7 @@ internal fun ResultRow.toProcessInfo(
         retainArtifacts = this[Processes.retainArtifacts]?.let { decodeRetainArtifacts(it) } ?: emptyList(),
         retainedTruncated = this[Processes.retainedTruncated],
         tags = tags,
+        failureReason = this[Processes.failureReason],
+        failureReasonRunId = this[Processes.failureReasonRunId],
     )
 }

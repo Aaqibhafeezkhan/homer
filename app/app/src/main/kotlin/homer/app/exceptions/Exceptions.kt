@@ -73,12 +73,12 @@ class WorkspaceException(
 ) : HomerException("Workspace error: $message", cause)
 
 class AnotherProcessStillActive(
-    activeProcessId: Int,
+    val activeProcessId: Int,
 ) : HomerException("The process $activeProcessId is still active, stopping current")
 
 class MaxParallelRunsExceededException(
-    agentName: String,
-    maxParallelRuns: Int,
+    val agentName: String,
+    val maxParallelRuns: Int,
 ) : HomerException("Agent '$agentName' has reached the maximum of $maxParallelRuns parallel runs")
 
 /**
@@ -89,8 +89,8 @@ class MaxParallelRunsExceededException(
  * bound fails the surplus run instead of parking it indefinitely.
  */
 class MaxQueuedRunsExceededException(
-    agentName: String,
-    maxQueuedRuns: Int,
+    val agentName: String,
+    val maxQueuedRuns: Int,
 ) : HomerException("Agent '$agentName' has reached the maximum of $maxQueuedRuns queued runs")
 
 /**
@@ -259,6 +259,22 @@ class TooManyOpenQuestionsException(
 ) : HomerException("Process $processId already has $maxOpen open questions")
 
 /**
+ * Raised when an operator message is sent to a run that has ended (or never existed).
+ * Maps to 409 Conflict. See ADR-0097.
+ */
+class RunNotAcceptingMessagesException(
+    val processId: Int,
+) : HomerException("Process $processId is no longer accepting messages")
+
+/**
+ * Raised when a run already stores `server.messages.maxPerRun` messages. Maps to 429 Too Many Requests.
+ */
+class TooManyRunMessagesException(
+    val processId: Int,
+    val maxMessages: Int,
+) : HomerException("Process $processId already has $maxMessages messages")
+
+/**
  * Raised when a process already holds `server.questions.maxConcurrentWaitsPerProcess`
  * concurrent answer-waits. Bounds the connections/coroutines a workspace
  * command can pin open (each hold can last up to `maxWaitSec`). Maps to
@@ -316,16 +332,23 @@ class TooManyPendingContinuationsException(
 /**
  * Raised when no runner claimed a queued run within its claim TTL. [reason] is what the
  * queue observed at expiry (a saturated runner, no matching tags, ...). See ADR-0066.
+ *
+ * [publicReason] is the same observation without a runner alias. The alias is admin-only on
+ * the status API (ADR-0077), and this reason rides the run's stored failure reason, which
+ * every caller who can see the run reads — so only the alias-free rendering may be stored.
+ * Both are required, so a call site cannot forget the alias-free one and default into
+ * storing the alias-bearing rendering.
  */
 class RunnerClaimTimeoutException(
-    timeout: Duration,
-    filter: RunnerFilter,
-    reason: String,
+    val timeout: Duration,
+    val filter: RunnerFilter,
+    val reason: String,
+    val publicReason: String,
 ) : HomerException("No runner claimed the run within ${timeout.inWholeSeconds} s (${filter.describe()}): $reason")
 
 /** Raised when the claim queue is at `server.maxPendingRunnerClaims`; the run fails without waiting. §12 rule 4. */
 class ClaimQueueFullException(
-    maxPending: Int,
+    val maxPending: Int,
 ) : HomerException("Runner claim queue is full ($maxPending pending claims)")
 
 /**

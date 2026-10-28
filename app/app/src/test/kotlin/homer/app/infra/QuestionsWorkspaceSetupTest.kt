@@ -127,6 +127,23 @@ class QuestionsWorkspaceSetupTest {
     }
 
     @Test
+    fun `materialize writes an executable homer-inbox helper on PATH`(
+        @TempDir root: Path,
+    ) {
+        val ws = workspace(root, env = mapOf("PATH" to "/usr/bin"))
+
+        QuestionsWorkspaceSetup(mcpEnabled = false).materialize(ws)
+
+        val helper = ws.config.projectRoot.resolve(".homer/bin/homer-inbox")
+        assertTrue(helper.exists(), "helper must be materialized")
+        assertTrue(helper.isExecutable(), "helper must be executable")
+        val content = helper.readText()
+        assertTrue(content.startsWith("#!/bin/sh"), "helper must be a POSIX sh script")
+        assertTrue("callback/messages/take" in content, "helper must POST to the take callback")
+        assertTrue("HMR_CALLBACK_TOKEN" in content, "helper must authenticate with the callback token")
+    }
+
+    @Test
     fun `materialize over an existing helper keeps it intact and executable`(
         @TempDir root: Path,
     ) {

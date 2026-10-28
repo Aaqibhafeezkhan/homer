@@ -31,6 +31,9 @@ data class ProcessInfoResponse(
     val id: Int,
     val status: String,
     val agentName: String,
+    // The agent's group, read from the *current* agent definition at response time —
+    // never stored on the process row. Null when the agent is ungrouped or gone.
+    val group: String? = null,
     val history: List<ProcessHistoryEntry>,
     val executions: List<ExecutionInfoResponse>,
     val currentCommand: String? = null,
@@ -67,6 +70,11 @@ data class ProcessInfoResponse(
     // Subject tags carried by this run: `key:value` strings resolved from inputs at
     // start and/or declared at run time. Filter runs by them with `?tag=`. See ADR-0060.
     val tags: List<String> = emptyList(),
+    // Why the run ended FAILED before any of its commands started (a claim timeout, a
+    // SKIP_CURRENT lock skip, a parallel-run cap or a full queue). Null for every other
+    // failure. The run that blocked this one is named inside the text only for a caller who
+    // may see it. See ADR-0058.
+    val failureReason: String? = null,
 )
 
 @Serializable
@@ -206,6 +214,9 @@ data class CronInfo(
 data class AgentInfo(
     val name: String,
     val description: String? = null,
+    // The agent's optional group label, null when unset. The console renders one
+    // tab per distinct non-null value; ungrouped agents appear under "All" only.
+    val group: String? = null,
     // Canonical declared inputs. `queryParams` is the deprecated alias kept for
     // older clients; new-style agents (`inputs:`) populate `inputs` only, so the
     // list endpoint MUST send both or a migrated agent shows no parameters.
@@ -232,6 +243,7 @@ data class AgentInfo(
             AgentInfo(
                 name = name,
                 description = agent.description,
+                group = agent.group,
                 inputs = agent.inputs?.map { it.redactedForSummary() },
                 // The legacy alias is still served to older clients (see the field above).
                 queryParams = @Suppress("DEPRECATION") agent.queryParams?.map { it.redactedForSummary() },

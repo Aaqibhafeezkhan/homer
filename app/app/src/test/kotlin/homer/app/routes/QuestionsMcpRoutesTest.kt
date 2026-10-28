@@ -4,8 +4,13 @@ import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.fixtures.all
 import homer.app.models.QuestionsConfig
+import homer.app.models.RunMessagesConfig
+import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.QuestionsMcpToolFactory
 import homer.app.services.QuestionsService
+import homer.app.services.RunMessageStatus
+import homer.app.services.RunMessagesService
+import homer.app.services.persistence.RunMessagesRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -58,12 +63,14 @@ class QuestionsMcpRoutesTest {
         service: QuestionsService,
         enabled: Boolean = true,
         holdChunkSec: Int = 1,
+        runMessages: RunMessagesService = mockk(relaxed = true),
     ) {
         val factory =
             QuestionsMcpToolFactory(
                 questionsService = service,
                 questionsConfig = QuestionsConfig(),
                 dispatchService = mockk(relaxed = true),
+                runMessagesService = runMessages,
                 logger = TestFixtures.mockLogger(),
                 holdChunkSec = holdChunkSec,
             )
@@ -229,6 +236,56 @@ class QuestionsMcpRoutesTest {
             val structured = sseResult(response.bodyAsText())["structuredContent"]!!.jsonObject
             assertEquals("ANSWERED", structured["status"]!!.jsonPrimitive.content)
             assertEquals("yes, go", structured["answer"]!!.jsonPrimitive.content)
+        }
+
+    private class InboxFixture(
+        val service: QuestionsService,
+        val messages: RunMessagesService,
+        val tokenA: String,
+        val tokenB: String,
+        val processA: Int,
+    )
+
+    private fun inboxFixture(): InboxFixture {
+        val db = PersistenceTestSupport.tempDatabase()
+        val pm = PersistenceTestSupport.processManager(db = db)
+        val service = PersistenceTestSupport.questionsService(db = db)
+        val messages =
+            RunMessagesService(RunMessagesRepository(db), ProcessEventBroadcaster(), RunMessagesConfig(), TestFixtures.mockLogger())
+        return runBlocking {
+            val a = pm.obtainProcessId("agent-a")
+            val b = pm.obtainProcessId("agent-b")
+            InboxFixture(service, messages, service.registerProcess(a, "agent-a"), service.registerProcess(b, "agent-b"), a)
+        }
+    }
+
+    @Test
+    fun `check_messages takes the run's queued message over MCP`() =
+        testApplication {
+            val f = inboxFixture()
+            runBlocking { f.messages.send(f.processA, "alice", "please stop and summarize") }
+            application { wireQuestionsMcp(f.service, runMessages = f.messages) }
+
+            val response = client.mcpPost(toolsCallBody("check_messages", "{}"), bearer = f.tokenA)
+
+            val text = sseResult(response.bodyAsText())["content"]!!.toString()
+            assertTrue("please stop and summarize" in text, text)
+            assertEquals(RunMessageStatus.DELIVERED, runBlocking { f.messages.list(f.processA) }.single().status)
+        }
+
+    @Test
+    fun `check_messages with another run's token leaves the message queued`() =
+        testApplication {
+            val f = inboxFixture()
+            runBlocking { f.messages.send(f.processA, "alice", "for run A only") }
+            application { wireQuestionsMcp(f.service, runMessages = f.messages) }
+
+            val response = client.mcpPost(toolsCallBody("check_messages", "{}"), bearer = f.tokenB)
+
+            val text = sseResult(response.bodyAsText())["content"]!!.toString()
+            assertTrue("No messages from the operator." in text, text)
+            assertTrue("for run A only" !in text, text)
+            assertEquals(RunMessageStatus.QUEUED, runBlocking { f.messages.list(f.processA) }.single().status)
         }
 
     @Test

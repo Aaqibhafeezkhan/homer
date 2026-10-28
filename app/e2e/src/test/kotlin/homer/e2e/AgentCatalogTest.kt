@@ -80,6 +80,15 @@ class AgentCatalogTest : E2eTestBase() {
         }
 
     @Test
+    fun `agents list serves the group of a grouped fixture and null for an ungrouped one`() =
+        runBlocking {
+            val agents = HomerApi.agents().agents.associateBy { it.name }
+
+            assertEquals("core", agents.getValue("echo").group, "the echo fixture declares `group: core`")
+            assertEquals(null, agents.getValue("fail").group, "a fixture without a group must report null")
+        }
+
+    @Test
     fun `agents list omits a secret input's default and values but keeps a non-secret default`() =
         runBlocking {
             val inputs =

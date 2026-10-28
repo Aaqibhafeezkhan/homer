@@ -447,7 +447,7 @@ in your own Dockerfile; an npm global install replaces the version the
 base image shipped, in either direction (upgrade or hold back):
 
 ```dockerfile
-FROM ghcr.io/livesport/homer/homer-app:1.37.0
+FROM ghcr.io/livesport/homer/homer-app:1.38.0
 ARG CLAUDE_CODE_VERSION=2.1.245
 USER root
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && \
@@ -471,7 +471,7 @@ digest; each platform image carries its own signature, SLSA build provenance
 and SBOM ([ADR-0086](docs/adr/0086-sign-and-attest-release-images.md)). Verify an
 image by digest before deploying it. The stack pulls by tag
 (`HOMER_VERSION`), so resolve the digest first —
-`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.37.0 --format '{{.Manifest.Digest}}'`
+`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.38.0 --format '{{.Manifest.Digest}}'`
 prints the index digest — and pin that digest in your own override (see [Best Practices → Security](#security)):
 
 ```bash
@@ -490,7 +490,7 @@ gh attestation verify "oci://$image" --repo livesport/homer \
 The provenance on the index records the release run that assembled and signed
 it, not a build: the build provenance of what you run is on the platform
 images. The index lists each of them by its own digest
-(`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.37.0`
+(`docker buildx imagetools inspect ghcr.io/livesport/homer/homer-app:1.38.0`
 shows them), and each is signed and attested the same way, so the same
 commands verify a platform digest: run them on the one for your host to check
 how it was built, or if you pin it instead of the index.
@@ -952,7 +952,7 @@ To run the default stack on it, set the backend image in an override:
 # docker-compose.override.yml
 services:
   backend:
-    image: ghcr.io/livesport/homer/homer-app:${HOMER_VERSION:-1.37.0}-slim
+    image: ghcr.io/livesport/homer/homer-app:${HOMER_VERSION:-1.38.0}-slim
 ```
 
 ## homer-runner image
@@ -964,7 +964,7 @@ artifact next to `homer-app` and `homer-console`:
 
 ```bash
 docker build --target homer-runner -t homer-runner -f app/Dockerfile .
-docker run -d --name homer-runner \
+docker run -d --name homer-runner --restart on-failure \
   -e HOMER_RUNNER_URL=https://homer.internal \
   -e HOMER_RUNNER_TOKEN="$HOMER_WORKERS_TOKEN" \
   -e HOMER_RUNNER_TAGS=linux,gpu \
@@ -972,6 +972,11 @@ docker run -d --name homer-runner \
   -e HOMER_RUNNER_NAME="$(hostname)" \
   homer-runner
 ```
+
+A runner that can no longer start processes or write its root exits `3`;
+`--restart on-failure` brings it back (see `app/SERVER.md`). It also restarts
+on exit `1` and `2`, so a bad token or a disallowed tag loops with Docker's
+restart backoff until the configuration is fixed.
 
 The image is deliberately small (`bash`, `curl`, `git`, `tar`, `gzip`,
 `util-linux` for `setsid`, a JRE). An agent that needs `claude`, `node`,

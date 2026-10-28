@@ -90,10 +90,11 @@ See ADR-0020.
   boot (the coroutines it referred to are gone).
 - **`StartupReconciliation`** — runs once before traffic: marks interrupted
   `CREATED`/`WORKING` processes `UNKNOWN`, expires their OPEN non-dispatch-bound
-  questions, stamps purge times on every `UNKNOWN` row still missing them (from
-  the agent's current `workspace` config, counted from now; ADR-0048), fails
-  any dispatch left `DISPATCHING` by the restart (so a crash mid-fire can't
-  cause a duplicate re-fire), then re-fires any PENDING dispatch
+  questions, marks every `QUEUED` run message of a run no longer
+  `CREATED`/`WORKING` `UNDELIVERED` (ADR-0097), stamps purge times on every
+  `UNKNOWN` row still missing them (from the agent's current `workspace`
+  config, counted from now; ADR-0048), fails any dispatch left `DISPATCHING`
+  by the restart (so a crash mid-fire can't cause a duplicate re-fire), then re-fires any PENDING dispatch
   whose question is already ANSWERED (crash-safety for ask-and-dispatch). Same
   two-step crash-safety for continuations: fail any left `DISPATCHING`, then
   fire any PENDING continuation whose watched process is already terminal.
@@ -149,6 +150,8 @@ there and a row here (SQLite rule 1 in
 | 26 | prune indexes + paginated list filters for `dispatches`/`continuations` | [0021](../../../../../../../../../docs/adr/0021-ask-and-dispatch.md) |
 | 27 | `continuations.thread_id` + `continuations_thread_id` index (LangGraph `subs` thread lookup) | [0044](../../../../../../../../../docs/adr/0044-langgraph-resume-and-run-introspection.md) |
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
+| 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
+| 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
 
 ### Schema constraints
 
@@ -277,6 +280,19 @@ Editor-facing constraints the row's ADR does not state:
   residual filter, then all its sub runs in batched reads below the
   512-id chunk they split at. `DatabaseMigrationTest` pins both plans. See
   ADR-0044.
+- `processes.failure_reason` / `failure_reason_run_id` (v30) hold why a run ended
+  `FAILED` before any of its commands started, and the run that blocked it when the
+  cause names one (the lock holder; **not a foreign key**, like the other run links).
+  Both are left NULL on the v29→v30 upgrade: a pre-v30 row's failure is not
+  reconstructible, and NULL reads as "no reason recorded", never as "ran and failed".
+  The write is guarded on the row's own state — it lands only while `status = FAILED`
+  with no recorded execution and no current command — so a run that failed mid-flight
+  and one whose failure raced a kill that won the status CAS both keep NULL, and the
+  column is never rewritten. `failure_reason` is truncated to 500 characters inside
+  the write, so its bound holds whatever the caller passes. The write trails the
+  terminal-status commit in a second transaction and emits no event of its own, so a
+  client refetching on the `FAILED` event reads the reason on its next poll, not
+  immediately — an accepted trade, recorded in ADR-0098.
 
 `transitionStatus` and `killTransition` project `status`, `history` and
 `agent_name` instead of `selectAll()`: they run under the write lock, and pulling

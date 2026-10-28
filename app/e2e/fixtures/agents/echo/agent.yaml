@@ -1,5 +1,6 @@
 name: echo
 description: Happy-path fixture; echoes a query input and doubles as a dispatch target and MCP tool
+group: core
 dispatch:
   enabled: true
 mcp:

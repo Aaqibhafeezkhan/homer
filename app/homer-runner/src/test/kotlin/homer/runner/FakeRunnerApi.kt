@@ -6,6 +6,7 @@ import homer.app.runners.external.RegisterInstanceRequest
 import homer.app.runners.external.RegisterInstanceResponse
 import homer.app.runners.external.RunnerOp
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.selects.onTimeout
@@ -47,6 +48,14 @@ class FakeRunnerApi : RunnerApi {
     /** Thrown by the next `postOutput` calls, one per call, before any is recorded. */
     val postOutputFailures = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
 
+    /** Held before each `postOutput` is recorded, so a test can keep a chunk post in flight. */
+    @Volatile
+    var postOutputDelayMs = 0L
+
+    /** When true, `postOutput` never returns: the drain is left with a stream it cannot finish. */
+    @Volatile
+    var postOutputStalls = false
+
     var nextPollMs = 100L
 
     /**
@@ -78,8 +87,13 @@ class FakeRunnerApi : RunnerApi {
     val deregisterFailures = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
     val deregisterCalls = AtomicInteger(0)
 
+    /** Suspends `deregister` before it records anything, like a real HTTP call; cancelled calls record nothing. */
+    @Volatile
+    var deregisterDelayMs = 0L
+
     override suspend fun deregister(instanceId: String) {
         deregisterCalls.incrementAndGet()
+        if (deregisterDelayMs > 0) delay(deregisterDelayMs)
         deregisterFailures.poll()?.let { throw it }
         deregistrations += instanceId
     }
@@ -144,9 +158,12 @@ class FakeRunnerApi : RunnerApi {
         seq: Long,
         bytes: ByteArray,
     ) {
+        if (postOutputStalls) awaitCancellation()
+        if (postOutputDelayMs > 0) delay(postOutputDelayMs)
         postOutputFailures.poll()?.let { throw it }
         output += Triple(stream, seq, bytes)
     }
 
-    suspend fun result(): OpResult = withTimeoutOrNull(5_000) { results.receive() } ?: error("no result within 5 s")
+    suspend fun result(timeoutMs: Long = 5_000): OpResult =
+        withTimeoutOrNull(timeoutMs) { results.receive() } ?: error("no result within $timeoutMs ms")
 }

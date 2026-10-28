@@ -17,6 +17,8 @@ data class CronConfig(
 data class Agent(
     val name: String,
     val description: String? = null,
+    /** Optional operator-facing label; the console's Agents page renders one tab per distinct group. */
+    val group: String? = null,
     val workspace: Workspace = Workspace(),
     val commands: List<Command>,
     val env: Map<String, String> = emptyMap(),
@@ -101,6 +103,7 @@ data class Agent(
         }
         require(runner == null || runner.isNotBlank()) { "Agent '$name': runner must not be blank" }
         RunnerTagValidation.validate("Agent '$name'", runnerTags)
+        AgentGroupValidation.validate("Agent '$name'", group)
         require(runnerClaimTimeoutSec == null || runnerClaimTimeoutSec >= 1) {
             "Agent '$name': runnerClaimTimeoutSec must be >= 1 when set, got $runnerClaimTimeoutSec"
         }

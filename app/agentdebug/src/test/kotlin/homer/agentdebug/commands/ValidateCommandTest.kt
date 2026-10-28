@@ -1,7 +1,10 @@
 package homer.agentdebug.commands
 
+import com.github.ajalt.clikt.core.ProgramResult
 import homer.app.models.AppConfig
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertDoesNotThrow
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -9,6 +12,7 @@ import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 
 class ValidateCommandTest {
     private fun capture(block: () -> Unit): String {
@@ -21,6 +25,20 @@ class ValidateCommandTest {
             System.setOut(original)
         }
         return buffer.toString()
+    }
+
+    /** Output of [block] together with the [ProgramResult] it throws. Restores stdout either way. */
+    private fun captureFailure(block: () -> Unit): Pair<ProgramResult, String> {
+        val buffer = ByteArrayOutputStream()
+        val original = System.out
+        System.setOut(PrintStream(buffer))
+        val failure =
+            try {
+                assertThrows<ProgramResult> { block() }
+            } finally {
+                System.setOut(original)
+            }
+        return failure to buffer.toString()
     }
 
     @Test
@@ -81,7 +99,7 @@ class ValidateCommandTest {
 
         val out =
             capture {
-                ValidateCommand(appConfig, "analysis", "config.yaml").run()
+                assertDoesNotThrow { ValidateCommand(appConfig, "analysis", "config.yaml").run() }
             }
 
         assertContains(out, "Agent: analysis")
@@ -172,10 +190,39 @@ class ValidateCommandTest {
     ) {
         val appConfig = writeEveryKindAgent(tempDir)
 
-        val out = capture { ValidateCommand(appConfig, "missing", "config.yaml").run() }
+        val (failure, out) = captureFailure { ValidateCommand(appConfig, "missing", "config.yaml").run() }
 
+        assertEquals(1, failure.statusCode)
         assertContains(out, "✗ Agent 'missing' not found in $tempDir")
         assertContains(out, "  Available: every-kind")
+    }
+
+    @Test
+    fun `schema validation failure exits 1`(
+        @TempDir tempDir: Path,
+    ) {
+        val agentDir = tempDir.resolve("bad-timeout").createDirectories()
+        agentDir.resolve("agent.yaml").writeText(
+            """
+            name: bad-timeout
+            commands:
+              - !<cmd>
+                cmd: "echo hi"
+                timeout: -1
+            """.trimIndent(),
+        )
+        val appConfig =
+            AppConfig(
+                agentsSearchPath = tempDir.toString(),
+                workspaceRootPath = tempDir.resolve("workspace").toString(),
+                databasePath = tempDir.resolve("db.sqlite").toString(),
+            )
+
+        val (failure, out) = captureFailure { ValidateCommand(appConfig, "bad-timeout", "config.yaml").run() }
+
+        assertEquals(1, failure.statusCode)
+        assertContains(out, "✗ Schema validation failed:")
+        assertContains(out, "Validation FAILED.")
     }
 
     @Test

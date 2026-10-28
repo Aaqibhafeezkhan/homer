@@ -100,6 +100,19 @@ internal object Processes : Table("processes") {
     // Whether the retained set was cut short by server.maxRetainedArtifactBytes.
     val retainedTruncated = bool("retained_truncated").nullable()
 
+    // Why the run ended FAILED before any of its commands started (a claim timeout, a
+    // SKIP_CURRENT lock skip, a parallel-run cap or a full queue), as a fixed-vocabulary
+    // sentence built from typed fields — never a raw exception message, and redacted before
+    // it is written. Written once, at the terminal transition, and only while the row still
+    // reads FAILED with no step recorded, so a run that failed mid-flight keeps NULL.
+    // See ADR-0020.
+    val failureReason = text("failure_reason").nullable()
+
+    // The run that blocked this one (the lock holder), when the cause names one. Not a
+    // foreign key, like the other run links: the holder may be evicted first and the id must
+    // keep reading after that. Served only to a caller who may see that run. See ADR-0058.
+    val failureReasonRunId = integer("failure_reason_run_id").nullable()
+
     /**
      * The columns the record-level reads (the two purge sweeps and `costByTag`) use, and nothing else:
      * `history`, `executions` and `runner_state` are multi-MiB on a
@@ -127,6 +140,8 @@ internal object Processes : Table("processes") {
             retainArtifacts,
             workspacePurgedAt,
             retainedTruncated,
+            failureReason,
+            failureReasonRunId,
         )
 
     // One per list filter of GET /status/all, plus `owner` for the non-admin visibility OR, so
@@ -219,6 +234,27 @@ internal object Questions : Table("questions") {
         index("questions_status_dispatch_bound", false, status, dispatchBound, processId)
         index("questions_process_dispatch_bound", false, processId, dispatchBound)
         index("questions_agent_name", false, agentName)
+    }
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+/**
+ * The per-run inbox: operator messages a running run takes through a hook or the MCP tool. Not a
+ * foreign key; deleted co-transactionally with the process row on both record purge and capacity
+ * eviction. See ADR-0097.
+ */
+internal object RunMessages : Table("run_messages") {
+    val id = varchar("id", 64)
+    val processId = integer("process_id")
+    val text = text("text")
+    val status = varchar("status", 16)
+    val sender = varchar("sender", 255).nullable()
+    val createdAt = long("created_at")
+    val deliveredAt = long("delivered_at").nullable()
+
+    init {
+        index("run_messages_process_status", false, processId, status)
     }
 
     override val primaryKey = PrimaryKey(id)

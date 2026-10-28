@@ -181,6 +181,24 @@ class MainTest {
     }
 
     @Test
+    fun `an unhealthy host exits 3 with the reason and never registers`(
+        @TempDir root: Path,
+    ) {
+        FakeHomer(registerStatus = 201).use { homer ->
+            val cli =
+                HomerRunnerCli(
+                    addShutdownHook = {},
+                    healthCheck = { throw RunnerUnhealthyException("cannot start a process: boom") },
+                    harden = { Dumpability.Result.Hardened },
+                )
+            val result = cli.test(argv(homer, root), envvars = mapOf("HOMER_RUNNER_TOKEN" to "t".repeat(32)))
+            assertEquals(3, result.statusCode)
+            assertTrue("cannot start a process" in result.stderr, "got: ${result.stderr}")
+            assertFalse(homer.requests.any { it.endsWith("/register") })
+        }
+    }
+
+    @Test
     fun `the shutdown hook drains a registered runner, which then deregisters and exits 0`(
         @TempDir root: Path,
     ) {

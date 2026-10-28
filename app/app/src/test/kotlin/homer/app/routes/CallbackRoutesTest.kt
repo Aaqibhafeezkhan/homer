@@ -6,19 +6,32 @@ import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.QuestionsClosedForProcessException
 import homer.app.fixtures.PersistenceTestSupport
+import homer.app.fixtures.TestFixtures
 import homer.app.fixtures.mountCallbackRoutes
 import homer.app.infra.SecretRedactor
 import homer.app.models.AskQuestionResponse
 import homer.app.models.CreateRunResponse
+import homer.app.models.ErrorResponse
 import homer.app.models.QuestionResponse
 import homer.app.models.QuestionsConfig
 import homer.app.models.ResultEnvParam
 import homer.app.models.ResultTransformer
+import homer.app.models.RunMessagesConfig
 import homer.app.models.SrcType
 import homer.app.models.TagValidation
+import homer.app.models.TakeRunMessagesResponse
+import homer.app.models.TakenRunMessage
 import homer.app.services.ArtifactTooLargeException
+import homer.app.services.HookEvent
+import homer.app.services.ProcessEventBroadcaster
+import homer.app.services.ProcessManager
+import homer.app.services.QuestionsService
 import homer.app.services.RESULT_TRANSFORM_MAX_BYTES
+import homer.app.services.RunMessageHookOutput
+import homer.app.services.RunMessageStatus
+import homer.app.services.RunMessagesService
 import homer.app.services.persistence.ResultTokenRecord
+import homer.app.services.persistence.RunMessagesRepository
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -28,6 +41,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -36,6 +50,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import java.io.OutputStream
 import java.nio.file.Files
@@ -1010,5 +1025,179 @@ class CallbackRoutesTest {
                 }
 
             assertEquals(HttpStatusCode.PayloadTooLarge, response.status)
+        }
+
+    private class Inbox(
+        val questions: QuestionsService,
+        val messages: RunMessagesService,
+        val processes: ProcessManager,
+        val processId: Int,
+        val token: String,
+    )
+
+    private fun inbox(): Inbox {
+        val db = PersistenceTestSupport.tempDatabase()
+        val questions = PersistenceTestSupport.questionsService(db = db)
+        val messages =
+            RunMessagesService(RunMessagesRepository(db), ProcessEventBroadcaster(), RunMessagesConfig(), TestFixtures.mockLogger())
+        val pm = PersistenceTestSupport.processManager(db = db)
+        val id = runBlocking { pm.obtainProcessId("agent-a") }
+        val token = runBlocking { questions.registerProcess(id, "agent-a") }
+        return Inbox(questions, messages, pm, id, token)
+    }
+
+    private fun ApplicationTestBuilder.mountInbox(inbox: Inbox) =
+        mountCallbackRoutes {
+            every { questionsService } returns inbox.questions
+            every { runMessagesService } returns inbox.messages
+        }
+
+    @Test
+    fun `take without a hook returns the queued messages and marks them delivered`() =
+        testApplication {
+            val inbox = inbox()
+            val first = runBlocking { inbox.messages.send(inbox.processId, "alice", "one") }
+            val second = runBlocking { inbox.messages.send(inbox.processId, "alice", "two") }
+            mountInbox(inbox)
+
+            val response = client.post("/api/v1/callback/messages/take") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = apiJson.decodeFromString<TakeRunMessagesResponse>(response.bodyAsText())
+            assertEquals(
+                listOf(TakenRunMessage(first.id, "one", first.createdAt), TakenRunMessage(second.id, "two", second.createdAt)),
+                body.messages,
+            )
+            assertEquals(
+                listOf(RunMessageStatus.DELIVERED, RunMessageStatus.DELIVERED),
+                runBlocking { inbox.messages.list(inbox.processId) }.map { it.status },
+            )
+        }
+
+    @Test
+    fun `take without a hook on an empty inbox returns an empty list`() =
+        testApplication {
+            val inbox = inbox()
+            mountInbox(inbox)
+
+            val response = client.post("/api/v1/callback/messages/take") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(TakeRunMessagesResponse(emptyList()), apiJson.decodeFromString(response.bodyAsText()))
+        }
+
+    @Test
+    fun `take with the stop hook and nothing queued is 204 with no body`() =
+        testApplication {
+            val inbox = inbox()
+            mountInbox(inbox)
+
+            val response =
+                client.post("/api/v1/callback/messages/take?hook=stop") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.NoContent, response.status)
+            assertEquals("", response.bodyAsText())
+        }
+
+    @Test
+    fun `take with the post-tool-use hook returns the hook JSON`() =
+        testApplication {
+            val inbox = inbox()
+            val sent = runBlocking { inbox.messages.send(inbox.processId, "alice", "say \"hi\"\nnow") }
+            mountInbox(inbox)
+
+            val response =
+                client.post("/api/v1/callback/messages/take?hook=post-tool-use") {
+                    header(HttpHeaders.Authorization, "Bearer ${inbox.token}")
+                }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val delivered = sent.copy(status = RunMessageStatus.DELIVERED)
+            assertEquals(
+                RunMessageHookOutput.render(HookEvent.POST_TOOL_USE, listOf(delivered)),
+                Json.parseToJsonElement(response.bodyAsText()),
+            )
+        }
+
+    @Test
+    fun `take with the stop hook blocks with the messages as the reason`() =
+        testApplication {
+            val inbox = inbox()
+            val sent = runBlocking { inbox.messages.send(inbox.processId, "alice", "keep going") }
+            mountInbox(inbox)
+
+            val response =
+                client.post("/api/v1/callback/messages/take?hook=stop") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(
+                RunMessageHookOutput.render(HookEvent.STOP, listOf(sent)),
+                Json.parseToJsonElement(response.bodyAsText()),
+            )
+        }
+
+    @Test
+    fun `take with an unknown hook is 400 and takes nothing`() =
+        testApplication {
+            val inbox = inbox()
+            runBlocking { inbox.messages.send(inbox.processId, "alice", "one") }
+            mountInbox(inbox)
+
+            val response =
+                client.post("/api/v1/callback/messages/take?hook=nope") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            assertEquals(listOf(RunMessageStatus.QUEUED), runBlocking { inbox.messages.list(inbox.processId) }.map { it.status })
+        }
+
+    @Test
+    fun `take on a closed run is 409 and leaves the messages queued`() =
+        testApplication {
+            val inbox = inbox()
+            runBlocking { inbox.messages.send(inbox.processId, "alice", "one") }
+            runBlocking { inbox.questions.expireForProcess(inbox.processId) }
+            mountInbox(inbox)
+
+            val response = client.post("/api/v1/callback/messages/take") { header(HttpHeaders.Authorization, "Bearer ${inbox.token}") }
+
+            assertEquals(HttpStatusCode.Conflict, response.status)
+            assertEquals(
+                ErrorResponse(msg = "Process ${inbox.processId} is no longer accepting messages"),
+                apiJson.decodeFromString(response.bodyAsText()),
+            )
+            assertEquals(listOf(RunMessageStatus.QUEUED), runBlocking { inbox.messages.list(inbox.processId) }.map { it.status })
+        }
+
+    @Test
+    fun `take without a token or with an unknown token is 401`() =
+        testApplication {
+            val inbox = inbox()
+            runBlocking { inbox.messages.send(inbox.processId, "alice", "one") }
+            mountInbox(inbox)
+
+            val missing = client.post("/api/v1/callback/messages/take")
+            val unknown = client.post("/api/v1/callback/messages/take") { header(HttpHeaders.Authorization, "Bearer not-a-token") }
+
+            assertEquals(HttpStatusCode.Unauthorized, missing.status)
+            assertEquals(HttpStatusCode.Unauthorized, unknown.status)
+            assertEquals(listOf(RunMessageStatus.QUEUED), runBlocking { inbox.messages.list(inbox.processId) }.map { it.status })
+        }
+
+    @Test
+    fun `a child run's token takes only the child's messages, never its parent's`() =
+        testApplication {
+            val parent = inbox()
+            val childId = runBlocking { parent.processes.obtainProcessId("child", parentProcessId = parent.processId) }
+            val childToken = runBlocking { parent.questions.registerProcess(childId, "child") }
+            runBlocking { parent.messages.send(parent.processId, "alice", "for the parent") }
+            val forChild = runBlocking { parent.messages.send(childId, "alice", "for the child") }
+            mountInbox(parent)
+
+            val response = client.post("/api/v1/callback/messages/take") { header(HttpHeaders.Authorization, "Bearer $childToken") }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = apiJson.decodeFromString<TakeRunMessagesResponse>(response.bodyAsText())
+            assertEquals(listOf(forChild.id), body.messages.map { it.id })
+            assertEquals(listOf(RunMessageStatus.QUEUED), runBlocking { parent.messages.list(parent.processId) }.map { it.status })
         }
 }

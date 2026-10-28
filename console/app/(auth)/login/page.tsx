@@ -15,6 +15,7 @@ import {
   normalizeBaseUrl,
 } from '@/lib/instances/url';
 import { appConfig } from '@/lib/config/app-config';
+import { safeReturnPath } from '@/lib/auth/return-path';
 import { EndpointField } from '@/components/auth/endpoint-field';
 import { AuthModeToggle } from '@/components/auth/auth-mode-toggle';
 import { Button } from '@/components/ui/button';
@@ -31,14 +32,16 @@ function normalizeMode(raw: string | null | undefined): InstanceMode | null {
   return raw === 'cookie' || raw === 'bearer' ? raw : null;
 }
 
-// The URL's `mode`, else the saved instance's, else cookie — and always cookie
-// unless bearer is allowed.
+// The URL's `mode`, else the saved instance's, else the deployment default —
+// bearer when the operator allows it, because `CONSOLE_ALLOW_BEARER=true` marks
+// a bearer-only backend that cannot accept a password. Always cookie when
+// bearer is off, whatever the URL or a saved instance says.
 function initialMode(
   allowBearer: boolean,
   raw: string | null | undefined,
   saved: InstanceMode | undefined,
 ): InstanceMode {
-  return allowBearer ? (normalizeMode(raw) ?? saved ?? 'cookie') : 'cookie';
+  return allowBearer ? (normalizeMode(raw) ?? saved ?? 'bearer') : 'cookie';
 }
 
 // Client-side courtesy cooldown after a 429 from the login limiter. Matches the
@@ -211,6 +214,20 @@ function SessionExpiredNotice() {
   );
 }
 
+// The neutral sibling of SessionExpiredNotice, for a reader who was sent here
+// from a console page without ever having a session. Deliberately not an alert:
+// nothing went wrong.
+function SignInPrompt() {
+  return (
+    <div
+      role="status"
+      className="mb-4 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground"
+    >
+      Sign in to continue.
+    </div>
+  );
+}
+
 // The post-429 cooldown in seconds, ticking down to zero one second at a time.
 function useCooldown() {
   const [cooldown, setCooldown] = useState(0);
@@ -279,6 +296,7 @@ interface LoginAttempt {
 function useLoginSubmit(
   store: InstancesStore,
   attempt: LoginAttempt,
+  returnPath: string | null,
   revealEndpoint: () => void,
   startCooldown: () => void,
 ) {
@@ -308,7 +326,9 @@ function useLoginSubmit(
     setIsLoading(false);
 
     if (outcome === 'ok') {
-      router.push('/processes');
+      // Validated here, at the point of use: the path came from a link anyone
+      // can craft, and it is about to steer the signed-in browser.
+      router.push(safeReturnPath(returnPath));
       return;
     }
     if (outcome === 'rate-limited') startCooldown();
@@ -321,6 +341,7 @@ function LoginForm() {
   const store = useInstances();
   const searchParams = useSearchParams();
   const expired = searchParams?.get('expired') === '1';
+  const nextParam = searchParams?.get('next') ?? null;
 
   // Bearer mode is opt-in (CONSOLE_ALLOW_BEARER): its token lives in localStorage
   // and is XSS-exfiltratable, so the console is cookie-only unless the operator
@@ -339,6 +360,7 @@ function LoginForm() {
   const { error, isLoading, handleSubmit } = useLoginSubmit(
     store,
     { endpoint: endpointField.endpoint, blocked: endpointField.blocked, mode, username, password },
+    nextParam,
     endpointField.reveal,
     () => setCooldown(RATE_LIMIT_COOLDOWN_SECONDS),
   );
@@ -348,7 +370,7 @@ function LoginForm() {
     <Card className="w-full max-w-md">
       <LoginCardHeader bearerMode={bearerMode} />
       <CardContent>
-        {expired && <SessionExpiredNotice />}
+        {expired ? <SessionExpiredNotice /> : nextParam ? <SignInPrompt /> : null}
         <form onSubmit={handleSubmit} className="space-y-4">
           <EndpointField {...endpointField.fieldProps} bearerMode={bearerMode} />
 

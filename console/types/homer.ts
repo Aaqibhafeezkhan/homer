@@ -75,6 +75,9 @@ export interface ProcessInfo {
   id: number;
   status: ProcessStatus;
   agentName: string;
+  // The agent's group, read from the current agent definition at response time;
+  // null when the agent is ungrouped or has since been removed.
+  group?: string | null;
   owner?: string | null;
   history: ProcessHistoryEntry[];
   executions: ProcessExecution[];
@@ -107,6 +110,11 @@ export interface ProcessInfo {
   // Subject tags this run carries: `key:value` strings resolved from inputs at
   // start and/or declared at run time. Filter the list with `?tag=`.
   tags?: string[];
+  // Why the run ended FAILED before any command started (claim timeout, lock
+  // skip, parallel-run cap, full queue); absent for every other failure. The
+  // run that blocked this one is named in the text only when the reader may
+  // see it. See ADR-0058.
+  failureReason?: string | null;
 }
 
 // Question Status (human-in-the-loop questions)
@@ -141,6 +149,28 @@ export interface QuestionsListResponse {
   total: number;
   offset: number;
   limit: number;
+}
+
+// Operator message sent to a running run (its inbox)
+export type RunMessageStatus = 'QUEUED' | 'DELIVERED' | 'UNDELIVERED';
+
+export interface RunMessage {
+  id: string;
+  processId: number;
+  text: string;
+  status: RunMessageStatus;
+  sender?: string | null;
+  createdAt: number;   // Unix epoch seconds
+  deliveredAt?: number | null;
+}
+
+// Oldest first.
+export interface RunMessagesListResponse {
+  messages: RunMessage[];
+}
+
+export interface SendRunMessageRequest {
+  text: string;
 }
 
 // Continuation Status (completion continuations — a parked workflow
@@ -232,6 +262,9 @@ export interface AgentCronInfo {
 export interface AgentInfo {
   name: string;
   description?: string | null;
+  // Optional group label; null when unset. The Agents page renders one tab per
+  // distinct group, and ungrouped agents appear under "All" only.
+  group?: string | null;
   inputs: AgentInput[] | null;
   /** @deprecated Use `inputs`. */
   queryParams: AgentInput[] | null;

@@ -187,6 +187,23 @@ describe('HomerApiClient — agent files API', () => {
     expect(JSON.parse(opts.body)).toEqual({ answer: 'yes' });
   });
 
+  it('getRunMessages GETs /api/v1/status/{id}/messages', async () => {
+    mockJson({ messages: [] });
+    await homerApi.getRunMessages(7);
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/api/v1/status/7/messages');
+    expect(opts.method).toBeUndefined();
+  });
+
+  it('sendRunMessage POSTs the text body to /api/v1/status/{id}/messages', async () => {
+    mockJson({ id: 'm-1', status: 'QUEUED' });
+    await homerApi.sendRunMessage(7, 'stop');
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain('/api/v1/status/7/messages');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toEqual({ text: 'stop' });
+  });
+
   it('getProcesses forwards the parentProcessId filter and omits it when unset', async () => {
     mockJson({ processes: [], total: 0, offset: 0, limit: 50 });
     await homerApi.getProcesses({ parentProcessId: 7 });

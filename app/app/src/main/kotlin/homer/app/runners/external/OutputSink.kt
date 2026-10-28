@@ -58,6 +58,12 @@ class OutputSink(
 
     fun bytesWritten(stream: String): Long = synchronized(lock) { written.getValue(stream) }
 
+    /**
+     * How many chunks of [stream] have arrived, i.e. the `seq` the next one must carry. A
+     * chunk the cap refused still counts: it consumed its sequence number like any other.
+     */
+    fun received(stream: String): Long = synchronized(lock) { nextSeq.getValue(stream) }
+
     override fun close() {
         synchronized(lock) {
             runCatching { stdout.close() }

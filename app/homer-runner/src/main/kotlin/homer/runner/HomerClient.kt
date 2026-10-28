@@ -8,6 +8,7 @@ import homer.app.runners.external.OpResult
 import homer.app.runners.external.RegisterInstanceRequest
 import homer.app.runners.external.RegisterInstanceResponse
 import homer.app.runners.external.RunnerOp
+import homer.app.runners.external.runnerProtocolJson
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
@@ -33,7 +34,6 @@ import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.jvm.javaio.toInputStream
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
-import kotlinx.serialization.json.Json
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -67,7 +67,10 @@ class HomerClient(
     }
 
     private val base = baseUrl.trimEnd('/')
-    private val json = Json { ignoreUnknownKeys = true }
+
+    // The same lenient wire format the server side decodes with: one definition, so the two
+    // ends of this wire cannot drift apart (`runnerProtocolJson`).
+    private val json = runnerProtocolJson
     private val client =
         HttpClient(engine) {
             expectSuccess = false

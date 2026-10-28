@@ -151,6 +151,17 @@ describe('useProcessStatusStream', () => {
     expect(keys()).toContainEqual(['process', 7]);
   });
 
+  it.each(['message.queued', 'message.delivered', 'message.undelivered'])(
+    '%s invalidates only that run\'s messages',
+    (name) => {
+      const { emit, keys } = mountWithSpy();
+
+      emit(name, { processId: 7, messageId: 'm-1' });
+
+      expect(keys()).toEqual([['run-messages', 7]]);
+    },
+  );
+
   it('a process.status event leaves question views alone (expiry has its own event)', () => {
     const { emit, keys } = mountWithSpy();
 

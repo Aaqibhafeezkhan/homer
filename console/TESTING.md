@@ -145,7 +145,7 @@ when you fix it.
 #### Bearer Token Mode (CONSOLE_ALLOW_BEARER=true)
 
 - [ ] Start the app with `CONSOLE_AUTH_ENABLED=true` and `CONSOLE_ALLOW_BEARER=true`
-- [ ] Navigate to `/login` and select **Token**
+- [ ] Navigate to `/login` — the form opens on **Token** (no need to select it)
 - [ ] Enter a valid bearer token and click "Login"
 - [ ] Verify you are redirected to `/processes`
 - [ ] Verify the token is stored in localStorage

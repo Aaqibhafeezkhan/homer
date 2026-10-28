@@ -5,9 +5,37 @@
 ### Homer
 
 - **Added: a `limits` example agent** — Demonstrates `maxParallelRuns`, `onMaxParallelRuns`, `maxQueuedRuns` and `cooldown` on a slow script.
+## [1.38.0] - 2026-10-28
+
+### Homer
+
+- **Added: `failureReason` on the process status response** — A run that ended `FAILED` before any command started (a claim timeout, a `SKIP_CURRENT` lock skip, a parallel-run cap or a full queue) carries a stored sentence saying which.
+- **Added: run-message API and `server.messages` limits** — `POST` and `GET /api/v1/status/{processId}/messages` send and list a run's inbox, `POST /api/v1/callback/messages/take` hands the run its queued messages (as plain text, Claude-hook JSON or the `check_messages` MCP tool), `message.queued`/`delivered`/`undelivered` stream on `/stream/processes`, and the new `server.messages` config bounds message size and count. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
+- **Added: an optional `group` on the agent definition** — Labels an agent for the console; `GET /api/v1/agents` and the process API return it, read from the agent's current definition.
+- **Fixed: code names split mid-word in documentation-site tables** — A code or type name in a table cell stays on one line, and a table too wide for the page scrolls sideways instead.
 
 ### Console
 
+- **Added: why a run failed before it started** — The process list and the run's own page show the stored reason beside the `FAILED` status.
+- **Added: per-run inbox** — Operators can send messages to a running run (bounded by `server.messages`), which reads them through the new `homer-inbox` helper, Claude hooks or the `check_messages` MCP tool; undelivered messages are marked when the run ends. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
+- **Added: message box on a running run** — Send a message to a running run from its page and see whether it was delivered.
+- **Added: agent group tabs** — The Agents page shows an All tab plus one tab per agent group, and a run's agent group is shown on the process list and detail.
+
+## [1.37.1] - 2026-10-27
+
+### Homer
+
+- **Fixed: an external runner dropped the end of a step's output** — A step on a pull runner now finishes sending its output before reporting its exit code, or gives up on a stalled drain with one logged warning that leaves the tail unreported; output a reported count shows as still missing fails the step instead of passing as truncated.
+- **Fixed: runner-protocol bodies refused on unknown fields** — A body carrying a field this Homer does not know is decoded for what it knows instead of answered with a 400, so mixed-version deployments no longer lose an op result to a newer peer's extra field.
+- **Fixed: homer-runner kept claiming runs it could not start** — Before registering and before each claim the runner checks that it can start a process and write under `--root`; when it cannot, it stops claiming, deregisters, lets in-flight runs finish and exits 3 for its supervisor to restart. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
+- **Fixed: one fast-failing runner instance took most runs** — A new run goes to the idle matching runner that claimed least recently, instead of to whichever waiting poll wins a race, so an instance that fails every run at once no longer takes every run. See [ADR-0096](docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md).
+- **Fixed: `agentdebug validate` exit status** — The command exits 1 when the agent is not found or schema validation fails, and 0 when it passes.
+- **Fixed: moving the compose ports broke the console's API calls** — The example configs take the console origin from `@SYSENV:FRONTEND_PORT` and the console's API URL follows the backend's published `BACKEND_PORT`, so changing either port in `.env` is the only step. See [ADR-0093](docs/adr/0093-the-default-compose-stack-runs-published-images.md).
+- **Added: a `tagged-run` example agent** — A bundled example shows run tags in use: subject tags resolved from the agent's inputs and a runtime tag declared mid-run with `homer-tag`.
+
+### Console
+
+- **Fixed: console sign-in on a first visit** — A reader who opens a console page without a session gets a neutral "Sign in to continue" prompt instead of "session expired", opens on the Token form when the deployment offers bearer sign-in, and returns to the page they asked for after signing in; a bearer session that really expired — even one already dead when the page loads — still says so, and a cookie session that expires mid-use does too.
 - **Fixed: the Last Command column named a skipped command** — A run's last command is now the last one that actually ran, not a trailing step skipped by its `when:` condition; a run whose every command was skipped shows an empty cell.
 
 ## [1.37.0] - 2026-10-25

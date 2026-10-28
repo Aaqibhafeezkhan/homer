@@ -257,6 +257,25 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('agent group', () => {
+    it('renders the group beside the agent name in both the table and the card', () => {
+      const process = makeProcess({ group: 'Platform' });
+
+      render(<ProcessTable processes={[process]} />);
+
+      // Desktop table + mobile card both render the label.
+      const labels = screen.getAllByText('Platform');
+      expect(labels).toHaveLength(2);
+      expect(labels[0].parentElement).toHaveTextContent('demo-agent');
+    });
+
+    it('renders nothing for a run whose agent has no group', () => {
+      render(<ProcessTable processes={[makeProcess({ group: null })]} />);
+
+      expect(screen.queryByText('Platform')).not.toBeInTheDocument();
+    });
+  });
+
   describe('runner column', () => {
     it('renders the alias without a pod-phase dot for a non-k8s run', () => {
       const process = makeProcess({ runner: { alias: 'local', type: 'local', podName: null, podPhase: 'NONE' } });
@@ -337,6 +356,28 @@ describe('ProcessTable', () => {
       render(<ProcessTable processes={[makeProcess()]} />);
 
       expect(screen.queryByRole('columnheader', { name: 'Flow' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('failure reason', () => {
+    const REASON = 'Runner claim queue full (maxPendingRunnerClaims: 100): that many runs were already waiting.';
+
+    it('shows the reason beside a FAILED status, in the row and the card', () => {
+      const process = makeProcess({ status: 'FAILED', executions: [], failureReason: REASON });
+
+      render(<ProcessTable processes={[process]} />);
+
+      // Desktop row + mobile card both carry the badge, each with its own tooltip.
+      expect(screen.getAllByTitle(REASON)).toHaveLength(2);
+      expect(screen.getAllByText('Failed')).toHaveLength(2);
+    });
+
+    it('shows no reason for a run that carries none', () => {
+      const process = makeProcess({ status: 'FAILED', executions: [] });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.queryByText(/Failure reason:/)).not.toBeInTheDocument();
     });
   });
 

@@ -18,6 +18,7 @@ class ProcessExecutor(
     private val telemetryService: TelemetryService,
     private val processManager: RunRecords,
     private val questionsService: QuestionExpiry,
+    private val runMessages: RunMessageExpiry,
     private val coroutineScope: CoroutineScope,
     private val logger: Logger,
     // Invoked once the terminal status is durably committed (after the CAS), with
@@ -140,6 +141,11 @@ class ProcessExecutor(
             ProcessStatus.FAILED,
         )
 
+        // Why the run never started, when the cause is one of the typed pre-start ones. The
+        // write is guarded on the committed status and on the run having recorded no step, so
+        // a mid-run failure and a kill that won the CAS above both store nothing.
+        storeFailureReason(processId, process, e)
+
         // Get final status for telemetry
         val finalStatus = processManager.getProcessStatus(processId)
 
@@ -178,6 +184,25 @@ class ProcessExecutor(
         }
     }
 
+    /**
+     * Stores why the run failed before it ever ran, redacted with the run's own redactor.
+     * Runs after the FAILED CAS, so the status is already committed: a failed write is logged
+     * and nothing else — it must never change the status, nor stop the release below.
+     */
+    @Suppress("SuspendFunSwallowedCancellation") // runs under NonCancellable; the status is already committed
+    private suspend fun storeFailureReason(
+        processId: Int,
+        process: Process,
+        e: Exception,
+    ) {
+        val failure = PreStartFailureReason.of(e) ?: return
+        try {
+            processManager.setFailureReason(processId, process.failureReasonRedactor.redact(failure.reason), failure.holderRunId)
+        } catch (writeError: Exception) {
+            logger.error("Storing the failure reason for process {} failed: {}", processId, writeError.message, writeError)
+        }
+    }
+
     /** Every exit is terminal: expire open questions, fire continuations, end the span, drop the job. */
     @Suppress("SuspendFunSwallowedCancellation") // runs under NonCancellable; a hook failure must not stop the release
     private suspend fun releaseJob(
@@ -188,6 +213,12 @@ class ProcessExecutor(
         // questions can never be answered anymore — expire them
         // and resume their waiters.
         questionsService.expireForProcess(processId)
+        // Messages still queued can never be delivered either. A failure here must not stop the release.
+        try {
+            runMessages.closeForProcess(processId)
+        } catch (e: Exception) {
+            logger.error("Closing the inbox of process {} failed: {}", processId, e.message, e)
+        }
         // Fire completion continuations off the durably-committed
         // final status (re-read for the actual KILLED-wins value).
         // Caught here so a hook failure can never corrupt the

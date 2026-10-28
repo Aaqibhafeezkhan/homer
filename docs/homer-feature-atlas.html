@@ -678,10 +678,14 @@ curl "http://localhost:8080/api/v1/artifacts?processId=1&amp;path=report.txt"</c
             Names stay one flat namespace and a parent's file API and remote upload cannot reach a nested agent.
             The file API refuses to write a definition discovery would never load — one deeper than the walk's
             depth cap, or under a hidden directory — so it cannot leave a subtree it then answers <code>404</code> for.
-            The <code>name</code> field must match <code>^[a-zA-Z0-9_-]+$</code>.</p>
+            The <code>name</code> field must match <code>^[a-zA-Z0-9_-]+$</code>.
+            An optional <code>group</code> labels the agent for the console: at most 64 characters, non-blank and
+            free of control characters, and returned by <code>GET /api/v1/agents</code> and by every process response
+            (read from the agent's current definition).</p>
           <pre><code>agents/hello/agent.yaml
 name: hello
 description: Greets the caller
+group: platform          # optional; the console groups agents by it
 commands:
   - !&lt;script&gt;
     content: 'echo "Hello, $NAME!"'
@@ -710,7 +714,9 @@ agents/web-pipeline/nodes/analysis/agent.yaml   # a nested agent</code></pre>
         <article class="f">
           <h3>Process lifecycle <span class="where">status</span></h3>
           <p><code>CREATED → WORKING → FINISHED | FAILED | KILLED</code>. A run interrupted by a server restart is
-            reconciled to <code>UNKNOWN</code> (also terminal).</p>
+            reconciled to <code>UNKNOWN</code> (also terminal). A run that fails before any command starts — a claim
+            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap or a full queue — carries a stored
+            <code>failureReason</code> saying which.</p>
           <pre><code>curl "$HOMER/api/v1/status/12345"</code></pre>
         </article>
 
@@ -1811,6 +1817,22 @@ homer-ask check "$ID" --wait 55     # exit 3 = still open, ask again</code></pre
         </article>
 
         <article class="f">
+          <h3>Messages to a running run <span class="where">http · console · shell · MCP</span></h3>
+          <p>The reverse channel: an operator sends a message to a running run and the run decides when to read it. The
+            message waits in the run's inbox as <code>QUEUED</code> and becomes <code>DELIVERED</code> when a step takes
+            it, or <code>UNDELIVERED</code> if the run ends first. Send and list over the API (<code>409</code> once the
+            run has ended); a shell step reads with <code>homer-inbox</code>, a Claude command through
+            <code>PostToolUse</code> / <code>Stop</code> hooks that call <code>homer-inbox --hook</code>, or the
+            <code>check_messages</code> MCP tool. The run's page in the console shows the messages with their status and, to
+            a user who may control the run, a send box while it is live. A run only ever takes its own messages, and <code>server.messages</code> caps
+            the text length and the messages per run.</p>
+          <pre><code>curl -X POST "$HOMER/api/v1/status/$PID/messages" \
+     -d '{"text":"use the staging db"}' -H 'Content-Type: application/json'
+# in the run:
+homer-inbox</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Question limits <span class="where">server config</span></h3>
           <p>Bounds how much a workspace command can pin open: open questions per process, held waits, text length and
             option count.</p>
@@ -2390,7 +2412,9 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
             concurrency); a silent instance is dropped and its runs fail. Admins can see every configured runner, its
             live instances and pending claims via <code>GET /api/v1/runners</code> and <code>GET /api/v1/runners/queue</code>.
             The runner makes its JVM non-dumpable at startup, so a run sharing its user cannot read the domain token out of
-            <code>/proc</code>.</p>
+            <code>/proc</code>. An instance that cannot start processes or write its root stops claiming, deregisters and
+            exits <code>3</code> for its supervisor to restart. Homer hands each run to the idle instance that claimed
+            least recently.</p>
           <pre><code>runners:
   workers: !&lt;external&gt;
     token: "@SYSENV:HOMER_WORKERS_TOKEN"
@@ -2650,7 +2674,7 @@ apk add --no-cache tar gzip curl</code></pre>
           <h3>Question tools <span class="where">mcp</span></h3>
           <p>A separate endpoint authenticated by the per-process callback token, for the command that is running right
             now.</p>
-          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch</code></pre>
+          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch · check_messages</code></pre>
         </article>
 
       </div>
@@ -3189,7 +3213,9 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             when the harness reported no cost and no session-spend endpoint answered), fallback reason, token
             usage and CLI session id. When
             <code>langfuse.projectId</code> is configured there is a link to the run's Langfuse trace. The agent name
-            links to its agent detail page. A run started by another run links to its parent, and a
+            links to its agent detail page, with the agent's <code>group</code> beside it when the agent has one (read
+            from the agent's current definition, so it can change or disappear on past runs). A run started by another
+            run links to its parent, and a
             <strong>Child runs</strong> card lists the runs it started; a run inside a flow also links to its root run
             (<strong>Root run #N</strong>). A root run's page instead shows a flat <strong>Flow</strong> section listing
             every visible descendant in id order — agent, status, cost and parent — with a toggle that hides the
@@ -3218,9 +3244,11 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
         <article class="f">
           <h3>Agents list &amp; detail <span class="where">console</span></h3>
           <p>One card per agent with Run and Edit buttons and, for a scheduled agent, its next and last cron run. Reload
-            rescans the agents directory and lists what was added, updated, removed or failed. An agent's page shows its
+            rescans the agents directory and lists what was added, updated, removed or failed. An <b>All</b> tab plus one
+            tab per distinct agent <code>group</code> (sorted by name) narrows the list, the selection living in the URL's
+            <code>group</code> param; an agent with no group appears under <b>All</b> only. An agent's page shows its
             parameters and transformers, its LangGraph graph, and its run history.</p>
-          <pre><code>/agents  ·  /agents/{name}</code></pre>
+          <pre><code>/agents  ·  /agents?group=platform  ·  /agents/{name}</code></pre>
         </article>
 
         <article class="f">
@@ -3291,10 +3319,12 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
         <article class="f">
           <h3>Multiple instances <span class="where">console</span></h3>
           <p>One console can point at several backends: add an instance from the login screen (which toggles between
-            Password and Token sign-in — Token only when <code>CONSOLE_ALLOW_BEARER=true</code>), switch the active one from
+            Password and Token sign-in — Token only when <code>CONSOLE_ALLOW_BEARER=true</code>, which also makes Token
+            the mode the form opens in), switch the active one from
             the header picker; bearer tokens are namespaced per instance. Sign-in itself is on only with
             <code>CONSOLE_AUTH_ENABLED=true</code>. An optional allowlist pins which backends may
-            be entered at all (and the CSP <code>connect-src</code> with it).</p>
+            be entered at all (and the CSP <code>connect-src</code> with it). Opening a page without a session
+            prompts you to sign in (no &ldquo;session expired&rdquo; wording) and returns you to that page afterwards.</p>
           <pre><code>Login → "Change" → add instance
 CONSOLE_AUTH_ENABLED=true     # sign-in on (default false)
 CONSOLE_ALLOW_BEARER=true     # also offer Token sign-in (default false: cookie-only)

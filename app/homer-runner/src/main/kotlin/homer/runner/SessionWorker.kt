@@ -367,7 +367,7 @@ class SessionWorker(
         if (op.opId in cancelledOps) handle.kill()
         try {
             val exit = handle.await(op.timeoutMs.milliseconds) { stream, seq, bytes -> postChunk(op.opId, stream, seq, bytes) }
-            return OpResult(op.opId, exitCode = exit.code, timedOut = exit.timedOut)
+            return cmdResult(claim.sessionId, op.opId, exit)
         } finally {
             running.remove(op.opId)
             cancelledOps.remove(op.opId)
@@ -441,9 +441,42 @@ class SessionWorker(
         private val RETRY_DELAY = 1.seconds
         private val FAST_POLL_THRESHOLD = 1.seconds
         private val FAST_POLL_DELAY = 250.milliseconds
-        private val logger = LoggerFactory.getLogger(SessionWorker::class.java)
     }
 }
+
+/**
+ * The `cmd` result for [opId], warning once per stream whose drain [exit] abandoned with chunks
+ * still unsent — otherwise the tail of a step's output vanishes with nothing in the log to
+ * explain it. Session, op, stream and chunk count only: the chunks may hold secrets (§12 rule 7),
+ * and [ProcessRunner.Handle] has neither id, so this is the first place that can name them.
+ *
+ * File scope, not a member: the class sits at its 400-line limit, and the file-level [logger]
+ * below is what a file-level function can see.
+ */
+private fun cmdResult(
+    sessionId: String,
+    opId: String,
+    exit: ProcessRunner.Exit,
+): OpResult {
+    exit.cutStreams.forEach { stream ->
+        logger.warn(
+            "Session {}: op {}: {} output cut after {} chunk(s), the unsent tail was dropped",
+            sessionId,
+            opId,
+            stream,
+            exit.chunksFor(stream),
+        )
+    }
+    return OpResult(
+        opId,
+        exitCode = exit.code,
+        timedOut = exit.timedOut,
+        stdoutChunks = exit.stdoutChunks,
+        stderrChunks = exit.stderrChunks,
+    )
+}
+
+private val logger = LoggerFactory.getLogger(SessionWorker::class.java)
 
 /** What [SessionWorker]'s poller does after a failed `next`. */
 internal sealed interface PollVerdict {

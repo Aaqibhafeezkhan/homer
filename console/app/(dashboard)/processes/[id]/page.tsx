@@ -32,8 +32,10 @@ import { toArtifactApiPath } from '@/lib/utils/download';
 import { ArtifactPickerDialog } from '@/components/processes/artifact-picker-dialog';
 import { RunnerPanel } from '@/components/processes/runner-panel';
 import { QuestionPanel } from '@/components/questions/question-panel';
+import { RunMessagePanel } from '@/components/messages/run-message-panel';
 import { ExecutionItem } from '@/components/processes/execution-item';
 import { CurrentCommandBox } from '@/components/processes/current-command-box';
+import { FailureReason } from '@/components/processes/failure-reason';
 import { ProcessActions } from '@/components/processes/process-actions';
 import { FlowSection } from '@/components/processes/flow-section';
 import { ActionErrorAlert } from '@/components/processes/action-error-alert';
@@ -48,8 +50,8 @@ import type { LangGraphRunStatus, ProcessInfo, ProcessListResponse } from '@/typ
 // `/processes?parent=<id>`. A root shows the whole Flow section instead.
 const CHILD_RUNS_SHOWN = 20;
 
-// The agent link, cost, parent/root run links, Langfuse trace and tags under
-// the page title.
+// The agent link, group, cost, parent/root run links, Langfuse trace and tags
+// under the page title.
 function ProcessMeta({ process }: { process: ProcessInfo }) {
   return (
     <>
@@ -60,15 +62,16 @@ function ProcessMeta({ process }: { process: ProcessInfo }) {
         >
           {process.agentName}
         </Link>
-        {/* From the cost ledger via the status API, not parsed out of cmd_N.out —
-            so it is still here after the artifacts are purged. */}
+        {process.group && (
+          <span className="text-sm">
+            group <span className="font-medium text-foreground">{process.group}</span>
+          </span>
+        )}
+        {/* The run's cost, from the cost ledger via the status API, so it survives artifact purge. */}
         {!!process.costUsd && (
           <span className="text-sm">
             cost <span className="font-medium text-foreground">{formatCost(process.costUsd)}</span>{' '}
-            <span
-              className="rounded border px-1 text-xs"
-              title={costSourceTitle(process.costSource)}
-            >
+            <span className="rounded border px-1 text-xs" title={costSourceTitle(process.costSource)}>
               {costSourceLabel(process.costSource)}
             </span>
           </span>
@@ -426,9 +429,14 @@ export default function ProcessDetailPage({
         onDownloadClick={() => setDownloadDialogOpen(true)}
       />
 
+      {/* Why a FAILED run never started, when the server stored a reason for it. */}
+      {process.failureReason && <FailureReason reason={process.failureReason} variant="detail" />}
+
       {process.runner && <RunnerPanel runner={process.runner} />}
 
       <QuestionPanel processId={processId} />
+
+      <RunMessagePanel process={process} />
 
       <ActionErrorAlert action="Retry" isError={actions.retryProcess.isError} error={actions.retryProcess.error} />
 

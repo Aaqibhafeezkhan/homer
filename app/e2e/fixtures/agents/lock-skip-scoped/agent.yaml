@@ -1,0 +1,9 @@
+name: lock-skip-scoped
+description: Second concurrent run is skipped (SKIP_CURRENT) and read back by a scoped principal; shares lock-skip's lock key
+lockStrategy:
+  key: e2e-lock-skip
+  onCollision: SKIP_CURRENT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 3

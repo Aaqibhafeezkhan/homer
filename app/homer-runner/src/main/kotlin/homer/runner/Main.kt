@@ -29,9 +29,10 @@ private val logger = LoggerFactory.getLogger("homer.runner")
  * (`ps`, `/proc/<pid>/cmdline`, shell history). CWE-522.
  */
 class HomerRunnerCli(
-    // Seam for tests, so a test run does not leave a drain hook on its own JVM. Declared
-    // before `harden` so a trailing lambda still binds to `harden`.
+    // Seams for tests (a test run must not leave a drain hook on its own JVM). Both are
+    // declared before `harden` so a trailing lambda still binds to `harden`.
     private val addShutdownHook: (Thread) -> Unit = Runtime.getRuntime()::addShutdownHook,
+    private val healthCheck: (Path) -> Unit = RunnerHealth::check,
     // Seam for tests; production uses Dumpability.harden's own defaults.
     private val harden: () -> Dumpability.Result = Dumpability::harden,
 ) : CliktCommand(name = "homer-runner") {
@@ -57,7 +58,7 @@ class HomerRunnerCli(
     val drainTimeout by option(
         "--drain-timeout",
         envvar = "HOMER_RUNNER_DRAIN_TIMEOUT",
-        help = "Seconds to finish in-flight runs on SIGTERM",
+        help = "Seconds to finish in-flight runs on SIGTERM or a failed health check",
     ).long().default(600)
 
     override fun run() {
@@ -73,7 +74,8 @@ class HomerRunnerCli(
                 echo(e.message, err = true)
                 throw ProgramResult(2)
             }
-        val agent = RunnerAgent(client, RunnerOptions(name ?: hostName(), tags, concurrency, root.toAbsolutePath(), drainTimeout.seconds))
+        val options = RunnerOptions(name ?: hostName(), tags, concurrency, root.toAbsolutePath(), drainTimeout.seconds)
+        val agent = RunnerAgent(client, options, healthCheck = healthCheck)
         addShutdownHook(
             Thread {
                 runBlocking { agent.drain() }
@@ -86,6 +88,9 @@ class HomerRunnerCli(
             } catch (e: RegistrationRejectedException) {
                 echo(e.message, err = true)
                 2
+            } catch (e: RunnerUnhealthyException) {
+                echo("homer-runner cannot work on this host: ${e.message}", err = true)
+                3
             } catch (e: Exception) {
                 echo("homer-runner failed: ${e.message}", err = true)
                 1

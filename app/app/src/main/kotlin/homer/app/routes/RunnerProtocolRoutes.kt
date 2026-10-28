@@ -1,6 +1,5 @@
 package homer.app.routes
 
-import homer.app.apiJson
 import homer.app.exceptions.HomerException
 import homer.app.exceptions.QueryParamValidationException
 import homer.app.exceptions.RunnerTransferTimeoutException
@@ -25,6 +24,7 @@ import homer.app.runners.external.RegisterInstanceRequest
 import homer.app.runners.external.RegisterInstanceResponse
 import homer.app.runners.external.RunnerOp
 import homer.app.runners.external.RunnerProtocol
+import homer.app.runners.external.runnerProtocolJson
 import homer.app.runners.queue.ClaimRequest
 import homer.app.runners.queue.RunnerClaimQueue
 import homer.app.runners.queue.TagRoutedSession
@@ -353,11 +353,15 @@ internal fun outputChunkPosition(
     return stream to parsedSeq
 }
 
-/** The body of a `next` poll: a blank one carries no result; a 400 unless `{ completed? }`. */
+/**
+ * The body of a `next` poll: a blank one carries no result; a 400 unless `{ completed? }`.
+ * Decoded with [runnerProtocolJson], so a field an instance newer than this server sends is
+ * ignored rather than costing the run the op result it carried here.
+ */
 internal fun nextRequest(body: String): NextRequest {
     if (body.isBlank()) return NextRequest()
     return try {
-        apiJson.decodeFromString(NextRequest.serializer(), body)
+        runnerProtocolJson.decodeFromString(NextRequest.serializer(), body)
     } catch (_: SerializationException) {
         throw ValidationException("Invalid JSON body: expected { completed? }")
     } catch (_: IllegalArgumentException) {
@@ -488,7 +492,7 @@ private suspend fun <T> ApplicationCall.receiveJsonOr400(
     shape: String,
 ): T =
     try {
-        apiJson.decodeFromString(serializer, receiveText())
+        runnerProtocolJson.decodeFromString(serializer, receiveText())
     } catch (_: IllegalArgumentException) {
         throw QueryParamValidationException("Invalid JSON body: expected $shape")
     }

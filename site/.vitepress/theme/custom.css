@@ -10,8 +10,10 @@
   }
 }
 
-/* A long code name in a table cell may break, so it does not hold its column wider than the
-   prose beside it (prose columns get a minimum width at build time, table-widths.mjs). */
+/* A code name in a table cell keeps its natural width and is never broken mid-word; a table that
+   then outgrows the page scrolls sideways (prose columns get a minimum width at build time,
+   table-widths.mjs). */
 .vp-doc td code {
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
 }

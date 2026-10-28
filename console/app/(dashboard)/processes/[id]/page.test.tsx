@@ -10,6 +10,11 @@ import type { ProcessInfo } from '@/types/homer';
 vi.mock('@/components/questions/question-panel', () => ({
   QuestionPanel: () => null,
 }));
+vi.mock('@/components/messages/run-message-panel', () => ({
+  RunMessagePanel: ({ process }: { process: { id: number; status: string } }) => (
+    <div data-testid="run-message-panel">{`${process.id}:${process.status}`}</div>
+  ),
+}));
 vi.mock('@/components/processes/process-actions', () => ({
   ProcessActions: () => null,
 }));
@@ -134,6 +139,11 @@ describe('ProcessDetailPage execution ordering', () => {
       second.compareDocumentPosition(running) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByText('Running...')).toBeInTheDocument();
+  });
+
+  it('renders the message panel with the run\'s id and status', () => {
+    render(<ProcessDetailPage params={fulfilledParams('7')} />);
+    expect(screen.getByTestId('run-message-panel')).toHaveTextContent(`7:${runningProcess.status}`);
   });
 
   it('shows only the running command box when nothing has finished yet', () => {
@@ -337,6 +347,44 @@ describe('ProcessDetailPage execution ordering', () => {
         'href',
         '/agents/team%2Freviewer%20v2',
       );
+    });
+
+    it('shows the agent group beside the agent link', () => {
+      useProcessMock.mockReturnValue({ data: { ...runningProcess, group: 'Platform' } });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+      expect(screen.getByText('Platform')).toBeInTheDocument();
+    });
+
+    it('renders no group label for an ungrouped agent', () => {
+      useProcessMock.mockReturnValue({ data: { ...runningProcess, group: null } });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+      expect(screen.queryByText('Platform')).not.toBeInTheDocument();
+      expect(screen.queryByText('group')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('failure reason', () => {
+    const REASON =
+      'Lock skip (lockStrategy.onCollision: SKIP_CURRENT): another run still holds this agent’s lock, so this run never started.';
+
+    it('explains why a FAILED run never started', () => {
+      useProcessMock.mockReturnValue({
+        data: { ...runningProcess, status: 'FAILED', executions: [], failureReason: REASON },
+      });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+
+      expect(screen.getByText('Failed before it started')).toBeInTheDocument();
+      // The detail form carries the whole reason, untruncated.
+      expect(screen.getByText(REASON)).toBeInTheDocument();
+    });
+
+    it('shows no failure box for a run the server stored no reason for', () => {
+      useProcessMock.mockReturnValue({
+        data: { ...runningProcess, status: 'FAILED', executions: [], failureReason: null },
+      });
+      render(<ProcessDetailPage params={fulfilledParams('7')} />);
+
+      expect(screen.queryByText('Failed before it started')).not.toBeInTheDocument();
     });
   });
 
