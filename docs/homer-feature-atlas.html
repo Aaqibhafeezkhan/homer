@@ -3195,9 +3195,10 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             <strong>roots view</strong> — one row per flow, showing that flow's run count, total cost and aggregate
             state (running / waiting on a question / failed / finished). Every filter, the sort order and the page offset live in the URL, so a filtered view is
             shareable and survives a reload, and the detail pages' back button returns to it. A Cost column shows each
-            run's spend, and the filter row shows the total for the currently filtered/paginated page. Runner and Purge
-            columns show where each run executes and when its workspace goes; with a Kubernetes runner a banner reports
-            the last orphan-pod sweep.</p>
+            run's spend, and the filter row shows the total for the currently filtered/paginated page. A Duration
+            column shows how long the run has been going, and its Last Command cell carries one dot per command that
+            executed. Status is a single icon, Kill and Retry are icon-only buttons, and the Runner column shows where
+            each run executes; with a Kubernetes runner a banner reports the last orphan-pod sweep.</p>
           <pre><code>/processes?agent=pr-reviewer&amp;status=WORKING,FAILED
 /processes?tag=mr:15,projectId:4711   ·   /processes?parent=12345
 /processes?view=roots</code></pre>

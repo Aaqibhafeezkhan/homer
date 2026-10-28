@@ -17,6 +17,36 @@ describe('StatusBadge', () => {
     expect(getByLabelText('Status: Unknown')).toBeInTheDocument();
   });
 
+  it('renders the text badge by default', () => {
+    const { getByText } = render(<StatusBadge status="FINISHED" />);
+    expect(getByText('Finished')).toBeInTheDocument();
+  });
+
+  describe('icon variant', () => {
+    it('exposes the status label as the accessible name and the tooltip', () => {
+      const { getByLabelText } = render(<StatusBadge status="FINISHED" variant="icon" />);
+      const icon = getByLabelText('Status: Finished');
+      expect(icon).toHaveAttribute('title', 'Finished');
+    });
+
+    it('names each status, so the icon alone is not ambiguous', () => {
+      const { getByLabelText } = render(<StatusBadge status="KILLED" variant="icon" />);
+      expect(getByLabelText('Status: Killed')).toHaveAttribute('title', 'Killed');
+    });
+
+    it('renders no text label', () => {
+      const { container } = render(<StatusBadge status="FINISHED" variant="icon" />);
+      expect(container.textContent).toBe('');
+    });
+
+    it('falls back to Unknown for unrecognized status values', () => {
+      const { getByLabelText } = render(
+        <StatusBadge status={'WAT' as ProcessStatus} variant="icon" />,
+      );
+      expect(getByLabelText('Status: Unknown')).toHaveAttribute('title', 'Unknown');
+    });
+  });
+
   describe('a11y', () => {
     const statuses: ProcessStatus[] = [
       'WORKING',
@@ -30,6 +60,11 @@ describe('StatusBadge', () => {
     for (const status of statuses) {
       it(`has no axe violations for status ${status}`, async () => {
         const { container } = render(<StatusBadge status={status} />);
+        expect(await axe(container)).toHaveNoViolations();
+      });
+
+      it(`has no axe violations for the icon variant of ${status}`, async () => {
+        const { container } = render(<StatusBadge status={status} variant="icon" />);
         expect(await axe(container)).toHaveNoViolations();
       });
     }

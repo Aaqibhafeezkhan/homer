@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import {
+  commandDotStates,
   getLastCommand,
-  getStatusTime,
   isActiveStatus,
   isRetryableStatus,
   parseProcessListParams,
+  runDurationSeconds,
   PROCESS_STATUS_FILTERS,
 } from './process';
-import { formatTimestamp } from './format';
 import type { ProcessInfo, ProcessExecution } from '@/types/homer';
 
 function makeExecution(overrides: Partial<ProcessExecution> = {}): ProcessExecution {
@@ -164,20 +164,160 @@ describe('getLastCommand (property-based)', () => {
   });
 });
 
-describe('getStatusTime', () => {
-  it('formats the most recent history entry timestamp', () => {
+describe('runDurationSeconds', () => {
+  it('measures a finished run from its first history entry to its last', () => {
     const process = makeProcess({
       history: [
         { timestamp: 1_700_000_000, status: 'CREATED' },
-        { timestamp: 1_700_000_500, status: 'FINISHED' },
+        { timestamp: 1_700_000_500, status: 'WORKING' },
+        { timestamp: 1_700_003_600, status: 'FINISHED' },
       ],
     });
-    expect(getStatusTime(process)).toBe(formatTimestamp(1_700_000_500));
+    // `now` is irrelevant once the run has ended.
+    expect(runDurationSeconds(process, 1_800_000_000)).toBe(3_600);
   });
 
-  it("returns '-' when history is empty", () => {
-    const process = makeProcess({ history: [] });
-    expect(getStatusTime(process)).toBe('-');
+  it('measures an active run from its first history entry to now', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      history: [{ timestamp: 1_700_000_000, status: 'WORKING' }],
+    });
+    expect(runDurationSeconds(process, 1_700_000_042)).toBe(42);
+  });
+
+  it('falls back to the last history entry before the clock ticks', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      history: [
+        { timestamp: 1_700_000_000, status: 'CREATED' },
+        { timestamp: 1_700_000_010, status: 'WORKING' },
+      ],
+    });
+    expect(runDurationSeconds(process, 0)).toBe(10);
+  });
+
+  it('reports zero for a run whose history holds a single entry', () => {
+    const process = makeProcess({ history: [{ timestamp: 1_700_000_000, status: 'FINISHED' }] });
+    expect(runDurationSeconds(process, 1_700_000_500)).toBe(0);
+  });
+
+  it('returns null when history is empty', () => {
+    expect(runDurationSeconds(makeProcess({ history: [] }), 1_700_000_500)).toBeNull();
+  });
+
+  it.each([
+    ['a NaN first entry', NaN, 1_700_000_500],
+    ['a NaN last entry', 1_700_000_000, NaN],
+    ['an infinite first entry', Infinity, 1_700_000_500],
+  ])('returns null for %s', (_name, start, last) => {
+    const process = makeProcess({
+      history: [
+        { timestamp: start, status: 'CREATED' },
+        { timestamp: last, status: 'FINISHED' },
+      ],
+    });
+    expect(runDurationSeconds(process, 1_700_000_500)).toBeNull();
+  });
+
+  it('returns null when the clock is behind the run it is timing', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      history: [{ timestamp: 1_700_000_000, status: 'WORKING' }],
+    });
+    expect(runDurationSeconds(process, 1_699_999_000)).toBeNull();
+  });
+});
+
+describe('commandDotStates', () => {
+  it('gives one dot per command that ran, in order', () => {
+    const process = makeProcess({
+      executions: [
+        makeExecution({ label: 'first', resultCode: 0 }),
+        makeExecution({ label: 'boom', resultCode: 2 }),
+      ],
+    });
+    expect(commandDotStates(process)).toEqual([
+      { label: 'first', state: 'ok' },
+      { label: 'boom', state: 'failed' },
+    ]);
+  });
+
+  it('gives no dot to a command its `when:` condition skipped', () => {
+    const process = makeProcess({
+      executions: [makeExecution({ label: 'ran', resultCode: 0 }), skipped('hold')],
+    });
+    expect(commandDotStates(process)).toEqual([{ label: 'ran', state: 'ok' }]);
+  });
+
+  it('appends the in-flight command as running for a WORKING run', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      currentCommand: 'cmd-running',
+      executions: [makeExecution({ label: 'ran', resultCode: 0 })],
+    });
+    expect(commandDotStates(process)).toEqual([
+      { label: 'ran', state: 'ok' },
+      { label: 'cmd-running', state: 'running' },
+    ]);
+  });
+
+  it('adds no running dot to a WORKING run with no current command', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      currentCommand: null,
+      executions: [makeExecution({ label: 'ran', resultCode: 0 })],
+    });
+    expect(commandDotStates(process)).toEqual([{ label: 'ran', state: 'ok' }]);
+  });
+
+  it('returns no dots when nothing ran', () => {
+    expect(commandDotStates(makeProcess({ executions: [] }))).toEqual([]);
+    expect(commandDotStates(makeProcess({ executions: [skipped('a')] }))).toEqual([]);
+  });
+});
+
+describe('runDurationSeconds / commandDotStates (property-based)', () => {
+  const status = fc.constantFrom(...PROCESS_STATUS_FILTERS);
+  const process = fc.record({
+    history: fc.array(
+      fc.record({
+        timestamp: fc.oneof(fc.integer(), fc.constant(NaN), fc.constant(Infinity)),
+        status,
+      }),
+      { maxLength: 8 },
+    ),
+    executions: fc.array(
+      fc.record({
+        label: fc.string({ minLength: 1, maxLength: 12 }),
+        resultCode: fc.integer({ min: -1, max: 5 }),
+        skipped: fc.option(fc.boolean(), { nil: undefined }),
+      }),
+      { maxLength: 8 },
+    ),
+    status,
+    currentCommand: fc.option(fc.string({ minLength: 1, maxLength: 12 }), { nil: null }),
+  });
+  const now = fc.oneof(fc.integer(), fc.constant(0), fc.constant(NaN));
+
+  it('never yields a malformed duration, and only known dot states', () => {
+    fc.assert(
+      fc.property(process, now, (p, n) => {
+        const made = makeProcess({
+          history: p.history,
+          executions: p.executions.map((e) => makeExecution(e)),
+          status: p.status,
+          currentCommand: p.currentCommand,
+        });
+
+        const seconds = runDurationSeconds(made, n);
+        expect(seconds === null || (Number.isFinite(seconds) && seconds >= 0)).toBe(true);
+
+        const dots = commandDotStates(made);
+        expect(dots.every((dot) => ['ok', 'failed', 'running'].includes(dot.state))).toBe(true);
+        const ran = p.executions.filter((e) => !e.skipped).length;
+        expect(dots.length).toBeLessThanOrEqual(ran + 1);
+      }),
+    );
   });
 });
 

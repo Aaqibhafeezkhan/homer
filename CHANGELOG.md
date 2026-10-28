@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Console
+
+- **Changed: a more compact process list** — Each run shows its total duration and a dot per executed command, status is an icon, and the Status Time and Purge columns are gone.
+
 ## [1.38.0] - 2026-10-28
 
 ### Homer
