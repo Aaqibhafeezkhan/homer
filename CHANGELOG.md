@@ -2,9 +2,12 @@
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-10-28
+
 ### Homer
 
 - **Added: `failureReason` on the process status response** — A run that ended `FAILED` before any command started (a claim timeout, a `SKIP_CURRENT` lock skip, a parallel-run cap or a full queue) carries a stored sentence saying which.
+- **Added: run-message API and `server.messages` limits** — `POST` and `GET /api/v1/status/{processId}/messages` send and list a run's inbox, `POST /api/v1/callback/messages/take` hands the run its queued messages (as plain text, Claude-hook JSON or the `check_messages` MCP tool), `message.queued`/`delivered`/`undelivered` stream on `/stream/processes`, and the new `server.messages` config bounds message size and count. See [ADR-0097](docs/adr/0097-per-run-inbox.md).
 
 ### Console
 

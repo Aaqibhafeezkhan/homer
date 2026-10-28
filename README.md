@@ -235,7 +235,7 @@ multi-arch index (`linux/amd64` and `linux/arm64`), signed with cosign and
 carrying SLSA provenance and a CycloneDX SBOM (ADR-0086) — run:
 
 ```bash
-version=1.37.1   # keep in step with HOMER_VERSION in .env
+version=1.38.0   # keep in step with HOMER_VERSION in .env
 for image in ghcr.io/livesport/homer/homer-app ghcr.io/livesport/homer/homer-console; do
   # Resolve the digest first and verify that digest: if the tag were re-pointed
   # after the verify, the digest you pin would no longer be the one you checked.
