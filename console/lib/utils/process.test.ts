@@ -299,7 +299,7 @@ describe('runDurationSeconds / commandDotStates (property-based)', () => {
   });
   const now = fc.oneof(fc.integer(), fc.constant(0), fc.constant(NaN));
 
-  it('never yields a malformed duration, and only known dot states', () => {
+  it('never yields a malformed duration, and the exact dot row', () => {
     fc.assert(
       fc.property(process, now, (p, n) => {
         const made = makeProcess({
@@ -312,10 +312,17 @@ describe('runDurationSeconds / commandDotStates (property-based)', () => {
         const seconds = runDurationSeconds(made, n);
         expect(seconds === null || (Number.isFinite(seconds) && seconds >= 0)).toBe(true);
 
-        const dots = commandDotStates(made);
-        expect(dots.every((dot) => ['ok', 'failed', 'running'].includes(dot.state))).toBe(true);
-        const ran = p.executions.filter((e) => !e.skipped).length;
-        expect(dots.length).toBeLessThanOrEqual(ran + 1);
+        // One dot per execution that ran, in order, plus the in-flight one —
+        // computed here from the raw execution list, independently of the code.
+        const expected = [
+          ...p.executions
+            .filter((e) => !e.skipped)
+            .map((e) => ({ label: e.label, state: e.resultCode === 0 ? 'ok' : 'failed' })),
+          ...(p.status === 'WORKING' && p.currentCommand
+            ? [{ label: p.currentCommand, state: 'running' }]
+            : []),
+        ];
+        expect(commandDotStates(made)).toEqual(expected);
       }),
     );
   });

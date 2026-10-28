@@ -455,6 +455,26 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('ticking clock', () => {
+    it('ticks only while some row is still running', () => {
+      render(<ProcessTable processes={[makeProcess({ status: 'WORKING' })]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(true);
+    });
+
+    it('does not tick for a list of finished runs', () => {
+      render(<ProcessTable processes={[makeProcess(), makeProcess({ id: 43, status: 'FAILED' })]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(false);
+    });
+
+    it('does not tick for an empty list', () => {
+      render(<ProcessTable processes={[]} />);
+
+      expect(useNowMock).toHaveBeenCalledWith(false);
+    });
+  });
+
   describe('removed columns', () => {
     it('drops Status Time and Purge from the table and the card', () => {
       render(<ProcessTable processes={[makeProcess({ purgeAt: 1_700_009_999 })]} />);
@@ -481,21 +501,18 @@ describe('ProcessTable', () => {
       render(<ProcessTable processes={[process]} />);
 
       // Desktop row + mobile card, each carrying one dot per command that ran.
-      const rows = screen.getAllByLabelText('command progress');
-      expect(rows).toHaveLength(2);
-      for (const row of rows) expect(row.querySelectorAll('[title]')).toHaveLength(3);
-
-      expect(screen.getAllByTitle('first: ok')).toHaveLength(2);
-      expect(screen.getAllByTitle('boom: failed')).toHaveLength(2);
-      expect(screen.getAllByTitle('cmd-running: running')).toHaveLength(2);
+      // Each dot names the command and its state for assistive technology.
+      expect(screen.getAllByLabelText('first: ok')).toHaveLength(2);
+      expect(screen.getAllByLabelText('boom: failed')).toHaveLength(2);
+      expect(screen.getAllByLabelText('cmd-running: running')).toHaveLength(2);
       // A command its `when:` condition skipped never ran, so it gets no dot.
-      expect(screen.queryByTitle('hold: failed')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('hold: failed')).not.toBeInTheDocument();
     });
 
     it('renders no dots for a run that has executed nothing', () => {
       render(<ProcessTable processes={[makeProcess({ executions: [] })]} />);
 
-      expect(screen.queryByLabelText('command progress')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('cmd-0: ok')).not.toBeInTheDocument();
     });
   });
 

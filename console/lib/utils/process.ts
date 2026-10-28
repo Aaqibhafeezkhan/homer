@@ -19,28 +19,21 @@ export interface LastCommand {
 }
 
 /**
- * Derives the "last command" status and label shown for a process.
- *
- * A WORKING process with a current command reports that command as
- * `running`; otherwise the most recent execution that actually ran is
- * classified as `success` (resultCode 0) or `failed` — a command skipped
- * by its `when:` condition never ran, so the trailing skips are passed
- * over. A process with no execution that ran reports null status and
- * label.
+ * Derives the "last command" status and label shown for a process: the state
+ * of the run's last dot (`commandDotStates`), remapped to the Last Command
+ * icon's vocabulary. One classification of the executions, so the dots row
+ * and this icon cannot drift.
  */
 export function getLastCommand(process: ProcessInfo): LastCommand {
-  if (process.status === 'WORKING' && process.currentCommand) {
-    return { status: 'running', label: process.currentCommand };
-  }
-
-  const lastRan = (process.executions ?? []).findLast((e) => !e.skipped);
-  if (!lastRan) {
+  const dots = commandDotStates(process);
+  const last = dots[dots.length - 1];
+  if (!last) {
     return { status: null, label: null };
   }
 
   return {
-    status: lastRan.resultCode === 0 ? 'success' : 'failed',
-    label: lastRan.label,
+    status: last.state === 'ok' ? 'success' : last.state,
+    label: last.label,
   };
 }
 
@@ -50,7 +43,10 @@ export function getLastCommand(process: ProcessInfo): LastCommand {
  * missing, malformed or would make the span negative, so the caller renders a
  * placeholder rather than `NaN`. Before `useNow`'s first tick (`now === 0`) an
  * active run falls back to its last history entry, so the first paint is
- * stable instead of showing a run that started in 1970.
+ * stable instead of showing a run that started in 1970. The `now === 0`
+ * sentinel deliberately reuses `useNow`'s convention rather than typing the
+ * clock `number | null`: the hook is the only caller and already holds the
+ * sentinel, so a nullable parameter would push the special case onto it.
  */
 export function runDurationSeconds(process: ProcessInfo, now: number): number | null {
   const history = process.history ?? [];

@@ -71,16 +71,21 @@ function renderLastCommandIcon(status: LastCommandStatus) {
  * One square per command the run executed, coloured like the LangGraph dot
  * rows (`workflow-dots.ts`). The tooltip names the command and its state only
  * — no arguments, which the list never shows either (threat model, Secrets).
+ * Each dot is `role="img"` with the same text as its accessible name: a bare
+ * `title` on a generic span is not announced, and the dots are the only place
+ * the row says which commands ran and how each ended.
  */
 function CommandDots({ process }: { process: ProcessInfo }) {
   const dots = commandDotStates(process);
   if (dots.length === 0) return null;
 
   return (
-    <span className="inline-flex flex-wrap items-center gap-0.5" aria-label="command progress">
+    <span className="inline-flex flex-wrap items-center gap-0.5">
       {dots.map((dot, i) => (
         <span
           key={i}
+          role="img"
+          aria-label={`${dot.label}: ${dot.state}`}
           title={`${dot.label}: ${dot.state}`}
           className={cn(
             'inline-block h-2 w-2 rounded-sm',

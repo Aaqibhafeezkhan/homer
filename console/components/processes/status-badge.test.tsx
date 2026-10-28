@@ -45,6 +45,20 @@ describe('StatusBadge', () => {
       );
       expect(getByLabelText('Status: Unknown')).toHaveAttribute('title', 'Unknown');
     });
+
+    it.each([
+      ['WORKING', 'Status: Working', 'text-blue-500', 'animate-spin'],
+      ['FINISHED', 'Status: Finished', 'text-green-500', null],
+      ['FAILED', 'Status: Failed', 'text-red-500', null],
+      ['KILLED', 'Status: Killed', 'text-orange-500', null],
+      ['CREATED', 'Status: Created', 'text-gray-500', null],
+      ['UNKNOWN', 'Status: Unknown', 'text-gray-400', null],
+    ] as const)('renders the %s icon with its fixed status color', (status, name, color, extra) => {
+      const { getByLabelText } = render(<StatusBadge status={status} variant="icon" />);
+      const svg = getByLabelText(name).querySelector('svg');
+      expect(svg).toHaveClass(color);
+      if (extra) expect(svg).toHaveClass(extra);
+    });
   });
 
   describe('a11y', () => {
