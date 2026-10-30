@@ -403,7 +403,7 @@
 <body class="atlas">
 <header class="masthead">
   <div class="masthead-inner">
-    <div class="eyebrow">Hub for Orchestrating Managed Execution Runs · v1.32.0</div>
+    <div class="eyebrow">Hub for Orchestrating Managed Execution Runs · v1.38.0</div>
     <h1>Homer Feature Atlas</h1>
     <p class="standfirst">Start with the seven-step walkthrough; the rest is every capability Homer ships today —
       command types, inputs, concurrency, human-in-the-loop gates, runners, auth, telemetry, console — each with the
@@ -413,7 +413,7 @@
       <span><b>4</b> execution backends</span>
       <span><b>5</b> auth schemes</span>
       <span><b>4</b> SSE streams</span>
-      <span><b>82</b> ADRs</span>
+      <span><b>98</b> ADRs</span>
     </div>
   </div>
 </header>
@@ -1604,7 +1604,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <article class="f">
           <h3>Parallel-run cap <span class="where">agent.yaml</span></h3>
           <p>Caps concurrent runs of one agent, then either queues or rejects the surplus. A rejected run still gets its
-            <code>200 {processId}</code>; the run itself ends <code>FAILED</code>.</p>
+            <code>200 {processId}</code>; the run itself ends <code>FAILED</code>. The bundled
+            <code>example/agents/limits/</code> agent is the worked example: one slow script under a cap, a bounded
+            queue and a cooldown.</p>
           <pre><code>maxParallelRuns: 5
 onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pre>
         </article>
@@ -3038,7 +3040,10 @@ langfuse:
             matchable via <code>?tag=</code> for that run, so the count cannot confirm a guessed secret. Tag-filtered results are bounded at 10 000 matching rows; <code>total</code> reflects only that prefix in the order specified by <code>?order=</code>, default descending. Values match
             <code>^[A-Za-z0-9._-]{1,128}$</code> (no <code>/</code>, so tag path-shaped subjects by numeric id);
             cardinality is unbounded, so tag ticket ids and numeric ids, never free text.
-            (<code>telemetry.traceTags</code> is the deprecated alias for <code>tags.fromInputs</code>.)</p>
+            (<code>telemetry.traceTags</code> is the deprecated alias for <code>tags.fromInputs</code>.) The bundled
+            <code>example/agents/tagged-run/</code> agent is the worked example: <code>projectId</code> and
+            <code>mr</code> resolved from its inputs, and <code>decision</code> declared mid-run with
+            <code>homer-tag</code>.</p>
           <pre><code>tags:
   fromInputs: [projectId, mr]  # → projectId:4711, mr:4211
   runtime: [decision]          # homer-tag decision:approved
@@ -3751,7 +3756,7 @@ cd console &amp;&amp; npm install &amp;&amp; npm run build</code></pre>
 </div>
 
 <footer>
-  Homer 1.32.0 · compiled from README, AGENT.md, SERVER.md, DOCKER.md, console/README.md and the ADR set
+  Homer 1.38.0 · compiled from README, AGENT.md, SERVER.md, DOCKER.md, console/README.md and the ADR set
 </footer>
 
 <script>
