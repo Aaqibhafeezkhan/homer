@@ -2900,6 +2900,17 @@ sessionSecretPrevious: "@SYSENV:OLD_SECRET"</code></pre>
         </article>
 
         <article class="f">
+          <h3>CORS origins <span class="where">server config</span></h3>
+          <p>Every entry must be a bare <code>http(s)://host[:port]</code> origin: a path, query, fragment, credentials
+            or port 0 fails startup, and so does an entry that does not resolve to an origin. An entry may carry a
+            <code>@SYSENV:</code> placeholder, resolved at startup like an auth secret, so the console's published port
+            can come from the environment — and unlike <code>globalEnv</code>, a placeholder here does not mark the
+            value secret. An empty list allows any host but never reflects credentials; pinned origins are what enable
+            credentialed CORS.</p>
+          <pre><code>corsAllowedOrigins: ["http://localhost:@SYSENV:FRONTEND_PORT"]</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Rate limiting <span class="where">server config</span></h3>
           <p>Layered buckets: a global ceiling, a per-identity bucket on secured routes, a stricter per-IP one on login
             under an aggregate login ceiling, and one per runner domain. Login requests, and runner requests carrying a
@@ -3195,6 +3206,15 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
         </article>
 
         <article class="f">
+          <h3>API error states <span class="where">console</span></h3>
+          <p>A page whose data query fails says why instead of loading forever: the API rejected the request (sign in,
+            or check the console and backend auth configuration), cannot be reached — down, or blocked because
+            <code>corsAllowedOrigins</code> does not list this console's origin — did not answer in time, sent a
+            response the console cannot read, or has no such process. The process list, the process detail and the
+            questions pages carry the state.</p>
+        </article>
+
+        <article class="f">
           <h3>Process list filtering <span class="where">console</span></h3>
           <p>Narrow the run list by a searchable agent combobox, by status chips, by subject tag (click a tag chip on any
             run; several chips AND, each shows as a removable badge) or to the children of one run. The list defaults to
@@ -3216,7 +3236,8 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
           <h3>Process detail <span class="where">console</span></h3>
           <p>Status timeline, executions in run order with exit icons and durations, stdout/stderr viewers with a Live
             badge, artifact downloads, and Kill / Retry actions. A run that failed before it started shows its stored
-            reason beside the <code>FAILED</code> status. The header shows the run's subject tags as chips and its
+            reason in a <strong>Failed before it started</strong> panel below the header. The header shows the run's
+            subject tags as chips and its
             cost — taken from the ledger through the status API, so it is still there after the artifacts are purged —
             labelled <code>proxy</code>, <code>CLI estimate</code> or <code>mixed</code> by
             where the figure came from; each Claude or Codex step shows its own cost, source (<code>not reported</code>
