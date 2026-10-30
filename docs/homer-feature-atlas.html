@@ -836,7 +836,9 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
             arrival order within one release drain, when the mode goes off (rapid re-toggles overlap drains, so the
             order across drains is not guaranteed). Runs already <code>WORKING</code> finish untouched, and a schedule
             missed during the window is not replayed. A start past the queue's size is shed with <code>429</code>, one
-            past its wait with <code>503</code>; neither creates a run. The flag survives a restart.</p>
+            past its wait with <code>503</code>; neither creates a run. The flag survives a restart. The console reads
+            it from <code>GET /api/v1/health</code> and shows a red alert bar across every dashboard page, so a run
+            that seems to do nothing has an explanation on screen.</p>
           <pre><code>curl -X POST "$HOMER/api/v1/maintenance" -d '{"enabled": true}'
 # {"enabled":true,"since":1761…,"queued":0}   GET reads it back, admin only</code></pre>
         </article>
@@ -3203,7 +3205,8 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             run's spend, and the filter row shows the total for the currently filtered/paginated page. A Duration
             column shows how long the run has been going, and its Last Command cell carries one dot per command that
             executed. Status is a single icon, Kill and Retry are icon-only buttons, and the Runner column shows where
-            each run executes; with a Kubernetes runner a banner reports the last orphan-pod sweep.</p>
+            each run executes; a run that failed before it started shows its stored reason beside the icon, and with a
+            Kubernetes runner a banner reports the last orphan-pod sweep.</p>
           <pre><code>/processes?agent=pr-reviewer&amp;status=WORKING,FAILED
 /processes?tag=mr:15,projectId:4711   ·   /processes?parent=12345
 /processes?view=roots</code></pre>
@@ -3212,7 +3215,8 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
         <article class="f">
           <h3>Process detail <span class="where">console</span></h3>
           <p>Status timeline, executions in run order with exit icons and durations, stdout/stderr viewers with a Live
-            badge, artifact downloads, and Kill / Retry actions. The header shows the run's subject tags as chips and its
+            badge, artifact downloads, and Kill / Retry actions. A run that failed before it started shows its stored
+            reason beside the <code>FAILED</code> status. The header shows the run's subject tags as chips and its
             cost — taken from the ledger through the status API, so it is still there after the artifacts are purged —
             labelled <code>proxy</code>, <code>CLI estimate</code> or <code>mixed</code> by
             where the figure came from; each Claude or Codex step shows its own cost, source (<code>not reported</code>
@@ -3477,7 +3481,9 @@ CONSOLE_THEME_MODES=light:corp-light,dark:corp-dark</code></pre>
         <article class="f">
           <h3>Docker stack <span class="where">docker</span></h3>
           <p>Backend plus console in one compose file, which pulls the published release images (<code>HOMER_VERSION</code>
-            picks the release tag; each image ships for <code>linux/amd64</code> and <code>linux/arm64</code>); development, production and build-from-source overlays stack on it, and the e2e
+            picks the release tag; each image ships for <code>linux/amd64</code> and <code>linux/arm64</code>; each release
+            also publishes a <code>-slim</code> server image without the agent CLIs — Claude Code, Codex, Node.js, git —
+            for a deployment whose agents run on pull runners, ADR-0094); development, production and build-from-source overlays stack on it, and the e2e
             suite is its own standalone compose stack. The dev overlay starts no debug listener: JDWP is opt-in, and the
             debug overlay binds the container's loopback and publishes nothing (attach through a tunnel); build with
             <code>HOMER_DEBUG=1</code> (a build argument) to bundle <code>agentdebug</code>.</p>
