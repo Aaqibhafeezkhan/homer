@@ -55,12 +55,8 @@ class ShowCommandsCommand(
                 listOf("shell: ${cmd.shell}  stdin: $lines lines")
             }
 
-            is Command.Claude -> {
-                listOf("cmd: ${cmd.cmd} --max-turns ${cmd.options.maxTurns} --output-format json --print --verbose")
-            }
-
-            is Command.Codex -> {
-                listOf("cmd: ${cmd.cmd} exec --json --color never -")
+            is Command.LlmCommand -> {
+                listOf("cmd: ${llmArgvLine(cmd)}")
             }
 
             is Command.RunAgent -> {
@@ -74,6 +70,14 @@ class ShowCommandsCommand(
             is Command.RunnerCmd -> {
                 listOf("runner: ${cmd.runner}  [SKIPPED in debug mode]")
             }
+        }
+
+    /** The argv an LLM harness command runs, as its own adapter builds it. */
+    private fun llmArgvLine(cmd: Command.LlmCommand): String =
+        when (cmd) {
+            is Command.Claude -> "${cmd.cmd} --max-turns ${cmd.options.maxTurns} --output-format json --print --verbose"
+            is Command.Codex -> "${cmd.cmd} exec --json --color never -"
+            is Command.Opencode -> "${cmd.cmd} run --format json"
         }
 
     private fun printWhenLine(cmd: Command) {

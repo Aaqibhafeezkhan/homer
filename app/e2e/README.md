@@ -20,10 +20,10 @@ always-on "does the production Dockerfile still build" gate.
 - **No sleep-and-assert.** Async state is always polled (`Awaits.awaitStatus`,
   30 s timeout / 250 ms interval); SSE assertions subscribe **before**
   triggering (`SseCollector`).
-- **Excluded on purpose:** Claude, Codex and LangGraph commands — the runner
-  image ships all three toolchains (Claude CLI, Codex CLI, `homer_langgraph`),
-  but running them
-  needs LLM credentials at run time, which the suite doesn't provision — and
+- **Excluded on purpose:** Claude, Codex, opencode and LangGraph commands — the
+  runner image ships all four toolchains (Claude CLI, Codex CLI, opencode CLI,
+  `homer_langgraph`), but running them needs LLM credentials at run time, which
+  the suite doesn't provision — and
   cron (1-minute granularity makes it flaky). The `/mcp` endpoint itself *is*
   covered — it is plain HTTP and needs no Claude. The read-only
   `GET /api/v1/agents/{name}/langgraph` inspect endpoint also needs no

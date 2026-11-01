@@ -20,6 +20,8 @@ services:
         HOMER_VERSION: ${APP_VERSION:-dev}
         HOMER_DEBUG: ${HOMER_DEBUG:-0}
         CLAUDE_CODE_VERSION: ${CLAUDE_CODE_VERSION:-latest}
+        CODEX_VERSION: ${CODEX_VERSION:-0.166.0}
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-1.19.5}
     image: homer-backend:${APP_VERSION:-dev}
 
   frontend:

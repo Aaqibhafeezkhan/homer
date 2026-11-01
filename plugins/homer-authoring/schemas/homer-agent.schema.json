@@ -239,6 +239,7 @@
         { "$ref": "#/$defs/Script" },
         { "$ref": "#/$defs/Claude" },
         { "$ref": "#/$defs/Codex" },
+        { "$ref": "#/$defs/Opencode" },
         { "$ref": "#/$defs/RunAgent" },
         { "$ref": "#/$defs/LangGraph" },
         { "$ref": "#/$defs/RunnerCmd" }
@@ -362,7 +363,7 @@
     "LlmRetry": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Retry policy for an LLM command (claude or codex). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException). Other exceptions propagate immediately.",
+      "description": "Retry policy for an LLM command (claude, codex or opencode). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException). Other exceptions propagate immediately.",
       "properties": {
         "attempts": {
           "type": "integer",
@@ -388,7 +389,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["model", "when"],
-      "description": "One escalation tier of an LLM command (claude or codex): rerun the same prompt on model when the when predicate, evaluated after the previous tier with HMR_LLM_OUTCOME and HMR_LLM_EXIT_CODE set, is true. See ADR-0079.",
+      "description": "One escalation tier of an LLM command (claude, codex or opencode): rerun the same prompt on model when the when predicate, evaluated after the previous tier with HMR_LLM_OUTCOME and HMR_LLM_EXIT_CODE set, is true. See ADR-0079.",
       "properties": {
         "model": { "type": "string", "minLength": 1, "description": "Model for this tier. {{VAR}} is substituted." },
         "options": { "type": "array", "items": { "type": "string" }, "description": "Replaces the step's raw CLI options list for this tier (e.g. [] to drop --continue). Absent: the step's list is kept." },
@@ -459,6 +460,53 @@
           "type": ["array", "null"],
           "items": { "type": "string" },
           "description": "Repeated `--config key=value` overrides (TOML values)."
+        },
+        "options": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Raw CLI arguments appended before the hardcoded tail."
+        }
+      }
+    },
+    "Opencode": {
+      "type": "object",
+      "required": ["prompt"],
+      "properties": {
+        "type": { "const": "opencode" },
+        "cmd": { "type": "string", "default": "opencode", "description": "CLI binary (argv[0]). {{VAR}} is substituted; referencing an input envName fails the agent at load." },
+        "prompt": { "$ref": "#/$defs/LlmPrompt" },
+        "options": { "$ref": "#/$defs/OpencodeCmdOptions" },
+        "retry": { "$ref": "#/$defs/LlmRetry" },
+        "label": { "type": "string" },
+        "timeout": { "type": "integer", "minimum": 0 },
+        "continueIfFail": { "type": "boolean" },
+        "finishExitCode": { "type": ["integer", "null"] },
+        "resultEnvParam": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResultEnvParam" }
+        },
+        "when": { "$ref": "#/$defs/When" },
+        "escalate": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/LlmEscalation" }, "description": "Stronger models to rerun the step on when a tier's when predicate judges the previous outcome bad. Empty or absent: the step runs once. See ADR-0079." }
+      },
+      "additionalProperties": false
+    },
+    "OpencodeCmdOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Options for the opencode command, mapped 1:1 to `opencode run` CLI flags. The executor always appends `--format json` and passes the prompt via stdin.",
+      "properties": {
+        "model": { "type": ["string", "null"], "description": "Model in opencode's provider/model form (--model)." },
+        "agent": { "type": ["string", "null"], "description": "Agent to run (--agent)." },
+        "dir": { "type": ["string", "null"], "description": "Directory to start opencode in (--dir)." },
+        "file": {
+          "type": ["array", "null"],
+          "items": { "type": "string" },
+          "description": "Repeated `--file` attachments."
+        },
+        "auto": {
+          "type": "boolean",
+          "default": false,
+          "description": "Security: opt-in. Auto-approves every permission the opencode configuration does not explicitly deny; only safe in isolated/sandboxed environments."
         },
         "options": {
           "type": ["array", "null"],

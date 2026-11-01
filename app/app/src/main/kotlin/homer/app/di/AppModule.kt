@@ -13,6 +13,7 @@ import homer.app.executors.RunAgentExecutor
 import homer.app.executors.RunnerCmdExecutor
 import homer.app.executors.llm.ClaudeHarness
 import homer.app.executors.llm.CodexHarness
+import homer.app.executors.llm.OpencodeHarness
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.DefaultLangfuseClient
 import homer.app.infra.DefaultTextCompiler
@@ -479,7 +480,7 @@ val appModule =
             LlmEventStreamService(
                 processManager = get(),
                 // Translation reads no adapter config, so bare adapters suffice here.
-                harnesses = listOf(ClaudeHarness(), CodexHarness()).associateBy { it.id },
+                harnesses = listOf(ClaudeHarness(), CodexHarness(), OpencodeHarness()).associateBy { it.id },
                 logger = get { parametersOf("homer.app.services.LlmEventStreamService") },
                 pollIntervalMs =
                     get<AppConfig>()

@@ -69,6 +69,7 @@ internal enum class Layer {
                         "LlmHarnessExecutor",
                         "ClaudeHarness",
                         "CodexHarness",
+                        "OpencodeHarness",
                         "RunAgentExecutor",
                         "LangGraphExecutor",
                         "RunnerCmdExecutor",

@@ -5,6 +5,7 @@ import homer.app.executors.llm.CodexHarness
 import homer.app.executors.llm.CostRecorder
 import homer.app.executors.llm.LlmHarnessExecutor
 import homer.app.executors.llm.LlmStepTelemetry
+import homer.app.executors.llm.OpencodeHarness
 import homer.app.infra.FileOperations
 import homer.app.infra.LangfuseClient
 import homer.app.infra.LlmCostResolver
@@ -51,6 +52,16 @@ class CommandExecutorFactory(
             settlementScope,
             llmCostResolver = llmCostResolver,
         )
+    private val opencodeExecutor =
+        LlmHarnessExecutor(
+            OpencodeHarness(),
+            langfuseClient,
+            llmTelemetryService,
+            stepRecords,
+            costRecorder,
+            settlementScope,
+            llmCostResolver = llmCostResolver,
+        )
 
     /**
      * Get executor for a specific command type
@@ -60,13 +71,20 @@ class CommandExecutorFactory(
             when (command) {
                 is Command.Cmd -> cmdExecutor
                 is Command.Script -> scriptExecutor
-                is Command.Claude -> claudeExecutor
-                is Command.Codex -> codexExecutor
                 is Command.RunAgent -> runAgentExecutor
                 is Command.LangGraph -> langGraphExecutor
                 is Command.RunnerCmd -> runnerCmdExecutor
+                is Command.LlmCommand -> llmExecutor(command)
             }
         @Suppress("UNCHECKED_CAST")
         return executor as CommandExecutor<T>
     }
+
+    /** One executor per harness, all of them [LlmHarnessExecutor] over a different adapter (ADR-0070). */
+    private fun llmExecutor(command: Command.LlmCommand): CommandExecutor<*> =
+        when (command) {
+            is Command.Claude -> claudeExecutor
+            is Command.Codex -> codexExecutor
+            is Command.Opencode -> opencodeExecutor
+        }
 }

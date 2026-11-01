@@ -27,7 +27,7 @@ auto-loads when you read files in its package (root §9 lists each as canonical 
 HTTP API     Application.kt + its configureXxx files + routes (Ktor + bearer auth)
 Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
 Execution    ProcessExecutor · AgentExecutor · CommandExecutorFactory · RunnerRegistry · RunnerClaimQueue · ExternalRunnerDomain · ExternalRunnerInstance · RunnerStatusReport · LockManager · ParallelRunsManager
-Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
+Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness · OpencodeHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
 Infra        ShellExecutor · Workspace · FileOperations · ResultToEnvMapper · SysEnvResolver · TelemetryService · LangfuseClient
 ```
 
@@ -88,7 +88,7 @@ Test files mirror the production package layout: `services/FooService.kt` gets
 JUnit test (`checkAll` in `runTest`, no Kotest engine), e.g. `models/CmdArgsTokenizerPropertyTest.kt`.
 Fixtures are inline `"""…"""` strings, except `claude/`
 (real CLI captures named for the CLI's `major.minor`, scrubbed to `test-*`) and `llm/<id>/` (one
-directory per harness; Codex written from the documented `--json` schema, ADR-0070). A CLI bump is
+directory per harness; Codex and opencode written from their documented JSON schemas, ADR-0070). A CLI bump is
 verified by adding a capture, never by editing an inline string —
 [ADR-0057](../docs/adr/0057-claude-output-modelled-only-where-read.md).
 
@@ -362,7 +362,7 @@ create `app.log` or `api.log`.
 ## Adding a new command type
 
 1. Add a subclass of the sealed `Command` class in
-   [`models/Agent.kt`](app/src/main/kotlin/homer/app/models/Agent.kt) with the appropriate kaml tag
+   [`models/Command.kt`](app/src/main/kotlin/homer/app/models/Command.kt) with the appropriate kaml tag
    (e.g. `@SerialName("myType")`).
 2. Implement the executor in `executors/MyCmdExecutor.kt` satisfying the `CommandExecutor` contract,
    and register it in `CommandExecutorFactory`; add a test at `executors/MyCmdExecutorTest.kt`.
@@ -378,7 +378,7 @@ create `app.log` or `api.log`.
 ## Adding a new field to `Agent` or a `Command` subclass
 
 1. Add the field to the relevant model in
-   [`models/Agent.kt`](app/src/main/kotlin/homer/app/models/Agent.kt) — the LLM commands' option
+   [`models/Command.kt`](app/src/main/kotlin/homer/app/models/Command.kt) — the LLM commands' option
    types (`ClaudeCmdOptions`, `CodexCmdOptions`, `LlmRetry`, …) are in `models/LlmCommandOptions.kt`,
    `Param` in `models/Param.kt` — with the same default it should serialize to (kotlinx.serialization
    omits defaults unless `encodeDefaults = true`).

@@ -9,6 +9,8 @@
 ### Homer
 
 - **Added: a `limits` example agent** — Demonstrates `maxParallelRuns`, `onMaxParallelRuns`, `maxQueuedRuns` and `cooldown` on a slow script.
+- **Added: `!<opencode>` command type** — Runs the opencode CLI as a third LLM harness, with the same retry, escalation, cost accounting and conversation view. See [ADR-0070](docs/adr/0070-llm-harness-adapter-boundary.md).
+- **Changed: the runner image pins the Codex and opencode CLI versions** — A build installs a chosen release of each CLI instead of whatever npm published that day; the `CODEX_VERSION` and `OPENCODE_VERSION` build arguments override the pins.
 
 ## [1.38.0] - 2026-10-28
 

@@ -159,7 +159,7 @@ a light/dark pair is configured).
 4. Click on any process row to view detailed information
 5. Use pagination controls to navigate through process pages
 
-Each row shows a **Cost** column with the run's LLM harness (Claude/Codex) spend (a dash
+Each row shows a **Cost** column with the run's LLM harness (Claude/Codex/opencode) spend (a dash
 when it has not spent anything); the filter row shows a **Total cost**
 figure summing the currently filtered/paginated page — not every run
 matching the filter across other pages.
@@ -398,7 +398,7 @@ detail page:
 
 ### Live LLM output
 
-For a `!<claude>` or `!<codex>` step, the "Show output" toggle on the
+For a `!<claude>`, `!<codex>` or `!<opencode>` step, the "Show output" toggle on the
 live-command box (or clicking a finished step's execution entry to
 expand it) expands an inline Conversation view built from the server's
 canonical event stream (`GET .../llm-events`) — live while the command
@@ -936,7 +936,7 @@ which records the sandboxed-iframe option to revisit first.
 | `GET /api/v1/auth/me` | Probe the cookie session and return `{ username, role, grants }` |
 | `GET /api/v1/artifacts` | Fetch or download artifact files from process executions |
 | `GET /api/v1/artifacts/list` | List artifact files for a process |
-| `GET /api/v1/costs` | Rolling-window LLM harness (Claude/Codex) spend snapshot (used by `/costs` page) |
+| `GET /api/v1/costs` | Rolling-window LLM harness (Claude/Codex/opencode) spend snapshot (used by `/costs` page) |
 | `GET /api/v1/costs/monthly` | Persistent per-agent costs for a UTC month (used by `/costs` page) |
 | `GET /api/v1/costs/totals` | Persistent all-time per-agent costs (used by `/costs` page) |
 | `GET /api/v1/costs/by-tag/{key}` | Spend broken down by the values of one configured subject-tag key (used by the Cost by tag card on `/costs`) |
@@ -951,7 +951,7 @@ which records the sandboxed-iframe option to revisit first.
 | `DELETE /api/v1/dispatches/:id` | Cancel an open dispatch-bound question |
 | `GET /api/v1/stream/processes` | SSE: `process.status`, `process.cmd`, `question.asked`, `question.answered`, `question.expired`, `message.queued`, `message.delivered`, `message.undelivered` |
 | `GET /api/v1/stream/processes/:id/logs` | SSE: `log.chunk` / `log.end` log tail for one command (replays from byte 0) |
-| `GET /api/v1/stream/processes/:id/llm-events` | SSE: `llm.event` / `llm.end` canonical events of one Claude or Codex command, for the Conversation view (replays from byte 0) |
+| `GET /api/v1/stream/processes/:id/llm-events` | SSE: `llm.event` / `llm.end` canonical events of one Claude, Codex or opencode command, for the Conversation view (replays from byte 0) |
 | `GET /api/v1/stream/agents` | SSE: `agent.reload` |
 
 ## Technology Stack

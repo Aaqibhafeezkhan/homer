@@ -10,7 +10,7 @@ export interface ProcessHistoryEntry {
 export type CostSource = 'cli' | 'session' | 'none';
 export type ProcessCostSource = CostSource | 'mixed';
 
-// How one LLM harness command's (Claude or Codex) spend was priced. Null for non-LLM commands.
+// How one LLM harness command's (Claude, Codex or opencode) spend was priced. Null for non-LLM commands.
 export interface LlmAccounting {
   sessionId: string | null;
   costUsd: number;
@@ -31,7 +31,7 @@ export interface ProcessExecution {
   errMsg: string | null;
   skipped?: boolean;
   llmAccounting?: LlmAccounting | null;
-  // Command tag (`cmd`, `script`, `claude`, `codex`, `agent`, `langgraph`, `runnerCmd`); "" for older rows.
+  // Command tag (`cmd`, `script`, `claude`, `codex`, `opencode`, `agent`, `langgraph`, `runnerCmd`); "" for older rows.
   kind?: string;
 }
 
@@ -604,7 +604,7 @@ export type LlmEvent = LlmSessionStart | LlmAssistantMessage | LlmToolCall | Llm
 export interface LlmStreamFrame { processId: number; cmdIndex: number; attemptIndex: number; event: LlmEvent }
 
 /** Command kinds whose stdout the server can translate into LlmEvents. */
-const LLM_KINDS = ['claude', 'codex'] as const;
+const LLM_KINDS = ['claude', 'codex', 'opencode'] as const;
 export function isLlmKind(kind: string | null | undefined): boolean {
   return (LLM_KINDS as readonly string[]).includes(kind ?? '');
 }

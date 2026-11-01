@@ -4,6 +4,8 @@ import homer.app.executors.ClaudeArgvBuilder
 import homer.app.executors.llm.ClaudeHarness
 import homer.app.executors.llm.CodexArgvBuilder
 import homer.app.executors.llm.CodexHarness
+import homer.app.executors.llm.OpencodeArgvBuilder
+import homer.app.executors.llm.OpencodeHarness
 import homer.app.infra.SecretRedactor
 import homer.app.models.Command
 import homer.app.models.LlmEscalation
@@ -14,6 +16,8 @@ object DryRunPrinter {
     private val codexArgvBuilder = CodexArgvBuilder()
     private val claudeHarness = ClaudeHarness()
     private val codexHarness = CodexHarness()
+    private val opencodeArgvBuilder = OpencodeArgvBuilder()
+    private val opencodeHarness = OpencodeHarness()
 
     fun print(
         command: Command,
@@ -39,20 +43,8 @@ object DryRunPrinter {
                 }
             }
 
-            is Command.Claude -> {
-                // Reuse the executor's real argv builder so dry-run never drifts
-                // from what actually runs (same flags, same {{VAR}} resolution).
-                out("[DRY ] cmd: ${claudeArgvBuilder.build(command.cmd, command.options, env).joinToString(" ")}")
-                printPrompt(command.prompt, out)
-                printTiers(command.escalate, command, claudeHarness, env, out)
-            }
-
-            is Command.Codex -> {
-                // Reuse the harness's real argv builder so dry-run never drifts
-                // from what actually runs (same flags, same {{VAR}} resolution).
-                out("[DRY ] cmd: ${codexArgvBuilder.build(command.cmd, command.options, env).joinToString(" ")}")
-                printPrompt(command.prompt, out)
-                printTiers(command.escalate, command, codexHarness, env, out)
+            is Command.LlmCommand -> {
+                printLlm(command, env, out)
             }
 
             is Command.RunAgent -> {
@@ -65,6 +57,38 @@ object DryRunPrinter {
 
             is Command.RunnerCmd -> {
                 out("[DRY ] runner: ${command.runner}  [SKIPPED]")
+            }
+        }
+    }
+
+    /**
+     * One LLM harness step: the argv its own adapter builds, its stdin, and one
+     * line per escalation tier. Every branch reuses the executor's real argv
+     * builder, so dry-run never drifts from what actually runs (same flags, same
+     * `{{VAR}}` resolution).
+     */
+    private fun printLlm(
+        command: Command.LlmCommand,
+        env: Map<String, String>,
+        out: (String) -> Unit,
+    ) {
+        when (command) {
+            is Command.Claude -> {
+                out("[DRY ] cmd: ${claudeArgvBuilder.build(command.cmd, command.options, env).joinToString(" ")}")
+                printPrompt(command.prompt, out)
+                printTiers(command.escalate, command, claudeHarness, env, out)
+            }
+
+            is Command.Codex -> {
+                out("[DRY ] cmd: ${codexArgvBuilder.build(command.cmd, command.options, env).joinToString(" ")}")
+                printPrompt(command.prompt, out)
+                printTiers(command.escalate, command, codexHarness, env, out)
+            }
+
+            is Command.Opencode -> {
+                out("[DRY ] cmd: ${opencodeArgvBuilder.build(command.cmd, command.options, env).joinToString(" ")}")
+                printPrompt(command.prompt, out)
+                printTiers(command.escalate, command, opencodeHarness, env, out)
             }
         }
     }

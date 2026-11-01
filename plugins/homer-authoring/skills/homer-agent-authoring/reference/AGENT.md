@@ -228,9 +228,9 @@ dispatch. The reasoning and the tradeoffs are in
 
 ## Command Types
 
-Homer supports seven command types: `Cmd` (shell command), `Script` (shell script), `Claude` (Claude AI execution), `Codex` (OpenAI Codex CLI execution), `RunAgent` (invoke another agent), `LangGraph` (LangGraph runtime launcher), and `RunnerCmd` (run a command on another runner).
+Homer supports eight command types: `Cmd` (shell command), `Script` (shell script), `Claude` (Claude AI execution), `Codex` (OpenAI Codex CLI execution), `Opencode` (opencode CLI execution), `RunAgent` (invoke another agent), `LangGraph` (LangGraph runtime launcher), and `RunnerCmd` (run a command on another runner).
 
-> **No `{{VAR}}` templating in `!<cmd>` `cmd` / `!<script>` `content`.** Both are passed to the process verbatim. Homer substitutes `{{VAR}}` only in Claude/Codex prompts, options and `cmd` (the CLI binary), `!<agent>` `agentName`, workspace paths, lock keys and artifact names. Commands read variables from the environment: in a `!<script>` use `"$VAR"`; a `!<cmd>` runs without a shell, so it cannot expand variables — use a `!<script>` instead.
+> **No `{{VAR}}` templating in `!<cmd>` `cmd` / `!<script>` `content`.** Both are passed to the process verbatim. Homer substitutes `{{VAR}}` only in Claude/Codex/opencode prompts, options and `cmd` (the CLI binary), `!<agent>` `agentName`, workspace paths, lock keys and artifact names. Commands read variables from the environment: in a `!<script>` use `"$VAR"`; a `!<cmd>` runs without a shell, so it cannot expand variables — use a `!<script>` instead.
 
 ### Command.Cmd - Shell Command Execution
 
@@ -828,6 +828,127 @@ As with Claude, a filter path returns a JSON array of matches — take the last
 element when the run produced several agent messages. Alternatively set
 `options.outputLastMessage` to a file path and read the bare text from there in
 a follow-up `script` command.
+
+### Command.Opencode - opencode CLI Execution
+
+Executes the opencode CLI (`opencode run`) with the same interface shape as
+`Command.Claude` and `Command.Codex`: the prompt (inline or Langfuse) is passed
+via stdin, option values support `{{VAR}}` placeholders, and the same `retry`
+policy applies. The executor always appends `--format json`, so opencode writes
+its events to stdout as JSONL.
+
+```yaml
+commands:
+  - !<opencode>
+    cmd: "opencode"
+    prompt: !<prompt>
+      prompt: "Summarize the repository at {{HMR_WORK_DIR}}/repo"
+    options:
+      model: anthropic/claude-sonnet-4-5
+      agent: build
+      dir: "repo"
+    timeout: 600
+    continueIfFail: false
+    resultEnvParam:
+      - src: STD_OUT
+        envName: OPENCODE_ANSWER
+        transformer: !<jsonPath>
+          path: "$[?(@.type=='text')].part.text"
+```
+
+<details>
+<summary>JSON format</summary>
+
+```json
+{
+  "commands": [
+    {
+      "type": "opencode",
+      "cmd": "opencode",
+      "prompt": {
+        "type": "prompt",
+        "prompt": "Summarize the repository at {{HMR_WORK_DIR}}/repo"
+      },
+      "options": {
+        "model": "anthropic/claude-sonnet-4-5",
+        "agent": "build",
+        "dir": "repo"
+      },
+      "timeout": 600,
+      "continueIfFail": false,
+      "resultEnvParam": [
+        {
+          "src": "STD_OUT",
+          "envName": "OPENCODE_ANSWER",
+          "transformer": {
+            "type": "jsonPath",
+            "path": "$[?(@.type=='text')].part.text"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+</details>
+
+#### Opencode Fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `cmd` | `String` | No | `"opencode"` | opencode CLI command. `{{VAR}}` is substituted; a reference to an input's `envName` fails the agent at load |
+| `prompt` | `LlmPrompt` | Yes | - | Prompt configuration (inline or Langfuse), same type as `Command.Claude` |
+| `options` | `OpencodeCmdOptions` | No | `{}` | opencode CLI options |
+| `retry` | `LlmRetry` | No | `null` | Retry policy, same semantics as `Command.Claude` |
+| `label` | `String` | No | `"opencode"` | Human-readable label shown in the console execution list |
+| `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
+| `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract opencode outputs to environment variables |
+| `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
+| `escalate` | `List<LlmEscalation>` | No | `[]` | Escalation tiers, same semantics as `Command.Claude` (see [Claude Escalation](#claude-escalation)) |
+
+#### Opencode Options (OpencodeCmdOptions)
+
+| Field | Type | Default | CLI Flag | Description |
+|-------|------|---------|----------|-------------|
+| `model` | `String?` | `null` | `--model` | Model the agent should use, as `provider/model` (e.g. `anthropic/claude-sonnet-4-5`) |
+| `agent` | `String?` | `null` | `--agent` | Named agent profile to run |
+| `dir` | `String?` | `null` | `--dir` | Working directory for the run |
+| `file` | `List<String>?` | `null` | `--file` (repeated) | Files to attach to the prompt |
+| `auto` | `Boolean` | `false` | `--auto` | **Security: opt-in.** Approves the agent's tool calls without prompting; only safe in an isolated environment. |
+| `options` | `List<String>?` | `null` | - | Raw CLI arguments appended before the hardcoded tail |
+
+#### Opencode stdout is JSON
+
+With `--format json`, opencode writes one JSON event per line: `step_start`,
+`text`, `tool_use`, `step_finish` (with token `usage` and the step's own USD
+`cost`), and `error`. Homer validates the stream fail-closed: an attempt only
+counts as successful when it exits 0, stdout parses as JSONL, a `step_finish`
+event with a successful finish reason (`stop`, `length`, `tool-calls`,
+`unknown`) is present, and no `step_finish` with any other reason appears —
+`content-filter` and `error` fail the attempt, as does a reason a future CLI
+adds. Standalone `error` events are transient retry/reconnect notices and are
+logged, not fatal. Token usage is recorded on the run (`llmAccounting.usage`)
+and as `llm.usage.*` span attributes; the reported USD cost is accumulated per
+session, so the run is charged the whole conversation, not its last step.
+
+The prompt arrives on **stdin**, not as a positional argument: the executor
+never emits a message argument, because `opencode run` reads stdin when it is
+given none.
+
+The final answer is the concatenation of the run's `text` events:
+
+```yaml
+resultEnvParam:
+  - src: STD_OUT
+    envName: OPENCODE_ANSWER
+    transformer: !<jsonPath>
+      path: "$[?(@.type=='text')].part.text"
+```
+
+As with Claude and Codex, a filter path returns a JSON array of matches — take
+the last element when the run produced several text events.
 
 ### Command.RunAgent - Agent Invocation
 
@@ -1771,7 +1892,7 @@ inputs:
 | `type` | `ParamType` | No | `STRING` | Parameter type validation |
 | `required` | `Boolean` | No | `true` | Whether parameter is required |
 | `transformer` | `Transformer` | No | `Pass` | How to transform the parameter value |
-| `secret` | `Boolean` | No | `false` | Redact this input's value in API responses, and in telemetry spans across all command types (`cmd`/`script`/`claude`/`codex`/`runnerCmd`/`langgraph`). Declaring it also drops the input's `default` and `values` from the `GET /api/v1/agents` summary and the MCP tool schema. Never redacted in stdout/stderr artifacts or the raw stdout/stderr log-tail (`GET /stream/processes/{id}/logs`) — if a command echoes the value, it is stored and served there in the clear; the canonical LLM event stream (`GET /stream/processes/{id}/llm-events`, `!<claude>`/`!<codex>`) does redact declared-secret values. The value still reaches the run env and the server database. Stored values whose envName no longer matches any current input are always redacted (fail closed). See [Security notes for input authors](#security-notes-for-input-authors). |
+| `secret` | `Boolean` | No | `false` | Redact this input's value in API responses, and in telemetry spans across all command types (`cmd`/`script`/`claude`/`codex`/`opencode`/`runnerCmd`/`langgraph`). Declaring it also drops the input's `default` and `values` from the `GET /api/v1/agents` summary and the MCP tool schema. Never redacted in stdout/stderr artifacts or the raw stdout/stderr log-tail (`GET /stream/processes/{id}/logs`) — if a command echoes the value, it is stored and served there in the clear; the canonical LLM event stream (`GET /stream/processes/{id}/llm-events`, `!<claude>`/`!<codex>`/`!<opencode>`) does redact declared-secret values. The value still reaches the run env and the server database. Stored values whose envName no longer matches any current input are always redacted (fail closed). See [Security notes for input authors](#security-notes-for-input-authors). |
 | `values` | list of strings | no | – | Typed types only (`string`/`integer`/`number`): value must equal one of these. Numeric comparison for `integer`/`number`. On a `secret: true` input the list is dropped from the `GET /api/v1/agents` summary and the MCP tool schema, and a value outside it gets a generic denial (`is not one of the allowed values`) that never lists the set. See [ADR-0071](../docs/adr/0071-secret-input-defaults-are-dropped-from-the-agents-list.md). |
 | `pattern` | string | no | – | `string` type only: regex the whole value must match. Evaluated with a wall-clock time bound; a value that makes the pattern backtrack past it is rejected (ReDoS guard). |
 | `min` / `max` | number | no | – | `integer`/`number` types only: inclusive bounds. Must be integral for `integer`. |
@@ -2021,7 +2142,7 @@ responsibility:
   `file` on an input lets the caller steer configuration, permissions, or
   filesystem access for the run — a `--settings` file can define hooks that run
   commands.
-- **LLM CLI binary.** The `cmd` of a `!<claude>` or `!<codex>` command is
+- **LLM CLI binary.** The `cmd` of a `!<claude>`, `!<codex>` or `!<opencode>` command is
   templated too, and templating it on an input would let the caller pick the
   executable Homer runs. This is rejected, not warned: an agent whose `cmd`
   references an input's `envName` fails to load, with an error naming the
@@ -2610,7 +2731,7 @@ Notes on behaviour:
 ## Telemetry
 
 Every run produces an OpenTelemetry trace: a root `agent_request` span with the
-process, command, and (for `!<claude>` and `!<codex>`) generation spans
+process, command, and (for `!<claude>`, `!<codex>` and `!<opencode>`) generation spans
 beneath it. Where those
 traces go is a server setting (`openTelemetryExport` in
 [SERVER.md](SERVER.md#opentelemetry-export)); what a *particular agent* puts in
@@ -2986,8 +3107,8 @@ unsubstituted placeholder there.
 ### Variable Substitution
 
 Use `{{VAR_NAME}}` syntax to substitute variables in:
-- Claude/Codex `prompt` text and `options` values (including Langfuse prompt text)
-- the `cmd` of a `!<claude>` / `!<codex>` command (every workspace-env variable resolves there — `HMR_*`, `globalEnv`, the runner's `env`, local-runner `parentEnvAllowlist` values; a declared-input reference fails load)
+- Claude/Codex/opencode `prompt` text and `options` values (including Langfuse prompt text)
+- the `cmd` of a `!<claude>` / `!<codex>` / `!<opencode>` command (every workspace-env variable resolves there — `HMR_*`, `globalEnv`, the runner's `env`, local-runner `parentEnvAllowlist` values; a declared-input reference fails load)
 - `!<agent>` `agentName`
 - `workspace.path`
 - `lockStrategy.key`
@@ -3047,7 +3168,7 @@ each command and each retry attempt:
 | Variable | Description |
 |----------|-------------|
 | `HMR_CMD_INDEX` | Zero-based index of the current command (what is baked into the default `cmd_N` name). |
-| `HMR_CMD_ATTEMPT` | Zero-based retry attempt within the command. Always `0` for `Cmd`/`Script`/`RunAgent`/other command types; increments across a `!<claude>` or `!<codex>` command's `retry` attempts and keeps counting across its `escalate` tiers. |
+| `HMR_CMD_ATTEMPT` | Zero-based retry attempt within the command. Always `0` for `Cmd`/`Script`/`RunAgent`/other command types; increments across a `!<claude>`, `!<codex>` or `!<opencode>` command's `retry` attempts and keeps counting across its `escalate` tiers. |
 
 `HMR_LLM_OUTCOME` and `HMR_LLM_EXIT_CODE` are likewise never exported into a
 command's process env: they exist only for an `escalate[].when` predicate (see
@@ -4051,7 +4172,7 @@ Behavior rules:
 
 1. **Validate Input**: Use typed parameters with constraints (`values`, `pattern`, `min`/`max`, `minLength`/`maxLength`) and required flags. The legacy `type: ANY` performs no validation at all
 2. **Limit Tool Access**: Use `disallowedTools` / `tools` in Claude options (`allowedTools` only pre-approves; it restricts nothing once permissions are skipped)
-3. **Review Permission Bypasses**: Audit `permissionMode` and `dangerouslySkipPermissions` in Claude options, and `sandbox` / `dangerouslyBypassApprovalsAndSandbox` in Codex options — some values grant unrestricted tool and filesystem access
+3. **Review Permission Bypasses**: Audit `permissionMode` and `dangerouslySkipPermissions` in Claude options, `sandbox` / `dangerouslyBypassApprovalsAndSandbox` in Codex options, and `auto` in opencode options — some values grant unrestricted tool and filesystem access
 4. **Secure Credentials**: Never hardcode credentials in agents (use environment variables). Telemetry masks `secret: true` *inputs*, every `globalEnv` / `env` value sourced from the host via `@SYSENV:`, and `HMR_CALLBACK_TOKEN` — but not a `globalEnv` / `env` entry whose value is a literal, so route credentials through `@SYSENV:` rather than pasting them in
 5. **Control Concurrency**: Use lock strategies to prevent conflicts
 6. **Isolate Workspaces**: Use unique workspace paths per execution

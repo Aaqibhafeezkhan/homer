@@ -52,11 +52,11 @@ class CodexHarness(
             }
 
             "turn.failed" -> {
-                Translation.Events(listOf(LlmEvent.TurnEnd(TurnStatus.Failed(errorMessage(line) ?: "no message"))))
+                Translation.Events(listOf(LlmEvent.TurnEnd(TurnStatus.Failed(line.errorMessage() ?: "no message"))))
             }
 
             "error" -> {
-                Translation.Events(listOf(LlmEvent.TransientError(errorMessage(line) ?: "no message")))
+                transientError(line)
             }
 
             else -> {
@@ -68,22 +68,12 @@ class CodexHarness(
         events: List<LlmEvent>,
         raw: List<JsonObject>,
         command: Command.Codex,
-    ): Inspection {
-        events.firstOrNull { it is LlmEvent.TurnEnd && it.status is TurnStatus.Failed }?.let {
-            return Inspection.Malformed(
-                "stream contains a 'turn.failed' event (${(it as LlmEvent.TurnEnd).status.let { s ->
-                    (s as TurnStatus.Failed).reason
-                }})",
-            )
-        }
-        if (events.none {
-                it is LlmEvent.TurnEnd && it.status == TurnStatus.Success
-            }
-        ) {
-            return Inspection.Malformed("stdout contains no 'turn.completed' event")
-        }
-        return Inspection.Success
-    }
+    ): Inspection =
+        inspectTurns(
+            events,
+            failedReason = "stream contains a 'turn.failed' event",
+            noSuccessReason = "stdout contains no 'turn.completed' event",
+        )
 
     private fun translateCompleted(line: JsonObject): Translation =
         translateItem(line["item"] as? JsonObject ?: return Translation.Malformed("item.completed without an item object"))
@@ -173,9 +163,6 @@ class CodexHarness(
             cacheWrite = u.long("cache_write_input_tokens"),
             reasoning = u.long("reasoning_output_tokens"),
         )
-
-    private fun errorMessage(line: JsonObject): String? =
-        (line["error"] as? JsonObject)?.nonBlankString("message") ?: line.nonBlankString("message")
 
     private fun JsonObject?.long(key: String): Long = (this?.get(key) as? JsonPrimitive)?.longOrNull ?: 0L
 

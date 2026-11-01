@@ -121,6 +121,23 @@ describe('ArtifactOutputTabs — post-mortem', () => {
     expect(screen.getByText('hello from codex')).toBeInTheDocument();
   });
 
+  it('renders the conversation view for an opencode step too', async () => {
+    artifactContentMock.mockReturnValue({
+      data: { content: NDJSON, filename: 'cmd_0.out', isComplete: true },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const events: LlmEvent[] = [
+      { type: 'session_start', sessionId: 'ses_1', model: null, tools: [] },
+      { type: 'assistant_message', messageId: 'm1', model: null, text: 'hello from opencode', subagent: false },
+    ];
+    llmEventStreamMock.mockReturnValue({ events, ended: true });
+    renderTabs({ kind: 'opencode' });
+    expect(await screen.findByRole('button', { name: 'Conversation' })).toBeInTheDocument();
+    expect(screen.getByText('hello from opencode')).toBeInTheDocument();
+  });
+
   it('passes the step accounting into the conversation summary', async () => {
     artifactContentMock.mockReturnValue({
       data: { content: NDJSON, filename: 'cmd_0.out', isComplete: true },

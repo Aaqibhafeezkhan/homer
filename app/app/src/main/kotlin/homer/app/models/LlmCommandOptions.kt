@@ -164,3 +164,23 @@ data class CodexCmdOptions(
     val config: List<String>? = null,
     val options: List<String>? = null,
 )
+
+/**
+ * Options for the `opencode` command, mapped 1:1 to `opencode run` CLI flags.
+ * The executor always appends `--format json` and reads the prompt from stdin,
+ * mirroring how [CodexCmdOptions] is driven.
+ */
+@Serializable
+data class OpencodeCmdOptions(
+    val model: String? = null,
+    val agent: String? = null,
+    val dir: String? = null,
+    // Repeated `-f path` attachments.
+    val file: List<String>? = null,
+    // Security: opt-in — passes --auto to the opencode CLI, which auto-approves
+    // every permission the configuration does not explicitly deny; only safe in
+    // isolated/sandboxed environments (same reasoning as
+    // ClaudeCmdOptions.dangerouslySkipPermissions, ADR-0017).
+    val auto: Boolean = false,
+    val options: List<String>? = null,
+)

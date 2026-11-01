@@ -105,21 +105,21 @@ llmPrice:
 | `parentEnvAllowlist` | `List<String>` | No | `["PATH","HOME","LANG","TZ"]` | Host JVM env keys layered under `globalEnv` for the `local` runner only — remote runners never receive them — see [`parentEnvAllowlist`](#parentenvallowlist) |
 | `openTelemetryExport` | `OpenTelemetryExport` | No | `LANGFUSE` | OpenTelemetry export destination |
 | `runners` | `Map<String, RunnerConfig>` | No | `{}` | Named pluggable execution backends — see [Runners](#runners-pluggable-execution-backends) |
-| `costLimits` | `CostLimits` | No | `{}` | Soft caps on LLM harness spend (`claude`, `codex`) — see [Cost Limits](#cost-limits) |
-| `llmPrice` | `LlmPriceConfig` | No | `null` | Price every LLM harness run (`!<claude>`, `!<codex>`) from an external spend API — see [LLM price](#llm-price) |
+| `costLimits` | `CostLimits` | No | `{}` | Soft caps on LLM harness spend (`claude`, `codex`, `opencode`) — see [Cost Limits](#cost-limits) |
+| `llmPrice` | `LlmPriceConfig` | No | `null` | Price every LLM harness run (`!<claude>`, `!<codex>`, `!<opencode>`) from an external spend API — see [LLM price](#llm-price) |
 | `costTrackedTagKeys` | `List<String>` | No | `[]` | Subject-tag keys queryable via `GET /api/v1/costs/by-tag/{key}` — see [Cost by tag](#cost-by-tag) |
 
 ## Cost Limits
 
 `costLimits` adds rolling-window caps on spend from any LLM harness command
-(`!<claude>`, `!<codex>`). Caps are checked before a
+(`!<claude>`, `!<codex>`, `!<opencode>`). Caps are checked before a
 run starts on `POST/GET /api/v1/agent/{name}`, cron, MCP tools, `!<agent>`,
 dispatch, continuation fires (all via the shared preflight in
 `AgentRunStarter`), and on the retry and resume endpoints, which check
 explicitly.
 
 **`POST /api/v1/agents/{name}/debug` is not capped.** It runs a single declared
-command by index, which may be a `!<claude>` or `!<codex>` one, and it does not
+command by index, which may be a `!<claude>`, `!<codex>` or `!<opencode>` one, and it does not
 check spend caps. It honours the agent's `cooldown.minInterval`, which is
 enforced when the process row is inserted — but not `cooldown.afterFailure`,
 which a manual investigation is meant to bypass. Same for the retry and resume
@@ -132,7 +132,7 @@ consumed. A run that has already passed the check runs to completion even if
 its in-flight cost would push the window over the cap — the next request will
 see the updated window and be refused.
 
-**An agent whose definition contains no `claude`/`codex` command is never
+**An agent whose definition contains no `claude`/`codex`/`opencode` command is never
 refused by a cost cap.** That is a deliberate, stable contract, not an
 implementation accident: such an agent cannot accrue LLM harness spend, so
 binding it to a spend cap would only make it unavailable. Build notifier /
@@ -147,7 +147,7 @@ push the window over the cap (each sees the pre-update window state). This is
 the documented soft-throttle behavior; tighten the cap if you need a hard
 ceiling.
 
-Spend is tracked per-process from each LLM harness (Claude/Codex) attempt's **resolved** cost —
+Spend is tracked per-process from each LLM harness (Claude/Codex/opencode) attempt's **resolved** cost —
 the CLI's own `total_cost_usd`, or the external `llmPrice.sessionSpend` lookup
 when configured (see [LLM price](#llm-price)) — charged whenever it is
 positive, for every attempt regardless of exit code, including attempts a
@@ -181,8 +181,8 @@ name it believes it called. Behind an LLM proxy that serves other models or othe
 contracts, that figure is not what you are billed.
 
 `llmPrice.sessionSpend` prices each attempt from an external spend endpoint keyed by
-the CLI session id instead. It applies to every LLM harness command (`!<claude>` and
-`!<codex>`) alike. When the lookup fails the CLI figure is charged and the run is
+the CLI session id instead. It applies to every LLM harness command (`!<claude>`,
+`!<codex>` and `!<opencode>`) alike. When the lookup fails the CLI figure is charged and the run is
 marked (`costSource: cli`, `llmAccounting.fallbackReason`) — for a harness whose CLI
 reports no cost of its own (Codex), a failed or unconfigured lookup instead records
 `costSource: none` and charges nothing, since there is no CLI figure to fall back to.
@@ -227,7 +227,7 @@ only as far as `callsPath` counts units comparable to the CLI's assistant messag
 spend row per model response): an endpoint that also logs calls the CLI never surfaces —
 summaries, internal retries — reaches the expected count early, so an under-count can
 still be accepted unmarked; it is strictly better than the single lookup either way.
-Codex reports no model-call ids, so a `!<codex>` attempt has no call count to wait for.
+Codex and opencode report no model-call ids, so a `!<codex>` or `!<opencode>` attempt has no call count to wait for.
 Its figure is accepted once two successive responses agree on both the call count and the
 cost and show at least one call, which takes at least the 5 s gap to the second poll. A
 figure still changing when the schedule ends is charged and marked `incomplete: figure not
@@ -314,7 +314,7 @@ llmPrice:
 - `fallbackReason` says why a figure is degraded — a CLI fallback, a session figure
   charged before the endpoint had ingested every call
   (`incomplete: <n> of <m> calls ingested` or the capped-poll reason for Claude,
-  `incomplete: figure not stable across polls` for a Codex attempt; the reasons that
+  `incomplete: figure not stable across polls` for a Codex or opencode attempt; the reasons that
   come with `source: session`), or a pending one (`session figure pending` — the step
   returned on the CLI figure and the session lookup is still settling in the background,
   replacing the record when it answers).
@@ -333,7 +333,7 @@ llmPrice:
   `attempt window unavailable` (the window keys are set but the attempt's start/end were not
   supplied, so the window cannot be bounded),
   `incomplete: <n> of <m> calls ingested`, `incomplete: <n> session calls, poll count capped
-  at 1000` (Claude only) and, for a harness with no call count (Codex),
+  at 1000` (Claude only) and, for a harness with no call count (Codex, opencode),
   `incomplete: figure not stable across polls` (the reasons that accompany `source: session`),
   `no result event`, `session figure pending` (the attempt finished and its session lookup
   is still running in the background; the record is replaced when it settles — only set
@@ -341,15 +341,15 @@ llmPrice:
   lookup was skipped or abandoned and only the bounded local accounting ran: the attempt's
   coroutine was cancelled before the lookup — process kill, server shutdown — or the
   background settlement was cancelled or threw mid-lookup; a harness that reports no cost
-  of its own (Codex) charges nothing, and a Claude attempt is charged its CLI figure only if
-  its result event arrived; only set when `llmPrice.sessionSpend` is configured),
+  of its own (Codex) charges nothing, and a Claude or opencode attempt is charged its CLI
+  figure only if its result event arrived; only set when `llmPrice.sessionSpend` is configured),
   `lookup failed` (an unexpected internal error, e.g. from the HTTP client itself).
 - `resultEnvParam` mappings of `total_cost_usd` still return the CLI's raw figure.
 
 ## Cost by tag
 
 `costTrackedTagKeys` lists the run subject tag (see `README.md`'s
-`/status/all?tag=` filter) keys an operator can break LLM harness (Claude/Codex) spend down by.
+`/status/all?tag=` filter) keys an operator can break LLM harness (Claude/Codex/opencode) spend down by.
 A run's `costUsd` is joined against
 its current tags at query time — nothing is snapshotted, so a tag declared
 mid-run via the tag callback still counts. Only keys listed here are
@@ -1621,7 +1621,7 @@ The whole object is optional; omitted fields default to an empty string. It is
 used for three things:
 
 - **Trace export**, when `openTelemetryExport` is `LANGFUSE` (the default).
-- **Fetching `!<langfuse>` prompts** for Claude/Codex commands, regardless of the
+- **Fetching `!<langfuse>` prompts** for Claude/Codex/opencode commands, regardless of the
   export setting.
 - **Trace deep links**, when `projectId` is also set (see the field table).
 
@@ -1676,7 +1676,7 @@ langfuse:
 > input/output. Read this before deciding what may reach your collector:
 >
 > - **Masked (`***`) on every command path** — `!<claude>`, `!<cmd>`,
->   `!<script>`, `!<codex>`, `!<langgraph>` and `!<runnerCmd>` all route span
+>   `!<script>`, `!<codex>`, `!<opencode>`, `!<langgraph>` and `!<runnerCmd>` all route span
 >   input/output through the redactor, as does the captured `output.env`:
 >   - values of inputs declared `secret: true`;
 >   - any `globalEnv` / `agent.env` value the operator sourced from the host
@@ -1711,23 +1711,23 @@ egress note above.
 |---|---|---|
 | Process | `process.id` | The run's process id |
 | Process | `process.status` | `CREATED`, then the terminal status (`FINISHED`, `FAILED`, `KILLED`) |
-| Command (any type) | `cmd.type` | Command class: `Cmd`, `Script`, `Claude`, `Codex`, `RunAgent`, `LangGraph`, `RunnerCmd` |
+| Command (any type) | `cmd.type` | Command class: `Cmd`, `Script`, `Claude`, `Codex`, `Opencode`, `RunAgent`, `LangGraph`, `RunnerCmd` |
 | Command (any type) | `command.label` | The command's `label`, which also names a Claude generation |
 | Command (any type) | `output.exitCode` | Exit code as a string |
 | Command (any type) | `cmd.skipped` | `true` when a `when` clause skipped the command |
 | Command (any type) | `output.env` | Captured `resultEnvParam` values, redacted |
 | Command (remote) | `runner.alias` | The runner that executed it, plus that runner session's own metadata keys |
-| `!<claude>` / `!<codex>` | `llm.cost_usd` | Cost charged for the attempt; absent when the charge is zero |
-| `!<claude>` / `!<codex>` | `llm.cost.source` | `session` (the spend endpoint answered), `cli` (the CLI's own figure) or `none` (no cost reported, nothing charged) |
-| `!<claude>` / `!<codex>` | `llm.cost.fallback_reason` | Why the figure is degraded; absent when it is not. A step that returned while its session lookup was still running keeps `session figure pending` here — the command span is not rewritten once it has ended; the settled figure arrives on the step's `llm_cost_settlement` child span, written when the background settlement answers **or** when its 45 s hand-off wait bound expires first — the latter reports the pending figure and marks the shed with `telemetry.llm.handoff_shed` on the child span. A `session figure pending` can therefore be final, not still settling: a hand-off shed at the concurrency bound reports inline on the still-open command span and likewise leaves `session figure pending` for good. Alert on a non-empty value other than `session figure pending` with `llm.cost.source != session` to catch `incomplete: …` and endpoint failures |
-| `!<claude>` / `!<codex>` (background settlement) | `llm.cost.source`, `llm.cost_usd`, `llm.cost.fallback_reason`, `llm.session_id`, `llm.usage.*`, `telemetry.error` | The `llm_cost_settlement` child span of a step that returned on a pending figure, written when the background settlement answers **or** when its 45 s hand-off wait bound expires first: the settled cost and its source — or, on an expired wait bound, the pending figure with `telemetry.llm.handoff_shed` set — a `fallback_reason` only when the settled figure is itself degraded, and `telemetry.error` when the telemetry hand-off failed. Absent when `llmPrice.sessionSpend` is not configured, and for a settlement cancelled by shutdown (the command span keeps the pending figure then) |
-| `!<claude>` / `!<codex>` | `llm.session_id` | CLI session / thread id, when the output carried one |
-| `!<claude>` / `!<codex>` | `llm.usage.*` | Token usage the CLI reported, summed over every turn end of the attempt: `input`, `output`, `cache_read`, `cache_write`, `reasoning` |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost_usd` | Cost charged for the attempt; absent when the charge is zero |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost.source` | `session` (the spend endpoint answered), `cli` (the CLI's own figure) or `none` (no cost reported, nothing charged) |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost.fallback_reason` | Why the figure is degraded; absent when it is not. A step that returned while its session lookup was still running keeps `session figure pending` here — the command span is not rewritten once it has ended; the settled figure arrives on the step's `llm_cost_settlement` child span, written when the background settlement answers **or** when its 45 s hand-off wait bound expires first — the latter reports the pending figure and marks the shed with `telemetry.llm.handoff_shed` on the child span. A `session figure pending` can therefore be final, not still settling: a hand-off shed at the concurrency bound reports inline on the still-open command span and likewise leaves `session figure pending` for good. Alert on a non-empty value other than `session figure pending` with `llm.cost.source != session` to catch `incomplete: …` and endpoint failures |
+| `!<claude>` / `!<codex>` / `!<opencode>` (background settlement) | `llm.cost.source`, `llm.cost_usd`, `llm.cost.fallback_reason`, `llm.session_id`, `llm.usage.*`, `telemetry.error` | The `llm_cost_settlement` child span of a step that returned on a pending figure, written when the background settlement answers **or** when its 45 s hand-off wait bound expires first: the settled cost and its source — or, on an expired wait bound, the pending figure with `telemetry.llm.handoff_shed` set — a `fallback_reason` only when the settled figure is itself degraded, and `telemetry.error` when the telemetry hand-off failed. Absent when `llmPrice.sessionSpend` is not configured, and for a settlement cancelled by shutdown (the command span keeps the pending figure then) |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.session_id` | CLI session / thread id, when the output carried one |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.usage.*` | Token usage the CLI reported, summed over every turn end of the attempt: `input`, `output`, `cache_read`, `cache_write`, `reasoning` |
 | `!<claude>` | `llm.cost.parse_failed` | `true` when result events carried no parseable, non-negative cost (a CLI schema-drift signal) |
 | `!<claude>` | `claude.max_turns_stop` | `true` when the attempt stopped at `maxTurns` and `maxTurnsExitCode` applied |
 | `!<claude>` | `claude.dropped_system_events` | Events removed by `server.claudeDropSystemSubtypes` |
-| `!<claude>` / `!<codex>` | `retry.attempts`, `retry.attempts.used` | Configured attempts, and how many were spent |
-| `!<claude>` / `!<codex>` | `llm.escalation.tier` | Highest `escalate` tier the step ran; absent when only tier 0 ran. See [ADR-0079](../docs/adr/0079-llm-steps-escalate-to-another-model-on-a-bad-outcome.md) |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `retry.attempts`, `retry.attempts.used` | Configured attempts, and how many were spent |
+| `!<claude>` / `!<codex>` / `!<opencode>` | `llm.escalation.tier` | Highest `escalate` tier the step ran; absent when only tier 0 ran. See [ADR-0079](../docs/adr/0079-llm-steps-escalate-to-another-model-on-a-bad-outcome.md) |
 | `!<agent>` | `agent.processId` | The child run this command started |
 
 ## Global Environment Variables
@@ -1761,7 +1761,7 @@ globalEnv:
 - These variables are available to all commands in all agents
 - Agent-specific environment variables override global variables
 - Query parameters override both global and agent-specific variables
-- Commands read these values as ordinary environment variables (`$VAR_NAME`). `{{VAR_NAME}}` templates are substituted only in Claude/Codex prompts and options, `!<agent>` `agentName`, the workspace path, the lock key and `artifactNameTemplate` — **not** in `!<cmd>` `cmd` or `!<script>` `content`
+- Commands read these values as ordinary environment variables (`$VAR_NAME`). `{{VAR_NAME}}` templates are substituted only in Claude/Codex/opencode prompts and options, `!<agent>` `agentName`, the workspace path, the lock key and `artifactNameTemplate` — **not** in `!<cmd>` `cmd` or `!<script>` `content`
 
 ### Referencing System Environment Variables
 
@@ -1954,7 +1954,7 @@ names no endpoint, and is rate-limited to once a minute past five messages.
 
 ### Trace propagation to the LLM CLI
 
-When an LLM harness command (`!<claude>`, `!<codex>`) runs, Homer passes the
+When an LLM harness command (`!<claude>`, `!<codex>`, `!<opencode>`) runs, Homer passes the
 active span to the CLI subprocess as a W3C `OTEL_TRACE_PARENT` environment variable. If the CLI
 emits its own OpenTelemetry data, it is stitched into the same trace.
 Propagation is automatic and requires no configuration; it is skipped
@@ -2536,7 +2536,7 @@ Emits an event every time the agent set is reloaded: after `POST /api/v1/agents/
 
 ### GET /api/v1/stream/processes/{processId}/llm-events
 
-Streams the canonical LLM events of one run the caller can see (`404` otherwise, the same as not-found), live or finished. Query `cmd` follows one `!<claude>`/`!<codex>` command (`404` for any other command type); without it the stream follows every LLM command of the run in order. Poll latency is set by [`server.claudeStreamPollMs`](#server-fields). Event kinds and resume: [README](README.md#get-apiv1streamprocessesprocessidllm-events).
+Streams the canonical LLM events of one run the caller can see (`404` otherwise, the same as not-found), live or finished. Query `cmd` follows one `!<claude>`/`!<codex>`/`!<opencode>` command (`404` for any other command type); without it the stream follows every LLM command of the run in order. Poll latency is set by [`server.claudeStreamPollMs`](#server-fields). Event kinds and resume: [README](README.md#get-apiv1streamprocessesprocessidllm-events).
 
 | Event | Id | Data |
 |-------|-----|------|
@@ -2634,6 +2634,7 @@ there, so that environment must supply every binary a command relies on:
   commands still run.
 - **`claude`** — for agents that use `Claude` commands.
 - **`codex`** — for agents that use `Codex` commands.
+- **`opencode`** — for agents that use `Opencode` commands.
 - **`homer_langgraph`** — for agents that use `LangGraph` commands.
 - Any other executable your `Cmd` / `Script` commands invoke — the agent
   author's responsibility, exactly as on the `local` runner.
@@ -2888,6 +2889,8 @@ commands expect:
   prompt host-side and pipes it via stdin.
 - `Codex` — the `codex` CLI must be installed; the prompt is delivered
   the same way.
+- `Opencode` — the `opencode` CLI must be installed; the prompt is
+  delivered the same way.
 - `RunAgent` — no binary and no pod egress required; the child run is
   started in-process on Homer's side.
 

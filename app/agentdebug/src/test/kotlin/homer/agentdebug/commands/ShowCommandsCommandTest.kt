@@ -106,6 +106,11 @@ class ShowCommandsCommandTest {
               - !<runnerCmd>
                 runner: local
                 execute: "echo remote"
+              - !<opencode>
+                prompt: !<prompt>
+                  prompt: "plain opencode"
+                options:
+                  model: anthropic/claude-sonnet-4-5
             """.trimIndent(),
         )
         return AppConfig(
@@ -124,7 +129,7 @@ class ShowCommandsCommandTest {
         val out = capture { ShowCommandsCommand(appConfig, "every-kind").run() }
 
         assertContains(out, "Description: one of each")
-        assertContains(out, "Commands (9):")
+        assertContains(out, "Commands (10):")
         assertContains(out, "  [0] cmd     \"say\"    timeout=60s continueIfFail=false")
         assertContains(out, "      when (all): [ -n \"x\" ]")
         assertContains(out, "      cmd: echo hi")
@@ -138,6 +143,8 @@ class ShowCommandsCommandTest {
         assertContains(out, "      agentName: other-agent  [SKIPPED in debug mode]")
         assertContains(out, "      module: graphs.flow  (python: python3)  [SKIPPED in debug mode]")
         assertContains(out, "      runner: local  [SKIPPED in debug mode]")
+        assertContains(out, "  [9] opencode \"opencode\"")
+        assertContains(out, "      cmd: opencode run --format json")
     }
 
     @Test

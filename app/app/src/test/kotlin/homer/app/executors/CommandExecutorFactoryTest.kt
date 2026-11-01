@@ -147,6 +147,23 @@ class CommandExecutorFactoryTest {
     }
 
     @Test
+    fun `getExecutor should return LlmHarnessExecutor for Command_Opencode`() {
+        val command = Command.Opencode(prompt = LlmPrompt.Prompt("test prompt"))
+
+        val executor = factory.getExecutor(command)
+
+        assertIs<LlmHarnessExecutor<Command.Opencode>>(executor, "Should return LlmHarnessExecutor for Opencode command")
+    }
+
+    @Test
+    fun `getExecutor should reuse the Opencode LlmHarnessExecutor instance`() {
+        val executor1 = factory.getExecutor(Command.Opencode(prompt = LlmPrompt.Prompt("prompt 1")))
+        val executor2 = factory.getExecutor(Command.Opencode(prompt = LlmPrompt.Prompt("prompt 2")))
+
+        assertSame(executor1, executor2, "Should reuse the same LlmHarnessExecutor instance")
+    }
+
+    @Test
     fun `getExecutor should return RunAgentExecutor for Command_RunAgent`() {
         val command = Command.RunAgent(agentName = "some_agent")
 

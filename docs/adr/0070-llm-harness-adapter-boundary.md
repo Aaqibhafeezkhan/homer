@@ -64,6 +64,17 @@ interface LlmHarness<C> where C : Command, C : Command.LlmCommand {
 described below, and `fun escalated(command: C, tier: LlmEscalation): C`, added by
 [ADR-0079](0079-llm-steps-escalate-to-another-model-on-a-bad-outcome.md).)*
 
+*(Amended 2026-10-31: an adapter may carry **bounded per-instance accounting
+state**. ADR-0074 requires a harness whose CLI prices a run per step to emit a
+cumulative `TurnEnd.costUsd`, and the canonical model has no place to keep a
+running total — so `OpencodeHarness` holds a `StepCostTotals` keyed by the CLI's
+session id: a step counts once by the id the CLI puts on it, and the retained
+state is bounded by session and step count, shedding one eldest bucket. "No
+shared mutable state" below reads as no *shared* state: the totals are the
+adapter's own, per instance — the executor factory, the `/llm-events` harness map
+and agentdebug each build their own adapter — and the step-id dedupe makes
+`translate` idempotent per instance rather than order-dependent.)*
+
 `id` equals the command's `kind` (`claude`, `codex`, …), and `reportsCost`
 states — once, per adapter, with no default — whether the CLI itself prices
 a run. `translate` is total (never throws) and returns a `Translation`

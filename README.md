@@ -140,9 +140,10 @@ run yourself after the [Quick start](#next-a-durable-langgraph-workflow):
 
 - **Async HTTP API** — a run call returns a process id at once; follow the run
   through status, SSE streams, or the web console.
-- **Seven command types** — `!<cmd>`, `!<script>`, `!<claude>`, `!<codex>`,
-  `!<agent>` (nested agent), `!<langgraph>` (durable Python workflows with
-  resume), and `!<runnerCmd>` (run one step on another runner).
+- **Eight command types** — `!<cmd>`, `!<script>`, `!<claude>`, `!<codex>`,
+  `!<opencode>` (opencode CLI execution), `!<agent>` (nested agent),
+  `!<langgraph>` (durable Python workflows with resume), and `!<runnerCmd>`
+  (run one step on another runner).
 - **Data flow between steps** — capture stdout, stderr or files into env vars
   (JSONPath, regex), template them with `{{VAR}}`, and gate steps with `when`.
 - **Runs anywhere** — locally, on ssh hosts, as Kubernetes pods, or on

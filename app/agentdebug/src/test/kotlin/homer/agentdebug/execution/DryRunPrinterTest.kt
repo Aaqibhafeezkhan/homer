@@ -6,6 +6,7 @@ import homer.app.models.CodexCmdOptions
 import homer.app.models.Command
 import homer.app.models.LlmEscalation
 import homer.app.models.LlmPrompt
+import homer.app.models.OpencodeCmdOptions
 import homer.app.models.When
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
@@ -148,6 +149,48 @@ class DryRunPrinterTest {
         // The tier replaces the step's raw options, so its argv no longer carries them.
         assertFalse("--keep-me" in tierLine, tierLine)
         assertContains(out.lines().first { it.startsWith("[DRY ] cmd:") }, "--keep-me")
+    }
+
+    @Test
+    fun `opencode dry-run prints one line per escalate tier with the tier's own argv`() {
+        val command =
+            Command.Opencode(
+                prompt = LlmPrompt.Prompt("hi"),
+                options = OpencodeCmdOptions(model = "cheap", options = listOf("--keep-me")),
+                escalate =
+                    listOf(
+                        LlmEscalation(
+                            model = "openai/gpt-strong",
+                            options = emptyList(),
+                            whenClause = When(When.Operator.ALL, listOf("[ \"\$HMR_LLM_OUTCOME\" != success ]")),
+                        ),
+                    ),
+            )
+
+        val out = capture { DryRunPrinter.print(command, redactor = SecretRedactor.NONE) }
+
+        val tierLine = out.lines().single { it.startsWith("[ESCALATE 1]") }
+        assertContains(tierLine, "model=openai/gpt-strong")
+        assertContains(tierLine, "--model openai/gpt-strong")
+        assertContains(tierLine, "--format json")
+        assertContains(tierLine, "when=all(")
+        // The tier replaces the step's raw options, so its argv no longer carries them.
+        assertFalse("--keep-me" in tierLine, tierLine)
+        assertContains(out.lines().first { it.startsWith("[DRY ] cmd:") }, "--keep-me")
+    }
+
+    @Test
+    fun `opencode dry-run masks a declared secret resolved into an option`() {
+        val command =
+            Command.Opencode(
+                prompt = LlmPrompt.Prompt("use tok-s3cr3t-value"),
+                options = OpencodeCmdOptions(options = listOf("--header", "Authorization: Bearer {{API_TOKEN}}")),
+            )
+
+        val out = capture { DryRunPrinter.print(command, secretEnv, redactor) }
+
+        assertContains(out.lines().first { it.startsWith("[DRY ] cmd:") }, "--header Authorization: Bearer ***")
+        assertFalse("tok-s3cr3t-value" in out, out)
     }
 
     @Test

@@ -6,6 +6,7 @@ import homer.app.models.Agent
 import homer.app.models.AppConfig
 import homer.app.models.Command
 import homer.app.models.LlmPrompt
+import homer.app.models.kind
 import org.slf4j.LoggerFactory
 
 class ValidateCommand(
@@ -46,8 +47,7 @@ class ValidateCommand(
         when (cmd) {
             is Command.Cmd -> "cmd: valid"
             is Command.Script -> "script: valid"
-            is Command.Claude -> "claude: valid${langfuseNote(cmd.prompt)}"
-            is Command.Codex -> "codex: valid${langfuseNote(cmd.prompt)}"
+            is Command.LlmCommand -> "${cmd.kind}: valid${langfuseNote(cmd.prompt)}"
             is Command.RunAgent -> "agent: valid (note: will be SKIPPED in debug run)"
             is Command.LangGraph -> "langgraph: valid (note: will be SKIPPED in debug run)"
             is Command.RunnerCmd -> "runnerCmd: valid (note: will be SKIPPED in debug run)"

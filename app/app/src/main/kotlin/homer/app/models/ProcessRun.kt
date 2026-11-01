@@ -143,7 +143,8 @@ data class ExecutionInfo(
     val skipped: Boolean = false,
     val outputTruncated: Boolean = false,
     val llmAccounting: LlmAccounting? = null,
-    // The command's tag (`cmd`, `script`, `claude`, `codex`, `agent`, `langgraph`, `runnerCmd`);
+    // The command's tag (`cmd`, `script`, `claude`, `codex`, `opencode`, `agent`,
+    // `langgraph`, `runnerCmd`);
     // empty for rows written before this field existed.
     val kind: String = "",
 )

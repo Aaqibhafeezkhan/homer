@@ -5,17 +5,21 @@ import homer.app.models.Command
 import homer.app.models.LlmEscalation
 import homer.app.models.LlmEvent
 import homer.app.models.Translation
+import homer.app.models.TurnStatus
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
  * One LLM coding-harness CLI, as seen by [LlmHarnessExecutor]: how to launch it and
- * how to read what it wrote. Stateless; constructed with its own config only, so it is
- * tested as plain functions against recorded stdout lines. See ADR-0070.
+ * how to read what it wrote. Constructed with its own config only, so it is tested as
+ * plain functions against recorded stdout lines. Instances are per-consumer (the
+ * executor factory, the `/llm-events` harness map and agentdebug each build their own),
+ * not server-wide singletons; an adapter may carry bounded per-instance accounting
+ * state, and its step-id dedupe keeps its translation idempotent. See ADR-0070.
  */
 interface LlmHarness<C> where C : Command, C : Command.LlmCommand {
-    /** Equals the command's [homer.app.models.kind] (`claude`, `codex`). */
+    /** Equals the command's [homer.app.models.kind] (`claude`, `codex`, `opencode`). */
     val id: String
 
     /** Whether the CLI reports a USD cost per run. False makes an unpriced attempt record CostSource.NONE. */
@@ -74,3 +78,26 @@ interface LlmStdOutFilter : OutputLineFilter {
 
 /** The string at [key], or null when it is absent, not a primitive, or blank. */
 internal fun JsonObject.nonBlankString(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+/** The message of a CLI error line, from its `error` object or from the line itself. */
+internal fun JsonObject.errorMessage(): String? = (this["error"] as? JsonObject)?.nonBlankString("message") ?: nonBlankString("message")
+
+/** A CLI error line, as the transient-error event every harness reports it with. */
+internal fun transientError(line: JsonObject): Translation =
+    Translation.Events(listOf(LlmEvent.TransientError(line.errorMessage() ?: "no message")))
+
+/**
+ * The verdict the harnesses that end a turn share: a failed turn end fails the attempt,
+ * and a stream with no successful one has nothing to gate a zero exit on. [failedReason]
+ * and [noSuccessReason] name the CLI's own events, which is all that differs between them.
+ */
+internal fun inspectTurns(
+    events: List<LlmEvent>,
+    failedReason: String,
+    noSuccessReason: String,
+): Inspection {
+    val failed = events.firstOrNull { it is LlmEvent.TurnEnd && it.status is TurnStatus.Failed } as? LlmEvent.TurnEnd
+    if (failed != null) return Inspection.Malformed("$failedReason (${(failed.status as TurnStatus.Failed).reason})")
+    if (events.none { it is LlmEvent.TurnEnd && it.status == TurnStatus.Success }) return Inspection.Malformed(noSuccessReason)
+    return Inspection.Success
+}

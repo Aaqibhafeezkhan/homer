@@ -155,6 +155,11 @@ class ValidateCommandTest {
               - !<runnerCmd>
                 runner: local
                 execute: "echo remote"
+              - !<opencode>
+                prompt: !<prompt>
+                  prompt: "plain opencode"
+                options:
+                  model: anthropic/claude-sonnet-4-5
             """.trimIndent(),
         )
         return AppConfig(
@@ -181,6 +186,7 @@ class ValidateCommandTest {
         assertContains(out, "✓ Command[6] agent: valid (note: will be SKIPPED in debug run)")
         assertContains(out, "✓ Command[7] langgraph: valid (note: will be SKIPPED in debug run)")
         assertContains(out, "✓ Command[8] runnerCmd: valid (note: will be SKIPPED in debug run)")
+        assertContains(out, "✓ Command[9] opencode: valid\n")
         assertContains(out, "✓ Inputs: none")
     }
 

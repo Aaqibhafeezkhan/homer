@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.executors.CommandArtifactPaths
 import homer.app.executors.llm.CodexHarness
+import homer.app.executors.llm.OpencodeHarness
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.SecretRedactor
 import homer.app.models.ExecutionInfo
@@ -44,7 +45,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LlmEventStreamServiceTest {
-    private val harnesses = mapOf("codex" to CodexHarness())
+    private val harnesses = mapOf("codex" to CodexHarness(), "opencode" to OpencodeHarness())
 
     // No live job registered: every tick reads the status, as for a restarted or finished run.
     private fun processManagerWithoutJob() = mockk<ProcessManager> { every { hasLiveJob(any()) } returns false }
@@ -266,6 +267,39 @@ class LlmEventStreamServiceTest {
         assertTrue("secret-token" !in wire, wire)
         assertTrue("\\u0073ecret" !in wire, wire)
         assertTrue("***" in (events[1] as LlmEvent.AssistantMessage).text)
+    }
+
+    @Test
+    fun `an opencode stdout file is translated through its own adapter`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val out = tmp.resolve("cmd_0.out")
+        out.writeText(
+            line("""{"type":"step_start","sessionID":"ses_1","part":{"id":"p1","type":"step-start"}}""") +
+                line("""{"type":"text","sessionID":"ses_1","part":{"messageID":"m1","type":"text","text":"hello"}}""") +
+                line(
+                    """{"type":"tool_use","sessionID":"ses_1","part":{"id":"c1","tool":"bash",""" +
+                        """"state":{"status":"completed","input":{"command":"ls"},"output":"ok"}}}""",
+                ) +
+                line("""{"type":"step_finish","sessionID":"ses_1","part":{"id":"p2","reason":"stop","cost":0.25}}"""),
+        )
+        val pm = finishedCodex(tmp, out)
+        coEvery { pm.getCommandArtifacts(1, 0) } returns CommandArtifactPaths(out, tmp.resolve("e"), kind = "opencode")
+        val service = LlmEventStreamService(pm, harnesses, TestFixtures.mockLogger(), pollIntervalMs = 10)
+
+        val events =
+            service
+                .streamCommand(1, 0, resume = null)
+                .toList()
+                .filterIsInstance<LlmStreamEvent.Event>()
+                .map { it.event }
+
+        assertEquals(
+            listOf("session_start", "assistant_message", "tool_call", "tool_result", "turn_end"),
+            events.map { typeOf(it) },
+        )
+        assertEquals("hello", (events[1] as LlmEvent.AssistantMessage).text)
+        assertEquals(0.25, (events[4] as LlmEvent.TurnEnd).costUsd)
     }
 
     @Test

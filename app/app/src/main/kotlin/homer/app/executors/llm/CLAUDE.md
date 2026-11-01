@@ -8,7 +8,7 @@ file is canonical for the LLM harness recipe and its cost accounting
 
 ## LLM cost accounting
 
-Every LLM harness attempt (`!<claude>`, `!<codex>`) is cost-accounted regardless of exit
+Every LLM harness attempt (`!<claude>`, `!<codex>`, `!<opencode>`) is cost-accounted regardless of exit
 code: `LlmAttemptAccounting` charges what `LlmAttemptPricing` resolves — a lenient stdout scan
 (`scanLlmAccounting`) then `LlmCostResolver` (session-spend endpoint → the harness's own cost
 figure, or `CostSource.NONE` when the harness reports none and the endpoint doesn't answer).
@@ -51,7 +51,9 @@ An attempt can end more than one turn (Claude writes a second `result` when a ba
 subagent finishes after the first). A harness reports `TurnEnd.costUsd` **cumulatively** for
 its process and `usage` per turn, so the scan charges the highest cost reported and sums the
 usage, and `LlmTelemetryService` splits the attempt's cost across its generations. An adapter
-whose CLI reports a per-turn cost must accumulate it before emitting. A charged attempt is
+whose CLI reports a per-turn cost must accumulate it before emitting — as bounded
+per-instance accounting state, the one state an adapter carries (ADR-0070, as amended),
+with a per-step dedupe so translating one stdout file twice never double-charges it. A charged attempt is
 never left without a priced generation: with no successful turn end its last turn end carries
 the charge, and with no turn end at all one fallback generation does. See ADR-0074.
 
@@ -77,9 +79,12 @@ must stay a single pass with no predicate evaluated — `LlmHarnessExecutorTest`
 ## Adding an LLM harness
 
 A new LLM coding CLI is a small `Command` subclass (the `LlmCommand`
-contract) plus a stateless `LlmHarness` adapter, not a new executor —
+contract) plus an `LlmHarness` adapter, not a new executor —
 `LlmHarnessExecutor` (retry, accounting, telemetry hand-off) is shared. See
-ADR-0070.
+ADR-0070. An adapter carries no shared state: instances are per-consumer, and the
+one state an adapter may hold is bounded per-instance accounting state (see
+"LLM cost accounting" above), never anything keyed beyond its own bounded
+structure.
 
 0. Add the `Command` subclass implementing `Command.LlmCommand`, with its
    `@SerialName`, its `homer-agent.schema.json` `Command.oneOf` entry and its

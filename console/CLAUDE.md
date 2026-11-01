@@ -156,7 +156,7 @@ lib/api/sse.ts  (invalidates cache)   components read via hooks
   event the stream matches announces it. Of
   `config/default.json:polling`, only `agentsCacheTime` is read.
 - **Live conversation view reads the canonical `/llm-events` stream** —
-  for a `!<claude>` or `!<codex>` step, `ArtifactOutputTabs` (rendered
+  for a `!<claude>`, `!<codex>` or `!<opencode>` step, `ArtifactOutputTabs` (rendered
   inline by execution items and the live-command box) gates on the
   step's `kind` (`isLlmKind`) and drives its Conversation mode from
   `useLlmEventStream`, which tails `GET

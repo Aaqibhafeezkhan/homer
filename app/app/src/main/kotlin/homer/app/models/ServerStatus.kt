@@ -38,9 +38,9 @@ data class ProcessInfoResponse(
     val executions: List<ExecutionInfoResponse>,
     val currentCommand: String? = null,
     val currentCommandStart: Long? = null,
-    // Tag of the command running now (`cmd`, `script`, `claude`, `codex`, `agent`,
-    // `langgraph`, `runnerCmd`), from in-memory tracking; null when nothing runs
-    // or after a restart.
+    // Tag of the command running now (`cmd`, `script`, `claude`, `codex`, `opencode`,
+    // `agent`, `langgraph`, `runnerCmd`), from in-memory tracking; null when nothing
+    // runs or after a restart.
     val currentCommandKind: String? = null,
     // Index of the command running now, from in-memory tracking; null when nothing
     // runs or after a restart.
