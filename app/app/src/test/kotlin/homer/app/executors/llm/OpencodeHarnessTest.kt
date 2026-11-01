@@ -183,7 +183,7 @@ class OpencodeHarnessTest {
         }
         assertEquals(1.0, totals.add("ses_new", "p1", 1.0))
         // ses_0's bucket went; ses_1's did not, so its steps are still counted. A shed
-        // bucket may belong to a live run — one 64 newer sessions arrived while it ran —
+        // bucket may belong to a live run — once 64 newer sessions arrived while it ran —
         // whose cumulative then restarts; the accounting scan's full-file re-read rebuilds
         // it, so the charge stays ADR-0074-correct.
         assertEquals(2.0, totals.add("ses_1", "p1", 1.0))
