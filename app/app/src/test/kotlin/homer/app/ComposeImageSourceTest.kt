@@ -199,6 +199,43 @@ class ComposeImageSourceTest {
     }
 
     @Test
+    fun `the feature atlas masthead and footer name no release version`() {
+        // The atlas describes what ships on `main`, not a release: no release step updates a stamp here, and
+        // ADR-0090's release exemption keeps the release pull request out of the atlas.
+        val atlas = File(repoRoot, "docs/homer-feature-atlas.html")
+        assertTrue(
+            atlas.isFile,
+            "docs/homer-feature-atlas.html is missing; move this guard with the atlas rather than deleting it.",
+        )
+        val text = atlas.readText()
+        val elements =
+            listOf(
+                "the masthead eyebrow" to Regex("""<div class="eyebrow">(.*?)</div>""", RegexOption.DOT_MATCHES_ALL),
+                "the footer" to Regex("""<footer>(.*?)</footer>""", RegexOption.DOT_MATCHES_ALL),
+            )
+        val releaseVersion = Regex("""\d+\.\d+\.\d+""")
+        for ((element, pattern) in elements) {
+            val bodies = pattern.findAll(text).map { it.groupValues[1] }.toList()
+            assertTrue(
+                bodies.isNotEmpty(),
+                "docs/homer-feature-atlas.html has no $element element. It is what this guard reads, so dropping " +
+                    "it would silently end the no-release-stamp check; move this guard with the atlas rather than " +
+                    "deleting it.",
+            )
+            for (body in bodies) {
+                val stamp = releaseVersion.find(body)?.value
+                assertTrue(
+                    stamp == null,
+                    "docs/homer-feature-atlas.html: $element names `$stamp`. The atlas describes what ships on " +
+                        "`main`, not a release: nothing updates this stamp at release time and ADR-0090's release " +
+                        "exemption keeps the release pull request out of the atlas, so it goes stale on every " +
+                        "release (#98 left both stamps at the previous version).",
+                )
+            }
+        }
+    }
+
+    @Test
     fun `the build overlay restores a build section for both services`() {
         val overlay = File(repoRoot, "docker-compose.build.yml")
         assertTrue(
