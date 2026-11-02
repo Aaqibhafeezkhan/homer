@@ -200,9 +200,8 @@ class ComposeImageSourceTest {
 
     @Test
     fun `the feature atlas masthead and footer name no release version`() {
-        // The atlas describes what ships on `main`, not a release, so its masthead and footer carry no version
-        // stamp: no release step updates one, and ADR-0090's release exemption does not let the release pull
-        // request touch the atlas, so a stamp here goes stale on every release (#98 left both behind).
+        // The atlas describes what ships on `main`, not a release: no release step updates a stamp here, and
+        // ADR-0090's release exemption keeps the release pull request out of the atlas.
         val atlas = File(repoRoot, "docs/homer-feature-atlas.html")
         assertTrue(
             atlas.isFile,
@@ -216,21 +215,23 @@ class ComposeImageSourceTest {
             )
         val releaseVersion = Regex("""\d+\.\d+\.\d+""")
         for ((element, pattern) in elements) {
-            val match = pattern.find(text)
+            val bodies = pattern.findAll(text).map { it.groupValues[1] }.toList()
             assertTrue(
-                match != null,
+                bodies.isNotEmpty(),
                 "docs/homer-feature-atlas.html has no $element element. It is what this guard reads, so dropping " +
                     "it would silently end the no-release-stamp check; move this guard with the atlas rather than " +
                     "deleting it.",
             )
-            val stamp = releaseVersion.find(match.groupValues[1])?.value
-            assertTrue(
-                stamp == null,
-                "docs/homer-feature-atlas.html: $element names `$stamp`. The atlas describes what ships on " +
-                    "`main`, not a release: nothing updates this stamp at release time and ADR-0090's release " +
-                    "exemption keeps the release pull request out of the atlas, so it goes stale on every " +
-                    "release (#98 left both stamps at the previous version).",
-            )
+            for (body in bodies) {
+                val stamp = releaseVersion.find(body)?.value
+                assertTrue(
+                    stamp == null,
+                    "docs/homer-feature-atlas.html: $element names `$stamp`. The atlas describes what ships on " +
+                        "`main`, not a release: nothing updates this stamp at release time and ADR-0090's release " +
+                        "exemption keeps the release pull request out of the atlas, so it goes stale on every " +
+                        "release (#98 left both stamps at the previous version).",
+                )
+            }
         }
     }
 
