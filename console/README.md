@@ -164,15 +164,21 @@ when it has not spent anything); the filter row shows a **Total cost**
 figure summing the currently filtered/paginated page — not every run
 matching the filter across other pages.
 
-A **Duration** column shows how long the run has been going: from its first
+The desktop columns are **Process ID**, **Agent Name**, **Commands**,
+**Status**, **Duration**, **Cost**, **Runner**, **Flow** (only in the roots
+view) and **Actions**. The **Commands** cell carries one square per command
+that executed — green for success, red for failure, a pulsing blue square for
+the one running now — six to a line, with any further squares wrapped onto the
+next line, so a run's progress reads at a glance without a second text line.
+Hovering a square names the command, its state and how long it took — the
+square of the command still running names no duration yet. The
+**Duration** column shows how long the run has been going: from its first
 status-history entry to the last one once it has ended, and to now while it
-still runs. The **Last Command** cell carries one dot per command that
-executed — green for success, red for failure, a pulsing blue dot for the one
-running now — so a run's progress reads at a glance. Status is a single icon
-whose tooltip and accessible name give the status word; the failure-reason and
-open-question badges still sit beside it. There are no **Status Time** or
-**Purge** columns; the run's own page keeps its status timeline and purge time.
-**Kill** and **Retry** are icon-only buttons with tooltips.
+still runs. Status is a single icon whose tooltip and accessible name give the
+status word; the failure-reason and open-question badges still sit beside it.
+There are no **Status Time**, **Purge** or **Last Command** columns; the run's
+own page keeps its status timeline and purge time. **Kill** and **Retry** are
+icon-only buttons with tooltips.
 
 Status filters, sort order, and paging are kept in the URL, so the
 list view is shareable as a link and browser Back restores it. A

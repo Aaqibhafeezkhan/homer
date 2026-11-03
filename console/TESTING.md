@@ -161,7 +161,7 @@ when you fix it.
 
 #### Process List Display
 - [ ] Verify table shows all processes
-- [ ] Verify columns: Process ID, Agent Name, Status, Duration, Last Command, Cost, Runner, Actions (plus Flow in the Root runs view)
+- [ ] Verify columns: Process ID, Agent Name, Commands, Status, Duration, Cost, Runner, Actions (plus Flow in the Root runs view)
 - [ ] Verify process IDs are displayed correctly
 - [ ] Verify agent names are shown
 - [ ] Verify status icons have correct colors:
@@ -172,7 +172,7 @@ when you fix it.
   - CREATED: Gray
 - [ ] Hover a status icon and verify its tooltip names the status, and that the icon exposes the same name to a screen reader
 - [ ] Verify the Duration column shows the elapsed time from the run's first history entry to its last, and ticks upward while the run is active
-- [ ] Verify the Last Command cell shows one dot per executed command — green for success, red for failure, pulsing blue for the command running now — and that hovering a dot names the command and its state
+- [ ] Verify the Commands cell shows one square per executed command — green for success, red for failure, pulsing blue for the command running now — at most six to a line with the rest wrapped below, and that hovering a square names the command, its state and its duration (the still-running square names no duration yet)
 
 #### Filtering
 - [ ] Click on "WORKING" status filter

@@ -3232,8 +3232,10 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             state (running / waiting on a question / failed / finished). Every filter, the sort order and the page offset live in the URL, so a filtered view is
             shareable and survives a reload, and the detail pages' back button returns to it. A Cost column shows each
             run's spend, and the filter row shows the total for the currently filtered/paginated page. A Duration
-            column shows how long the run has been going, and its Last Command cell carries one dot per command that
-            executed. Status is a single icon, Kill and Retry are icon-only buttons, and the Runner column shows where
+            column shows how long the run has been going, and the Commands column carries one square per command that
+            executed — six to a line, each square naming its command, state and duration on hover (the still-running
+            square names no duration yet). Status is a single
+            icon, Kill and Retry are icon-only buttons, and the Runner column shows where
             each run executes; a run that failed before it started shows its stored reason beside the icon, and with a
             Kubernetes runner a banner reports the last orphan-pod sweep.</p>
           <pre><code>/processes?agent=pr-reviewer&amp;status=WORKING,FAILED

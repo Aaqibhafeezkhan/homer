@@ -71,10 +71,14 @@ function elapsedSeconds(start: number, end: number): number | null {
 
 export type CommandDotState = 'ok' | 'failed' | 'running';
 
-/** One dot of a run's command-progress row: the command's label and how it ended. */
+/**
+ * One dot of a run's command-progress row: the command's label, how it ended,
+ * and how long it took — `null` when the execution carries no usable span.
+ */
 export interface CommandDot {
   label: string;
   state: CommandDotState;
+  durationSeconds: number | null;
 }
 
 /**
@@ -83,6 +87,11 @@ export interface CommandDot {
  * WORKING. Commands a `when:` condition skipped never ran and get no dot, so the
  * Last Command icon (`lastCommandFromDots`) agrees. Commands not yet run get none
  * either: the list response carries no total command count.
+ *
+ * Each dot carries its own duration, derived defensively from the execution's
+ * `start`/`end` (agent-written, so untrusted): a missing, non-finite or
+ * reversed span yields `null` rather than `NaN`. The in-flight dot has no end
+ * yet and so has none.
  */
 export function commandDotStates(process: ProcessInfo): CommandDot[] {
   const dots: CommandDot[] = (process.executions ?? [])
@@ -90,10 +99,11 @@ export function commandDotStates(process: ProcessInfo): CommandDot[] {
     .map((execution) => ({
       label: execution.label,
       state: execution.resultCode === 0 ? 'ok' : 'failed',
+      durationSeconds: elapsedSeconds(execution.start, execution.end),
     }));
 
   if (process.status === 'WORKING' && process.currentCommand) {
-    dots.push({ label: process.currentCommand, state: 'running' });
+    dots.push({ label: process.currentCommand, state: 'running', durationSeconds: null });
   }
 
   return dots;

@@ -98,8 +98,10 @@ describe('ProcessTable', () => {
 
     render(<ProcessTable processes={[process]} />);
 
-    // Desktop row + mobile card both name the command that ran.
-    expect(screen.getAllByText('ship')).toHaveLength(2);
+    // The one 'ship' occurrence is the mobile card's `Last:` line — the desktop
+    // Commands cell is squares only. A skipped command's name reaches neither
+    // surface (asserted below for `hold` and `unexpected-answer`).
+    expect(screen.getAllByText('ship')).toHaveLength(1);
     expect(screen.queryByText('unexpected-answer')).not.toBeInTheDocument();
     expect(screen.queryByText('hold')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
@@ -115,18 +117,18 @@ describe('ProcessTable', () => {
     expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
   });
 
-  it('falls back to the empty cell when every execution was skipped', () => {
+  it('leaves the Commands cell empty when every execution was skipped', () => {
     const process = makeProcess({
       executions: [skippedExecution('deploy-eu')],
     });
 
     render(<ProcessTable processes={[process]} />);
 
-    const lastCommandIndex = screen
+    const commandsIndex = screen
       .getAllByRole('columnheader')
-      .findIndex((cell) => cell.textContent === 'Last Command');
+      .findIndex((cell) => cell.textContent === 'Commands');
     const dataRow = screen.getAllByRole('row')[1];
-    expect(within(dataRow).getAllByRole('cell')[lastCommandIndex]).toHaveTextContent('-');
+    expect(within(dataRow).getAllByRole('cell')[commandsIndex]).toBeEmptyDOMElement();
     // Neither surface names a skipped command, and the mobile card renders nothing.
     expect(screen.queryByText('deploy-eu')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Skipped')).not.toBeInTheDocument();
@@ -240,12 +242,14 @@ describe('ProcessTable', () => {
   });
 
   describe('icon-only row actions', () => {
-    it('renders Kill as an icon with a tooltip, not a text button', () => {
+    it('renders Kill as a red circle-with-cross icon with a tooltip, not a text button', () => {
       render(<ProcessTable processes={[makeProcess({ status: 'WORKING' })]} />);
 
       const kill = screen.getAllByLabelText('Kill process 42')[0];
       expect(kill).toHaveAttribute('title', 'Kill process');
       expect(kill.textContent).toBe('');
+      expect(kill.querySelector('.lucide-circle-x')).toHaveClass('text-red-500');
+      expect(kill.querySelector('.lucide-skull')).toBeNull();
     });
 
     it('renders Retry as an icon with a tooltip, not a text button', () => {
@@ -486,6 +490,42 @@ describe('ProcessTable', () => {
     });
   });
 
+  describe('column order', () => {
+    it('renders the desktop headers in order, with Commands where Last Command was', () => {
+      render(<ProcessTable processes={[makeProcess()]} />);
+
+      expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+        'Process ID',
+        'Agent Name',
+        'Commands',
+        'Status',
+        'Duration',
+        'Cost',
+        'Runner',
+        'Actions',
+      ]);
+      expect(screen.queryByRole('columnheader', { name: 'Last Command' })).not.toBeInTheDocument();
+    });
+
+    it('puts the Flow column before Actions when the flow slot is passed', () => {
+      render(
+        <ProcessTable processes={[makeProcess()]} flowSummary={(p) => <span>flow-of-{p.id}</span>} />,
+      );
+
+      expect(screen.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+        'Process ID',
+        'Agent Name',
+        'Commands',
+        'Status',
+        'Duration',
+        'Cost',
+        'Runner',
+        'Flow',
+        'Actions',
+      ]);
+    });
+  });
+
   describe('command dots', () => {
     it('shows one dot per executed command, plus the one running now', () => {
       const process = makeProcess({
@@ -501,12 +541,66 @@ describe('ProcessTable', () => {
       render(<ProcessTable processes={[process]} />);
 
       // Desktop row + mobile card, each carrying one dot per command that ran.
-      // Each dot names the command and its state for assistive technology.
-      expect(screen.getAllByLabelText('first: ok')).toHaveLength(2);
-      expect(screen.getAllByLabelText('boom: failed')).toHaveLength(2);
+      // Each dot names the command, its state and its duration (the default
+      // execution spans one second) for assistive technology; the in-flight one
+      // has no end yet, so it names no duration.
+      expect(screen.getAllByLabelText('first: ok (1s)')).toHaveLength(2);
+      expect(screen.getAllByLabelText('boom: failed (1s)')).toHaveLength(2);
       expect(screen.getAllByLabelText('cmd-running: running')).toHaveLength(2);
       // A command its `when:` condition skipped never ran, so it gets no dot.
       expect(screen.queryByLabelText('hold: failed')).not.toBeInTheDocument();
+    });
+
+    it('renders the Commands cell as squares only, with no command-name line', () => {
+      const process = makeProcess({
+        executions: [makeExecution({ label: 'write-report', resultCode: 0 })],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      const commandsIndex = screen
+        .getAllByRole('columnheader')
+        .findIndex((cell) => cell.textContent === 'Commands');
+      const dataRow = screen.getAllByRole('row')[1];
+      const cell = within(dataRow).getAllByRole('cell')[commandsIndex];
+
+      expect(cell.querySelectorAll('[role="img"]')).toHaveLength(1);
+      expect(cell).not.toHaveTextContent('write-report');
+      expect(cell.querySelector('[class*="grid-cols-6"]')).not.toBeNull();
+    });
+
+    it('names the duration only for a command that has a usable span', () => {
+      const process = makeProcess({
+        executions: [
+          makeExecution({ label: 'timed', start: 1_700_000_000, end: 1_700_000_065 }),
+          makeExecution({ label: 'reversed', start: 1_700_000_500, end: 1_700_000_000 }),
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(screen.getAllByLabelText('timed: ok (1m 5s)')).toHaveLength(2);
+      expect(screen.getAllByLabelText('reversed: ok')).toHaveLength(2);
+    });
+
+    it('keeps one square per command when a run has more than six', () => {
+      const executions = Array.from({ length: 7 }, (_, i) =>
+        makeExecution({ label: `c${i}`, resultCode: 0 }),
+      );
+
+      render(<ProcessTable processes={[makeProcess({ executions })]} />);
+
+      // Wrapping is layout only: the desktop Commands cell still holds all seven.
+      const dataRow = screen.getAllByRole('row')[1];
+      expect(within(dataRow).getAllByRole('img', { name: /^c[0-6]: ok/ })).toHaveLength(7);
+      expect(screen.getAllByLabelText(/^c6: ok/)).toHaveLength(2);
+      // The six-per-line grid is the desktop cell's alone; the mobile card's
+      // dot row keeps wrapping freely.
+      const grids = Array.from(document.querySelectorAll('.grid-cols-6'));
+      expect(grids).toHaveLength(1);
+      expect(dataRow.contains(grids[0])).toBe(true);
+      const mobileDotRow = document.querySelector('.space-y-1 > span');
+      expect(mobileDotRow?.className).toContain('flex-wrap');
     });
 
     it('renders no dots for a run that has executed nothing', () => {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Console
+
+- **Changed: the process list's Commands column** — Each run shows its command squares only, six to a line, with the command and, once it has ended, its duration in each square's tooltip; the columns are reordered and the kill button is a red circle-with-cross icon.
+
 ## [1.39.0] - 2026-11-02
 
 ### Console
