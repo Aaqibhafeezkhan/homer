@@ -19,7 +19,7 @@ import {
   type LastCommand,
   type LastCommandStatus,
 } from '@/lib/utils/process';
-import { X, Check, Loader2, MessageCircleQuestion, RotateCcw, Skull } from 'lucide-react';
+import { X, Check, Loader2, MessageCircleQuestion, RotateCcw, CircleX } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
 import { commandDotColor } from './workflow-dots';
 import { useNow } from '@/lib/hooks/use-now';
@@ -69,32 +69,42 @@ function renderLastCommandIcon(status: LastCommandStatus) {
   }
 }
 
+/** What a square announces: its command and state, plus how long it took when known. */
+function commandDotName(dot: CommandDot): string {
+  const name = `${dot.label}: ${dot.state}`;
+  return dot.durationSeconds === null ? name : `${name} (${formatDuration(0, dot.durationSeconds)})`;
+}
+
 /**
  * One square per command the run executed, coloured like the LangGraph dot
- * rows (`workflow-dots.ts`). The tooltip names the command and its state only
- * — no arguments, which the list never shows either (threat model, Secrets).
- * Each dot is `role="img"` with the same text as its accessible name: a bare
- * `title` on a generic span is not announced, and the dots are the only place
- * the row says which commands ran and how each ended.
+ * rows (`workflow-dots.ts`), six to a line with the rest wrapped below. The
+ * tooltip names the command, its state and its duration only — no arguments,
+ * which the list never shows either (threat model, Secrets). Each dot is
+ * `role="img"` with the same text as its accessible name: a bare `title` on a
+ * generic span is not announced, and the dots are the only place the row says
+ * which commands ran and how each ended.
  */
 function CommandDots({ dots }: { dots: CommandDot[] }) {
   if (dots.length === 0) return null;
 
   return (
-    <span className="inline-flex flex-wrap items-center gap-0.5">
-      {dots.map((dot, i) => (
-        <span
-          key={i}
-          role="img"
-          aria-label={`${dot.label}: ${dot.state}`}
-          title={`${dot.label}: ${dot.state}`}
-          className={cn(
-            'inline-block h-2 w-2 rounded-sm',
-            dot.state === 'running' && 'animate-pulse',
-          )}
-          style={{ backgroundColor: commandDotColor(dot.state) }}
-        />
-      ))}
+    <span className="grid w-fit grid-cols-6 gap-0.5">
+      {dots.map((dot, i) => {
+        const name = commandDotName(dot);
+        return (
+          <span
+            key={i}
+            role="img"
+            aria-label={name}
+            title={name}
+            className={cn(
+              'inline-block h-2 w-2 rounded-sm',
+              dot.state === 'running' && 'animate-pulse',
+            )}
+            style={{ backgroundColor: commandDotColor(dot.state) }}
+          />
+        );
+      })}
     </span>
   );
 }
@@ -102,33 +112,15 @@ function CommandDots({ dots }: { dots: CommandDot[] }) {
 interface CommandStatusProps {
   lastCmd: LastCommand;
   dots: CommandDot[];
-  variant: 'desktop' | 'mobile';
 }
 
 /**
- * Renders the command-progress dots above the last-command status fragment.
- * The desktop and mobile layouts intentionally differ in markup: desktop shows
- * a dash fallback and a muted label inside a span; mobile prefixes "Last:",
- * omits the dash fallback, and only renders when a label exists. The dots and
- * the icon logic are the shared parts. Both come from the row, which computes
- * the dots once per render.
+ * The mobile card's command block: the dots above the last-command status
+ * fragment. The desktop table renders `CommandDots` alone as its Commands cell.
+ * The dots and the icon logic are the shared parts; both come from the row,
+ * which computes the dots once per render.
  */
-function CommandStatus({ lastCmd, dots, variant }: CommandStatusProps) {
-  if (variant === 'desktop') {
-    if (!lastCmd.status) {
-      return <span className="text-sm text-muted-foreground">-</span>;
-    }
-    return (
-      <div className="space-y-1">
-        <CommandDots dots={dots} />
-        <span className="flex items-center gap-1 text-sm">
-          {renderLastCommandIcon(lastCmd.status)}
-          <span className="text-muted-foreground">{lastCmd.label}</span>
-        </span>
-      </div>
-    );
-  }
-
+function CommandStatus({ lastCmd, dots }: CommandStatusProps) {
   if (!lastCmd.label) return null;
   return (
     <div className="space-y-1">
@@ -260,7 +252,7 @@ function RowActions({ process, actions }: { process: ProcessInfo; actions: Proce
           title="Kill process"
           aria-label={`Kill process ${process.id}`}
         >
-          <Skull className="h-4 w-4" aria-hidden="true" />
+          <CircleX className="h-4 w-4 text-red-500" aria-hidden="true" />
         </Button>
       )}
       {isRetryableStatus(process.status) && cap.canRetryProcess(process) && (
@@ -290,10 +282,7 @@ interface ProcessRowProps {
 }
 
 function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessRowProps) {
-  // One pass over the executions per row: the dots row and the Last Command
-  // icon share it, so a re-render classifies them once, not once per surface.
   const dots = commandDotStates(process);
-  const lastCmd = lastCommandFromDots(dots);
   return (
     <TableRow
       className="cursor-pointer"
@@ -316,6 +305,7 @@ function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessR
           <TagChips tags={process.tags} onTagClick={onTagClick} className="mt-1" />
         )}
       </TableCell>
+      <TableCell><CommandDots dots={dots} /></TableCell>
       <TableCell>
         <span className="flex items-center gap-2">
           <StatusBadge status={process.status} variant="icon" />
@@ -325,9 +315,6 @@ function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessR
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">
         <DurationCell process={process} now={now} />
-      </TableCell>
-      <TableCell>
-        <CommandStatus lastCmd={lastCmd} dots={dots} variant="desktop" />
       </TableCell>
       <TableCell><CostCell process={process} /></TableCell>
       <TableCell><RunnerCell process={process} /></TableCell>
@@ -348,9 +335,9 @@ function DesktopTable({
           <TableRow>
             <TableHead>Process ID</TableHead>
             <TableHead>Agent Name</TableHead>
+            <TableHead>Commands</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Duration</TableHead>
-            <TableHead>Last Command</TableHead>
             <TableHead>Cost</TableHead>
             <TableHead>Runner</TableHead>
             {rowProps.flowSummary && <TableHead>Flow</TableHead>}
@@ -399,7 +386,7 @@ function MobileCard({ process, onTagClick, flowSummary, actions, now }: ProcessR
           <span className="text-muted-foreground">Runner:</span> <RunnerCell process={process} />
         </div>
       )}
-      <CommandStatus lastCmd={lastCmd} dots={dots} variant="mobile" />
+      <CommandStatus lastCmd={lastCmd} dots={dots} />
       <div className="text-sm text-muted-foreground">
         Duration: <DurationCell process={process} now={now} />
       </div>

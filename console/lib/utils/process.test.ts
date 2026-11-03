@@ -242,8 +242,8 @@ describe('commandDotStates', () => {
       ],
     });
     expect(commandDotStates(process)).toEqual([
-      { label: 'first', state: 'ok' },
-      { label: 'boom', state: 'failed' },
+      { label: 'first', state: 'ok', durationSeconds: 1 },
+      { label: 'boom', state: 'failed', durationSeconds: 1 },
     ]);
   });
 
@@ -251,7 +251,9 @@ describe('commandDotStates', () => {
     const process = makeProcess({
       executions: [makeExecution({ label: 'ran', resultCode: 0 }), skipped('hold')],
     });
-    expect(commandDotStates(process)).toEqual([{ label: 'ran', state: 'ok' }]);
+    expect(commandDotStates(process)).toEqual([
+      { label: 'ran', state: 'ok', durationSeconds: 1 },
+    ]);
   });
 
   it('appends the in-flight command as running for a WORKING run', () => {
@@ -261,8 +263,8 @@ describe('commandDotStates', () => {
       executions: [makeExecution({ label: 'ran', resultCode: 0 })],
     });
     expect(commandDotStates(process)).toEqual([
-      { label: 'ran', state: 'ok' },
-      { label: 'cmd-running', state: 'running' },
+      { label: 'ran', state: 'ok', durationSeconds: 1 },
+      { label: 'cmd-running', state: 'running', durationSeconds: null },
     ]);
   });
 
@@ -272,12 +274,52 @@ describe('commandDotStates', () => {
       currentCommand: null,
       executions: [makeExecution({ label: 'ran', resultCode: 0 })],
     });
-    expect(commandDotStates(process)).toEqual([{ label: 'ran', state: 'ok' }]);
+    expect(commandDotStates(process)).toEqual([
+      { label: 'ran', state: 'ok', durationSeconds: 1 },
+    ]);
   });
 
   it('returns no dots when nothing ran', () => {
     expect(commandDotStates(makeProcess({ executions: [] }))).toEqual([]);
     expect(commandDotStates(makeProcess({ executions: [skipped('a')] }))).toEqual([]);
+  });
+
+  it('carries the span from the execution start to its end', () => {
+    const process = makeProcess({
+      executions: [makeExecution({ start: 1_700_000_000, end: 1_700_000_042 })],
+    });
+    expect(commandDotStates(process)).toEqual([
+      { label: 'cmd-0', state: 'ok', durationSeconds: 42 },
+    ]);
+  });
+
+  it.each<[string, number, number]>([
+    ['a NaN end', 1_700_000_000, NaN],
+    ['an infinite start', -Infinity, 1_700_000_000],
+    ['a reversed span', 1_700_000_500, 1_700_000_000],
+  ])('leaves the duration null for %s', (_name, start, end) => {
+    // The span is agent-written, so a malformed one must not become a `NaN` in
+    // the tooltip.
+    const process = makeProcess({ executions: [makeExecution({ start, end })] });
+    expect(commandDotStates(process)[0].durationSeconds).toBeNull();
+  });
+
+  it('leaves the duration null when the execution carries no span at all', () => {
+    const process = makeProcess({
+      executions: [makeExecution({ start: undefined, end: undefined })],
+    });
+    expect(commandDotStates(process)[0].durationSeconds).toBeNull();
+  });
+
+  it('gives the in-flight dot no duration, since it has no end yet', () => {
+    const process = makeProcess({
+      status: 'WORKING',
+      currentCommand: 'cmd-running',
+      executions: [],
+    });
+    expect(commandDotStates(process)).toEqual([
+      { label: 'cmd-running', state: 'running', durationSeconds: null },
+    ]);
   });
 });
 
@@ -296,6 +338,8 @@ describe('runDurationSeconds / commandDotStates (property-based)', () => {
         label: fc.string({ minLength: 1, maxLength: 12 }),
         resultCode: fc.integer({ min: -1, max: 5 }),
         skipped: fc.option(fc.boolean(), { nil: undefined }),
+        start: fc.oneof(fc.integer(), fc.constant(NaN), fc.constant(-Infinity)),
+        end: fc.oneof(fc.integer(), fc.constant(NaN), fc.constant(Infinity)),
       }),
       { maxLength: 8 },
     ),
@@ -319,15 +363,30 @@ describe('runDurationSeconds / commandDotStates (property-based)', () => {
 
         // One dot per execution that ran, in order, plus the in-flight one —
         // computed here from the raw execution list, independently of the code.
+        const span = (e: { start: number; end: number }) => {
+          const seconds = e.end - e.start;
+          return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+        };
         const expected = [
           ...p.executions
             .filter((e) => !e.skipped)
-            .map((e) => ({ label: e.label, state: e.resultCode === 0 ? 'ok' : 'failed' })),
+            .map((e) => ({
+              label: e.label,
+              state: e.resultCode === 0 ? 'ok' : 'failed',
+              durationSeconds: span(e),
+            })),
           ...(p.status === 'WORKING' && p.currentCommand
-            ? [{ label: p.currentCommand, state: 'running' }]
+            ? [{ label: p.currentCommand, state: 'running', durationSeconds: null }]
             : []),
         ];
         expect(commandDotStates(made)).toEqual(expected);
+        // Whatever the span, a dot never carries a malformed duration.
+        for (const dot of commandDotStates(made)) {
+          expect(
+            dot.durationSeconds === null ||
+              (Number.isFinite(dot.durationSeconds) && dot.durationSeconds >= 0),
+          ).toBe(true);
+        }
       }),
     );
   });
