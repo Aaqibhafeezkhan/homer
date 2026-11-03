@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Homer watches your agents, so you don't have to.</b><br>
-  Run Claude Code, Codex, LangGraph and plain old shell scripts as background jobs —<br>
+  Run Claude Code, Codex, opencode, LangGraph and plain old shell scripts as background jobs —<br>
   with queues, locks, spend caps, and a human on call when it matters.
 </p>
 
@@ -151,15 +151,18 @@ run yourself after the [Quick start](#next-a-durable-langgraph-workflow):
   concurrency.
 - **Guardrails** — lock strategies, parallel-run caps, cooldowns, cron
   schedules, and LLM spend caps with a persistent cost ledger.
-- **Human in the loop** — agents ask the operator and wait for the answer, or
-  fire a follow-up agent once it arrives.
+- **Human in the loop** — agents ask the operator and wait for the answer, fire a
+  follow-up agent once it arrives, or read a message an operator sends to a running
+  run through its per-run inbox (`homer-inbox`, Claude hooks, the `check_messages`
+  MCP tool).
 - **MCP server** — expose opted-in agents as MCP tools.
 - **Auth and grants** — bearer, HMAC, and password auth, with per-agent
   `run` / `read` / `control` / `edit` / `debug` grants.
 - **Observability** — OpenTelemetry traces, Langfuse integration, and
   Langfuse-managed prompts.
-- **Web console** — processes, live logs, questions inbox, costs, and an
-  agent editor.
+- **Web console** — processes, live logs, questions inbox, per-run messages,
+  costs, an agent editor, agent-group tabs, and a banner while maintenance mode
+  holds the server still.
 
 ## How it fits together
 
@@ -222,10 +225,12 @@ The stack pulls the published release images
 (`ghcr.io/livesport/homer/homer-app` and `ghcr.io/livesport/homer/homer-console`),
 so nothing is built locally and no JDK or Maven Central access is needed.
 The first start downloads under 1 GB of images and needs under 3 GB of disk;
-the largest part is the Claude Code and Codex CLIs bundled in `homer-app`,
-about 270 MB of the download.
+the largest part is the Claude Code, Codex and opencode CLIs bundled in `homer-app`.
 `HOMER_VERSION` in `.env` selects the release and defaults to the pinned current
-one. To build from source instead, add the build overlay:
+one; a deployment whose agents all run on pull runners can pull the slim
+`homer-app:<version>-slim` server image instead, which leaves the agent CLIs out
+([ADR-0094](docs/adr/0094-slim-server-image-for-pull-runner-deployments.md)).
+To build from source instead, add the build overlay:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
@@ -394,7 +399,7 @@ Install the YAML extension (Red Hat) and add to `.vscode/settings.json`:
   },
   "yaml.customTags": [
     "!<cmd> mapping", "!<script> mapping", "!<claude> mapping", "!<codex> mapping",
-    "!<langgraph> mapping", "!<runnerCmd> mapping", "!<agent> mapping",
+    "!<opencode> mapping", "!<langgraph> mapping", "!<runnerCmd> mapping", "!<agent> mapping",
     "!<pass>", "!<pass> mapping", "!<jsonPath> mapping", "!<regex> mapping",
     "!<prompt> mapping", "!<langfuse> mapping",
     "!<bearer> mapping", "!<hmac> mapping", "!<password> mapping", "!<combined> mapping",
