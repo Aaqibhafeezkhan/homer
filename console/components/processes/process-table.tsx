@@ -77,18 +77,21 @@ function commandDotName(dot: CommandDot): string {
 
 /**
  * One square per command the run executed, coloured like the LangGraph dot
- * rows (`workflow-dots.ts`), six to a line with the rest wrapped below. The
- * tooltip names the command, its state and its duration only — no arguments,
- * which the list never shows either (threat model, Secrets). Each dot is
- * `role="img"` with the same text as its accessible name: a bare `title` on a
- * generic span is not announced, and the dots are the only place the row says
- * which commands ran and how each ended.
+ * rows (`workflow-dots.ts`). The tooltip names the command, its state and its
+ * duration only — no arguments, which the list never shows either (threat
+ * model, Secrets). Each dot is `role="img"` with the same text as its
+ * accessible name: a bare `title` on a generic span is not announced, and the
+ * dots are the only place the row says which commands ran and how each ended.
+ *
+ * `sixPerLine` pins the squares to a six-per-line grid — the desktop Commands
+ * cell, which the ticket scopes the wrap to. The mobile card keeps the free
+ * wrap it always had.
  */
-function CommandDots({ dots }: { dots: CommandDot[] }) {
+function CommandDots({ dots, sixPerLine = false }: { dots: CommandDot[]; sixPerLine?: boolean }) {
   if (dots.length === 0) return null;
 
   return (
-    <span className="grid w-fit grid-cols-6 gap-0.5">
+    <span className={sixPerLine ? 'grid w-fit grid-cols-6 gap-0.5' : 'inline-flex flex-wrap items-center gap-0.5'}>
       {dots.map((dot, i) => {
         const name = commandDotName(dot);
         return (
@@ -305,7 +308,7 @@ function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessR
           <TagChips tags={process.tags} onTagClick={onTagClick} className="mt-1" />
         )}
       </TableCell>
-      <TableCell><CommandDots dots={dots} /></TableCell>
+      <TableCell><CommandDots dots={dots} sixPerLine /></TableCell>
       <TableCell>
         <span className="flex items-center gap-2">
           <StatusBadge status={process.status} variant="icon" />

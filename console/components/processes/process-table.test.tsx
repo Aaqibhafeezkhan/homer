@@ -98,8 +98,9 @@ describe('ProcessTable', () => {
 
     render(<ProcessTable processes={[process]} />);
 
-    // The mobile card names the command that ran; the desktop Commands cell is
-    // squares only, so the name reaches neither surface for a skipped command.
+    // The one 'ship' occurrence is the mobile card's `Last:` line — the desktop
+    // Commands cell is squares only. A skipped command's name reaches neither
+    // surface (asserted below for `hold` and `unexpected-answer`).
     expect(screen.getAllByText('ship')).toHaveLength(1);
     expect(screen.queryByText('unexpected-answer')).not.toBeInTheDocument();
     expect(screen.queryByText('hold')).not.toBeInTheDocument();
@@ -593,6 +594,13 @@ describe('ProcessTable', () => {
       const dataRow = screen.getAllByRole('row')[1];
       expect(within(dataRow).getAllByRole('img', { name: /^c[0-6]: ok/ })).toHaveLength(7);
       expect(screen.getAllByLabelText(/^c6: ok/)).toHaveLength(2);
+      // The six-per-line grid is the desktop cell's alone; the mobile card's
+      // dot row keeps wrapping freely.
+      const grids = Array.from(document.querySelectorAll('.grid-cols-6'));
+      expect(grids).toHaveLength(1);
+      expect(dataRow.contains(grids[0])).toBe(true);
+      const mobileDotRow = document.querySelector('.space-y-1 > span');
+      expect(mobileDotRow?.className).toContain('flex-wrap');
     });
 
     it('renders no dots for a run that has executed nothing', () => {

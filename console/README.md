@@ -170,7 +170,8 @@ view) and **Actions**. The **Commands** cell carries one square per command
 that executed — green for success, red for failure, a pulsing blue square for
 the one running now — six to a line, with any further squares wrapped onto the
 next line, so a run's progress reads at a glance without a second text line.
-Hovering a square names the command, its state and how long it took. The
+Hovering a square names the command, its state and how long it took — the
+square of the command still running names no duration yet. The
 **Duration** column shows how long the run has been going: from its first
 status-history entry to the last one once it has ended, and to now while it
 still runs. Status is a single icon whose tooltip and accessible name give the
