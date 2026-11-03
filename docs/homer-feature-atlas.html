@@ -3510,11 +3510,15 @@ CONSOLE_THEME_MODES=light:corp-light,dark:corp-dark</code></pre>
 
         <article class="f">
           <h3>Docker stack <span class="where">docker</span></h3>
-          <p>Backend plus console in one compose file, which pulls the published release images (<code>HOMER_VERSION</code>
-            picks the release tag; each image ships for <code>linux/amd64</code> and <code>linux/arm64</code>; each release
+          <p>Backend plus console in one compose file, which pulls the published release images from GHCR
+            (<code>HOMER_VERSION</code> picks the release tag; each image ships for <code>linux/amd64</code> and
+            <code>linux/arm64</code>, is signed with cosign and carries SLSA provenance and a CycloneDX SBOM
+            (ADR-0086); each release
             also publishes a <code>-slim</code> server image without the agent CLIs — Claude Code, Codex, Node.js, git —
             for a deployment whose agents run on pull runners, ADR-0094); development, production and build-from-source overlays stack on it, and the e2e
-            suite is its own standalone compose stack. The dev overlay starts no debug listener: JDWP is opt-in, and the
+            suite is its own standalone compose stack. The <code>homer-app</code> image installs a pinned Codex and
+            opencode CLI release, overridable with the <code>CODEX_VERSION</code> and <code>OPENCODE_VERSION</code>
+            build arguments. The dev overlay starts no debug listener: JDWP is opt-in, and the
             debug overlay binds the container's loopback and publishes nothing (attach through a tunnel); build with
             <code>HOMER_DEBUG=1</code> (a build argument) to bundle <code>agentdebug</code>.</p>
           <pre><code>cp .env.example .env

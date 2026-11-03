@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Homer
   text: Run agents in the background, with guardrails
-  tagline: An asynchronous execution orchestrator. Define an agent as a list of commands — shell, Claude Code, Codex, LangGraph, other agents — and trigger it over HTTP, from cron or through MCP.
+  tagline: An asynchronous execution orchestrator. Define an agent as a list of commands — shell, Claude Code, Codex, opencode, LangGraph, other agents — and trigger it over HTTP, from cron or through MCP.
   actions:
     - theme: brand
       text: Get started
@@ -18,8 +18,8 @@ hero:
 features:
   - title: Async HTTP API
     details: A run call returns a process id at once. Follow the run through status, SSE streams or the web console.
-  - title: Seven command types
-    details: Shell commands and scripts, Claude Code and Codex sessions, nested agents, durable LangGraph workflows, and steps on another runner.
+  - title: Eight command types
+    details: Shell commands and scripts, Claude Code, Codex and opencode sessions, nested agents, durable LangGraph workflows, and steps on another runner.
   - title: Pluggable runners
     details: Run locally, on ssh hosts, as Kubernetes pods, or on pull-mode runners, with tag-based routing and per-runner concurrency.
   - title: Concurrency and cost control
