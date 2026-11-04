@@ -16,6 +16,7 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 import { changedLines, gitDiff, worktreeChanges } from '../../tools/quality/git-diff.mjs';
+import { mutationScore } from '../../tools/quality/lib.mjs';
 import { isScoredPath } from './crap.mjs';
 import { CONSOLE_DIR, REPORTS_DIR, printReport, repoPath, runTool, writeReports } from './quality-report.mjs';
 
@@ -112,9 +113,7 @@ export function mutationStats(report) {
     errors: count('CompileError') + count('RuntimeError'),
     ignored: count('Ignored'),
   };
-  const detected = stats.killed + stats.timeout;
-  const valid = detected + stats.survived + stats.noCoverage;
-  return { score: valid === 0 ? 'n/a' : ((100 * detected) / valid).toFixed(1), ...stats };
+  return { score: mutationScore(stats), ...stats };
 }
 
 function changedSince(base) {

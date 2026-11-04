@@ -36,6 +36,37 @@ test('descriptions are decoded from XML', () => {
   assert.equal(m.description, 'replaced return value with "" for a<b> & c→d');
 });
 
+test('decodeXml resolves decimal character references', () => {
+  assert.equal(decodeXml('a&#8230;b&#60;'), 'a…b<');
+});
+
+test('a double-quoted status is read, a missing one is UNKNOWN', () => {
+  const doubleQuoted = mutation('SURVIVED').replace("status='SURVIVED'", 'status="SURVIVED"');
+  const noStatus = mutation('KILLED').replace("status='KILLED' ", '');
+  assert.deepEqual(
+    parseMutations(report(doubleQuoted, noStatus)).map((m) => m.status),
+    ['SURVIVED', 'UNKNOWN'],
+  );
+});
+
+test('a mutation without a source file or line still gets a path and line 1', () => {
+  const bare = mutation('SURVIVED').replace('<sourceFile>A.kt</sourceFile>', '').replace('<lineNumber>7</lineNumber>', '');
+  const [m] = parseMutations(report(bare));
+  assert.equal(m.path, 'app/app/src/main/kotlin/homer/app/config');
+  assert.equal(m.line, 1);
+});
+
+test('a multi-line method or description stays one finding line', () => {
+  const [finding] = pitFindings(parseMutations(report(mutation('SURVIVED', { method: 'run\n', description: 'replaced\n  return value' }))));
+  assert.equal(finding.message, 'survived: run → replaced return value');
+});
+
+test('a status outside the scored set counts as an error and is no finding', () => {
+  const mutations = parseMutations(report(mutation('KILLED'), mutation('SOME_NEW_STATUS'), mutation('NOT_STARTED')));
+  assert.deepEqual(pitFindings(mutations), []);
+  assert.deepEqual(pitStats(mutations), { score: '100.0', killed: 1, survived: 0, noCoverage: 0, timeout: 0, errors: 2 });
+});
+
 test('decodeXml leaves an out-of-range character reference as it is', () => {
   assert.equal(decodeXml('&#x110000;'), '&#x110000;');
 });

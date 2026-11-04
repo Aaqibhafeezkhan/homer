@@ -7,7 +7,7 @@
  * (tools/quality/step-summary.mjs).
  */
 import fs from 'node:fs';
-import { runMain, writeCheck } from './lib.mjs';
+import { mutationScore, runMain, writeCheck } from './lib.mjs';
 
 const CHECK = 'mutation-backend';
 const REPORT_DIR = 'app/app/build/reports/pitest';
@@ -44,31 +44,33 @@ export function parseMutations(xml) {
   });
 }
 
+// The report and the job summary read one line per finding, and PIT's XML writer keeps newlines.
+const oneLine = (text) => text.replace(/\s+/g, ' ').trim();
+
 /** One finding per survived or uncovered mutant, in file and line order. */
 export function pitFindings(mutations) {
   return mutations
-    .filter((m) => m.status in FINDING_STATUSES)
-    .map((m) => ({ path: m.path, line: m.line, message: `${FINDING_STATUSES[m.status]}: ${m.method} → ${m.description}`, severity: 'minor' }))
+    .filter((m) => Object.hasOwn(FINDING_STATUSES, m.status))
+    .map((m) => ({
+      path: m.path,
+      line: m.line,
+      message: `${FINDING_STATUSES[m.status]}: ${oneLine(m.method)} → ${oneLine(m.description)}`,
+      severity: 'minor',
+    }))
     .sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
+const SCORED = { KILLED: 'killed', SURVIVED: 'survived', NO_COVERAGE: 'noCoverage', TIMED_OUT: 'timeout' };
+
 /**
- * Mutant counts in the console report's terms (console/scripts/mutation.mjs) and its score:
- * detected (killed or timed out) / (detected + survived + uncovered). PIT's memory and run errors
- * and non-viable mutants are errors, outside the score.
+ * Mutant counts in the console report's terms (console/scripts/mutation.mjs) and the shared
+ * score (`mutationScore`). Every other status (memory and run errors, non-viable, not started,
+ * one PIT adds later) is an error, outside the score, so the counts always add up to the total.
  */
 export function pitStats(mutations) {
-  const count = (...statuses) => mutations.filter((m) => statuses.includes(m.status)).length;
-  const stats = {
-    killed: count('KILLED'),
-    survived: count('SURVIVED'),
-    noCoverage: count('NO_COVERAGE'),
-    timeout: count('TIMED_OUT'),
-    errors: count('MEMORY_ERROR', 'RUN_ERROR', 'NON_VIABLE'),
-  };
-  const detected = stats.killed + stats.timeout;
-  const valid = detected + stats.survived + stats.noCoverage;
-  return { score: valid === 0 ? 'n/a' : ((100 * detected) / valid).toFixed(1), ...stats };
+  const stats = { killed: 0, survived: 0, noCoverage: 0, timeout: 0, errors: 0 };
+  for (const m of mutations) stats[Object.hasOwn(SCORED, m.status) ? SCORED[m.status] : 'errors'] += 1;
+  return { score: mutationScore(stats), ...stats };
 }
 
 export function main([xmlFile = `${REPORT_DIR}/mutations.xml`, outDir = REPORT_DIR]) {

@@ -129,8 +129,8 @@ table CI does, once the reports exist.
 | Black-box E2E suite against the production backend image (also proves `app/Dockerfile` builds) | `homer-e2e` | see [`app/e2e/README.md`](../app/e2e/README.md) |
 | Known CVEs in backend dependencies (OWASP dependency-check, NVD data from the dependency-check project's daily mirror) | `dependency-check` (Nightly workflow): nightly, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:dependencyCheckAnalyze :homer-runner:dependencyCheckAnalyze` |
 | Console image must not ship LGPL-3.0 `libvips` | `images` job of the Release workflow (tags, and `workflow_dispatch` builds of a protected branch) | — |
-| Backend mutation-testing pilot (PIT, `homer.app.config`); score and surviving mutants in the run's job summary | `backend-mutation` (Nightly workflow): nightly, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:pitest`, then `node tools/quality/pit.mjs` |
-| Full console mutation run (~7,500 mutants); score and surviving mutants in the run's job summary | `console-mutation-full` (Nightly workflow): manual, `workflow_dispatch` with `full-console-mutation` | `cd console && npm run mutation` |
+| Backend mutation-testing pilot (PIT, `homer.app.config`); score and undetected (survived or uncovered) mutants in the run's job summary | `backend-mutation` (Nightly workflow): nightly, or run by hand with `workflow_dispatch` | `app/gradlew -p app :app:pitest`, then `node tools/quality/pit.mjs` |
+| Full console mutation run (~7,500 mutants); score and undetected (survived or uncovered) mutants in the run's job summary | `console-mutation-full` (Nightly workflow): manual, `workflow_dispatch` with `full-console-mutation` | `cd console && npm run mutation` |
 
 ## Conventions the checks back up
 

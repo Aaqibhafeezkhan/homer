@@ -1,7 +1,8 @@
 # Scheduled and manual checks: dependency-check, the backend mutation pilot and the full console
 # mutation run. The schedule skips them in a private copy of the repository, whose Actions minutes
 # go to per-commit CI. workflow_dispatch runs them at any time. Each mutation job writes its score
-# and surviving mutants to the run's job summary (tools/quality/step-summary.mjs).
+# and undetected (survived or uncovered) mutants to the run's job summary
+# (tools/quality/step-summary.mjs).
 name: Nightly
 
 on:

@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { codeQuality, formatSummary, parseSummary, repoRelative, sha1, writeCheck } from './lib.mjs';
+import { codeQuality, formatSummary, mutationScore, parseSummary, repoRelative, sha1, writeCheck } from './lib.mjs';
+
+test('the mutation score is detected over detected, survived and uncovered', () => {
+  assert.equal(mutationScore({ killed: 3, timeout: 1, survived: 1, noCoverage: 1 }), '66.7');
+  assert.equal(mutationScore({ killed: 0, timeout: 0, survived: 0, noCoverage: 0 }), 'n/a');
+});
 
 test('fingerprints ignore the line, so a finding keeps its identity when it moves', () => {
   const at = (line) => codeQuality('c', [{ path: 'a.kt', line, message: 'm' }])[0].fingerprint;
