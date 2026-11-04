@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -15,7 +16,8 @@ import kotlin.test.assertTrue
  *
  * Each pin is declared three times — `app/Dockerfile`, the `docker-compose.build.yml` build
  * overlay and the `DOCKER.md` build-arguments table — and this test is what keeps the three
- * from drifting apart.
+ * from drifting apart. The Claude Code pin is also tied to the newest committed capture, so a
+ * bump cannot ship a release no recorded stream was taken from (ADR-0057).
  */
 class CliVersionPinTest {
     /** Build argument → the npm package it pins. */
@@ -98,5 +100,64 @@ class CliVersionPinTest {
             "the agent-CLI install instruction names a credential-looking build arg; an ARG is readable in " +
                 "`docker history`. Use a BuildKit secret instead: `$install`",
         )
+    }
+
+    /**
+     * The Claude Code release a capture was recorded from, as `name to version`. The captures are
+     * the streams ADR-0057 verifies a bump with, so a pin no capture reports is a pin nothing tested.
+     */
+    private fun captureVersions(): List<Pair<String, String>> =
+        File(
+            requireNotNull(javaClass.getResource("/claude")) { "missing test resource directory /claude" }.toURI(),
+        ).listFiles { it.extension == "jsonl" }
+            .orEmpty()
+            .mapNotNull { capture -> versionIn(capture.readText())?.let { capture.name to it } }
+
+    private fun versionIn(capture: String): String? =
+        Regex(""""claude_code_version"\s*:\s*"([^"]+)"""")
+            .find(capture)
+            ?.groupValues
+            ?.get(1)
+
+    /** A release as a comparable key; a value that is not `x.y.z` sorts below every release. */
+    private fun releaseKey(version: String): String =
+        version.split('.').joinToString(".") { (it.toIntOrNull() ?: -1).toString().padStart(8, '0') }
+
+    @Test
+    fun `the Dockerfile pin is the release the newest capture was recorded from`() {
+        val newest =
+            assertNotNull(
+                captureVersions().maxByOrNull { (_, version) -> releaseKey(version) },
+                "no capture under app/app/src/test/resources/claude/ reports a claude_code_version; " +
+                    "the pinned CLI would then be verified by no real stream (ADR-0057).",
+            )
+        assertEquals(
+            dockerfileDefault("CLAUDE_CODE_VERSION"),
+            newest.second,
+            "app/Dockerfile must pin the release the newest capture (${newest.first}) was recorded from; " +
+                "otherwise a bump ships a CLI no capture covers and the harness tests keep verifying an older " +
+                "one. A bump needs a capture from the new release (ADR-0057).",
+        )
+    }
+
+    @Test
+    fun `every DOCKER md build example uses the pinned Claude Code release`() {
+        val pinned = dockerfileDefault("CLAUDE_CODE_VERSION")
+        val examples =
+            Regex("""CLAUDE_CODE_VERSION=(\S+)""")
+                .findAll(File(repoRoot, "DOCKER.md").readText())
+                .map { it.groupValues[1] }
+                .toList()
+        assertTrue(
+            examples.isNotEmpty(),
+            "DOCKER.md no longer shows a CLAUDE_CODE_VERSION build example; move this guard with the section.",
+        )
+        for (example in examples) {
+            assertEquals(
+                pinned,
+                example,
+                "DOCKER.md's build examples must use the release app/Dockerfile pins; found `$example`.",
+            )
+        }
     }
 }

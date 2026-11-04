@@ -19,6 +19,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -631,6 +632,14 @@ class ClaudeHarnessTest {
         requireNotNull(javaClass.getResourceAsStream("/claude/$name")) { "missing test resource /claude/$name" }
             .use { it.readBytes().decodeToString() }
 
+    /** Every capture committed under `src/test/resources/claude/`, as `name to text`. */
+    private fun captures(): List<Pair<String, String>> =
+        File(requireNotNull(javaClass.getResource("/claude")) { "missing test resource directory /claude" }.toURI())
+            .listFiles { it.extension == "jsonl" }
+            .orEmpty()
+            .sortedBy { it.name }
+            .map { it.name to it.readText() }
+
     /** Every event the harness reads out of a capture, in stream order. */
     private fun eventsOf(text: String): List<LlmEvent> =
         text
@@ -683,8 +692,7 @@ class ClaudeHarnessTest {
     }
 
     @Test
-    fun `the pinned CLI capture carries no secret-looking string`() {
-        val text = capture("cli-2.1.318-stream.jsonl")
+    fun `every committed CLI capture carries no secret-looking string`() {
         val forbidden =
             mapOf(
                 "an Anthropic API key" to Regex("""sk-ant-"""),
@@ -693,25 +701,29 @@ class ClaudeHarnessTest {
                 "an unresolved @SYSENV reference" to Regex("""@SYSENV"""),
                 "a real home directory" to Regex("""/home/(?!agent/)"""),
             )
-        for ((what, pattern) in forbidden) {
-            assertFalse(
-                pattern.containsMatchIn(text),
-                "the capture holds $what (${pattern.pattern}); scrub it before committing (root CLAUDE.md §12 rule 7)",
-            )
+        val captures = captures()
+        assertTrue(captures.isNotEmpty(), "no capture found under src/test/resources/claude/")
+        for ((name, text) in captures) {
+            for ((what, pattern) in forbidden) {
+                assertFalse(
+                    pattern.containsMatchIn(text),
+                    "$name holds $what (${pattern.pattern}); scrub it before committing (root CLAUDE.md §12 rule 7)",
+                )
+            }
         }
     }
 
     @Test
     fun `an unknown field and a truncated line from the pinned CLI degrade instead of throwing`() {
         val text = capture("cli-2.1.318-stream.jsonl")
-        val init = text.lineSequence().first { it.isNotBlank() }
-        // A field this CLI version adds: `ignoreUnknownKeys` must tolerate it on a line Homer reads.
-        val withUnknownField = line(init.dropLast(1) + ""","homer_unknown_field":{"nested":[1,2]}}""")
+        val tail = text.lineSequence().filter { it.isNotBlank() }.last()
+        // A field this CLI version adds to the capture's last line, which Homer decodes into a typed
+        // model: `ignoreUnknownKeys` must tolerate it, or the line would turn Malformed.
+        val withUnknownField = line(tail.dropLast(1) + ""","homer_unknown_field":{"nested":[1,2]}}""")
         assertIs<Translation.Events>(harness.translate(withUnknownField))
         assertEquals(Translation.Ignored, harness.translate(line("""{"type":"homer_new_event","payload":1}""")))
 
         // A killed CLI's truncated tail and a bare non-object line: skipped and counted, never thrown.
-        val tail = text.lineSequence().filter { it.isNotBlank() }.last()
         val lenient = parseNdjsonLenient(sequenceOf(tail.take(40), "[1,2,3]", "not json at all"))
         assertEquals(0, lenient.events.size)
         assertEquals(3L, lenient.skippedLines)
