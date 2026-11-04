@@ -87,6 +87,22 @@ removed on `unregisterConsumer` (ADR-0096).
   `take()`, never in `submit`: the claim route's long-poll relies on
   nothing suspending after the claim inside `take()`.
 
+A run whose agent declares `runnerAffinity` (`{group, waitSec}`) carries a
+`ClaimAffinity`: the key is `(rootProcessId, group)` — the flow root from the
+run's own Homer-stamped session params (ADR-0058) — and `RunnerAffinityMemory`,
+an in-process LRU+TTL, resolves it to the instance that claimed the flow's
+previous run. A matching consumer that is not that instance passes the request
+over until `waitSec` passes, and the preferred instance takes it ahead of older
+requests it also matches; the run is claimable by anyone at once when the
+preferred instance is unregistered, draining or filter-mismatched, and the wait
+is clamped to the claim TTL. A consumer that has jumped `MAX_JUMPS` requests in
+a row must take the oldest match, so a preference cannot starve an agent that
+declares none. Identity is the consumer's `affinityInstance`: a static runner's
+alias, an external instance's registered name qualified by its domain, and null
+for a nameless instance, which therefore records nothing. The preference is
+scheduling state only — no run record or response field carries it (ADR-0077,
+ADR-0099).
+
 An `!<external>` domain (`ExternalRunnerDomain`) is a `Runner` only for the
 facets `QueuedRunner` reads; its sessions are created by the claim route
 (`RunnerProtocolRoutes`) when an instance's long-poll takes a request. An

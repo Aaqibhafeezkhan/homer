@@ -3,6 +3,7 @@ package homer.app.runners.queue
 import homer.app.exceptions.ClaimQueueFullException
 import homer.app.exceptions.RunnerClaimTimeoutException
 import homer.app.fixtures.TestFixtures
+import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerFilter
 import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
@@ -12,6 +13,7 @@ import io.opentelemetry.context.Context
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -21,26 +23,41 @@ import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class RunnerClaimQueueTest {
-    private fun params(processId: Int) =
-        RunnerSessionParams(
-            processId = processId,
-            agentName = "demo",
-            workspace = TestFixtures.mockWorkspaceConfig(),
-            env = emptyMap(),
-            parentContext = Context.current(),
-        )
+    private fun params(
+        processId: Int,
+        rootProcessId: Int? = null,
+    ) = RunnerSessionParams(
+        processId = processId,
+        agentName = "demo",
+        workspace = TestFixtures.mockWorkspaceConfig(),
+        env = emptyMap(),
+        parentContext = Context.current(),
+        rootProcessId = rootProcessId,
+    )
 
     private class Consumer(
         override val alias: String,
         override val tags: Set<String> = emptySet(),
         override val concurrency: Int? = null,
         override var inUse: Int = 0,
+        override val affinityInstance: String? = null,
+        override val draining: Boolean = false,
     ) : ClaimConsumerInfo
+
+    /** Declares no instance identity at all — a nameless external instance (ADR-0099). */
+    private class NamelessConsumer(
+        override val alias: String,
+        override val tags: Set<String>,
+    ) : ClaimConsumerInfo {
+        override val concurrency: Int? = null
+        override val inUse: Int = 0
+    }
 
     @Test
     fun `a matching consumer takes the request and the run receives the session`() =
@@ -565,5 +582,278 @@ class RunnerClaimQueueTest {
             assertEquals(42_000L, queue.pendingSnapshot().single().enqueuedAtMs)
             assertEquals(45_000L, queue.nowMs())
             waiter.cancel()
+        }
+
+    // ---- runnerAffinity (ADR-0099): the queue clock and the memory clock are the same virtual one.
+
+    private fun TestScope.affinityQueue(memory: RunnerAffinityMemory): RunnerClaimQueue =
+        RunnerClaimQueue(maxPending = 10, clock = { testScheduler.currentTime }, affinityMemory = memory)
+
+    private fun TestScope.memory() = RunnerAffinityMemory(clock = { testScheduler.currentTime })
+
+    private fun gpuFilter() = RunnerFilter.Tags(setOf("gpu"))
+
+    @Test
+    fun `a preferred instance takes the request that prefers it ahead of an older one`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y"))
+
+            val older = async { queue.awaitClaim(params(10), gpuFilter(), 300.seconds) }
+            runCurrent()
+            val newer =
+                async {
+                    queue.awaitClaim(params(11, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+
+            val taken = queue.take(x)
+            assertEquals(11, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            newer.await()
+            older.cancel()
+        }
+
+    @Test
+    fun `another matching consumer skips a preferred request until waitSec passes`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X"))
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+            val takeY = async { queue.take(y) }
+            runCurrent()
+            assertTrue(takeY.isActive, "a matching consumer must pass over the request while its preference is active")
+
+            testScheduler.advanceTimeBy(29_999)
+            runCurrent()
+            assertTrue(takeY.isActive, "the request opened to another consumer before waitSec passed")
+
+            testScheduler.advanceTimeBy(1)
+            runCurrent()
+            assertTrue(takeY.isCompleted)
+            val taken = takeY.await()
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+        }
+
+    @Test
+    fun `a request falls back at once when its preferred instance is unregistered`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val taken = queue.take(y)
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+        }
+
+    @Test
+    fun `a request falls back at once when its preferred instance is draining`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X", draining = true))
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val taken = queue.take(y)
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+        }
+
+    @Test
+    fun `a request falls back at once when its preferred instance no longer matches the filter`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            // The instance holding the name is registered for another tag set: the run's filter
+            // never widened, so it is not the instance this run could have used.
+            queue.registerConsumer(Consumer("dom", tags = setOf("cpu"), affinityInstance = "dom:X"))
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val taken = queue.take(y)
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+        }
+
+    @Test
+    fun `a request without an affinity preference is never held back`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X"))
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run = async { queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds) }
+            runCurrent()
+            val taken = queue.take(y)
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+        }
+
+    @Test
+    fun `a claim records the serving instance under the flow's affinity key`() =
+        runTest {
+            val memory = memory()
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 7), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+            queue.take(x).complete(mockk(relaxed = true))
+            run.await()
+
+            assertEquals("dom:X", memory.preferredFor(7, "gpu"))
+            assertNull(memory.preferredFor(8, "gpu"), "another flow's key must stay unknown")
+        }
+
+    @Test
+    fun `a nameless instance records nothing, so a preference never names it`() =
+        runTest {
+            val memory = memory()
+            val queue = affinityQueue(memory)
+            val anonymous = NamelessConsumer("dom", setOf("gpu")).also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 7), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+            queue.take(anonymous).complete(mockk(relaxed = true))
+            run.await()
+
+            assertEquals(0, memory.size())
+            assertNull(memory.preferredFor(7, "gpu"))
+        }
+
+    @Test
+    fun `an unrecorded preference prefers nobody, so the oldest match still goes first`() =
+        runTest {
+            val memory = memory()
+            val queue = affinityQueue(memory)
+            val anonymous = NamelessConsumer("dom", setOf("gpu")).also { queue.registerConsumer(it) }
+
+            val older = async { queue.awaitClaim(params(10), gpuFilter(), 300.seconds) }
+            runCurrent()
+            val affinityRun =
+                async {
+                    queue.awaitClaim(params(11, rootProcessId = 7), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+
+            // The flow has served nothing yet, so nobody is preferred: two null identities are not
+            // a match, and the oldest request is still the one to take.
+            val taken = queue.take(anonymous)
+            assertEquals(10, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            older.await()
+
+            val second = queue.take(anonymous)
+            assertEquals(11, second.params.processId)
+            assertTrue(second.complete(mockk(relaxed = true)))
+            affinityRun.await()
+            assertEquals(0, memory.size())
+        }
+
+    @Test
+    fun `a preferred instance cannot jump past the per-consumer cap`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+
+            // One unpreferred request arrives first, then MAX_JUMPS + 1 that all prefer X: X may
+            // take at most MAX_JUMPS of them ahead of the older one before it must serve it.
+            val unpreferred = async { queue.awaitClaim(params(100), gpuFilter(), 300.seconds) }
+            runCurrent()
+            val preferred =
+                (1..RunnerClaimQueue.MAX_JUMPS + 1).map { id ->
+                    async {
+                        queue.awaitClaim(params(id, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 300))
+                    }.also { runCurrent() }
+                }
+
+            val taken =
+                List(RunnerClaimQueue.MAX_JUMPS + 2) {
+                    val request = queue.take(x)
+                    request.complete(mockk(relaxed = true))
+                    request.params.processId
+                }
+            assertEquals((1..RunnerClaimQueue.MAX_JUMPS).toList() + 100 + (RunnerClaimQueue.MAX_JUMPS + 1), taken)
+            unpreferred.await()
+            preferred.forEach { it.await() }
+        }
+
+    @Test
+    fun `a waitSec past the claim TTL still fails the run at the claim TTL`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X"))
+
+            val run =
+                async {
+                    runCatching {
+                        queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 600))
+                    }
+                }
+            runCurrent()
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+
+            assertIs<RunnerClaimTimeoutException>(run.await().exceptionOrNull())
+            assertEquals(30_000L, testScheduler.currentTime, "the run waited past its claim TTL")
+            assertEquals(0, queue.pendingCount())
+        }
+
+    @Test
+    fun `expiry text names no instance of the preference`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:secret-name") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(
+                Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:secret-name", concurrency = 1, inUse = 1),
+            )
+
+            val ex =
+                assertThrows<RunnerClaimTimeoutException> {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 600))
+                }
+            // A run-visible reason is served to every caller who can see the run, and an instance
+            // name is admin-only there (ADR-0077). CWE-209
+            assertFalse(ex.message!!.contains("secret-name"), ex.message)
+            assertFalse(ex.publicReason.contains("secret-name"), ex.publicReason)
         }
 }

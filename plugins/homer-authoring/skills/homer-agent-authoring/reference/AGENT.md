@@ -133,6 +133,7 @@ mcp:
 | `runner` | `String?` | No | `null` (= `local`) | Alias of the execution backend to run commands on. Omitted = `local` (Homer's host); any other value must match a key in [`AppConfig.runners`](SERVER.md#runners-pluggable-execution-backends); a blank value fails agent load. All commands in the agent run inside the same runner session. Mutually exclusive with `runnerTags`. See [Runner selection](#runner-selection). |
 | `runnerTags` | `List<String>` | No | `[]` | Select a runner by tags instead of alias: any configured runner whose `tags` contain every listed tag may take the run. Shape `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, at most 32, no duplicates. Mutually exclusive with `runner`; setting both fails agent load. |
 | `runnerClaimTimeoutSec` | `Int?` | No | `null` (= server default `300`) | Seconds a run waits in the [claim queue](SERVER.md#runner-claim-queue) for a runner with a free permit before it fails. Must be `>= 1` when set. Applies to the run's own claim; a `runnerCmd` step waits under `server.runnerClaimTimeoutSec`. |
+| `runnerAffinity` | `RunnerAffinity?` | No | `null` | Keep a flow's runs on the runner instance that served its earlier ones: `{group, waitSec}`. `group` names the preference (`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, at most 64 characters) and is the agent's own label, not a runner name; `waitSec` is `1..86400`. The preference is keyed on the run's flow root, so it never crosses flows, and it is soft: a matching runner that is not the preferred instance passes the run over only until `waitSec` passes, and the run falls back at once when that instance is gone, draining or no longer matching. Runners serving an agent without `runnerAffinity` are never delayed by one that has it. See [Runner selection](#runner-selection). |
 | `inputSchema` | `object` | No | `null` | JSON Schema (Draft 2020-12) validating the JSON request body of `POST /api/v1/agent/{name}`. A non-conforming payload is rejected with `422` before any process is spawned; a malformed schema skips the agent at load. See [Input Schema](#input-schema-payload-validation). |
 | `mcp` | `AgentMcpConfig` | No | `null` | Opt-in exposure of this agent as an MCP tool on the `/mcp` endpoint (requires `server.mcp.enabled`). `mcp: { enabled: true }` exposes the agent; omitted or `enabled: false` hides it. See [MCP Exposure](#mcp-exposure). |
 | `dispatch` | `AgentDispatchConfig` | No | `null` | Opt-in: allow this agent to be a dispatch target (`ask-and-dispatch` **or** `homer-dispatch`). `dispatch: { enabled: true }` permits it; omitted or `enabled: false` rejects the dispatch with `403` (`404`, identical to an unknown agent, when the run's hop may not reach the target at all). See [Ask and dispatch](#ask-and-dispatch) and [Dispatching another agent](#dispatching-another-agent). |
@@ -200,6 +201,44 @@ Setting both
 `runner and runnerTags are mutually exclusive`. An agent whose `runnerTags` no
 configured runner serves still loads (with a warning); its runs wait for the
 claim TTL and then fail naming the unmatched tags.
+
+`runnerAffinity` narrows *which* of the matching runners takes the run: once a
+run has been served, later runs of the same flow prefer that same instance, so
+a flow that warmed a cache or a checkout there keeps using it. It never widens
+the filter — the instance must still match `runner`/`runnerTags`:
+
+```yaml
+name: warm-cache-job
+runnerTags: [linux, gpu]
+runnerAffinity:
+  group: gpu-boxes        # this agent's label for the preference; never a runner name
+  waitSec: 30             # how long another matching runner passes the run over
+commands:
+  - !<cmd>
+    cmd: ./build.sh
+```
+
+<details>
+<summary>JSON format</summary>
+
+```json
+{
+  "name": "warm-cache-job",
+  "runnerTags": ["linux", "gpu"],
+  "runnerAffinity": { "group": "gpu-boxes", "waitSec": 30 },
+  "commands": [
+    { "type": "cmd", "cmd": "./build.sh" }
+  ]
+}
+```
+</details>
+
+The preference is resolved from the run's own flow root (the first run of the
+`!<agent>` chain), so an agent cannot address another flow's preference, and it
+lives in memory: a server restart loses it and the next run of each flow claims
+freely. `group` only has to be unique among the agents that should share one
+preference — two agents with the same `group` running in one flow prefer the
+same instance.
 
 ### Sharing steps between agents
 

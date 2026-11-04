@@ -253,7 +253,7 @@ used: the one-shot `fixtures-init` service breaks its abort detection.) The
 explicit `--name` keeps the runner container addressable for `docker cp` of
 the JUnit results afterwards.
 
-**Topology** — five services:
+**Topology** — seven services:
 
 | Service | Image | Role |
 |---------|-------|------|
@@ -262,6 +262,7 @@ the JUnit results afterwards.
 | `e2e-runner` | `app/e2e/Dockerfile` | Gradle test JVM running `:e2e:test` against `http://homer-backend:8080` |
 | `homer-runner` | `app/Dockerfile --target homer-runner` | Pull-mode runner instance `e2e-runner` (tag `e2e-external`, concurrency 2) for `ExternalRunnerTest`; `network_mode: "service:homer-backend"` because homer-runner refuses plain `http://` except to loopback, and the stack has no TLS |
 | `homer-runner-crash` | `app/Dockerfile --target homer-runner` | Instance `e2e-crash-runner` (tag `e2e-crash`) that the crash test kills; same shared network namespace, `init: true` because the kernel does not deliver `SIGKILL` from inside a PID namespace to its PID 1 (the image `exec`s java), `restart: "no"` so it stays dead |
+| `homer-runner-affinity-a`, `homer-runner-affinity-b` | `app/Dockerfile --target homer-runner` | Two named instances of the `e2e-affinity` domain (instances `affinity-a` and `affinity-b`, tag `e2e-affinity`, concurrency 1 each) for `RunnerAffinityTest`; same shared network namespace, and distinct names because one live instance of a domain holds a name |
 
 **Volumes** — `e2e-agents` is a *named volume* (not a bind mount) because the
 agent CRUD tests write to `/app/agents` at runtime: a `:ro` bind would make

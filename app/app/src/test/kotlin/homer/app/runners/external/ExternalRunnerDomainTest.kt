@@ -161,4 +161,43 @@ class ExternalRunnerDomainTest {
             assertEquals(mapOf("CACHE" to "/c"), d.runnerEnv)
             assertThrows<IllegalStateException> { d.openSession(mockk<RunnerSessionParams>(relaxed = true)) }
         }
+
+    @Test
+    fun `a live instance holds its declared name, so a second one is rejected`() {
+        val d = domain(RunnerConfig.External(token = "s3cr3t-token"))
+        val first = d.register(RegisterInstanceRequest(name = "host-1"))
+        assertEquals("workers:host-1", first.affinityInstance)
+
+        val ex = assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(name = "host-1")) }
+        assertFalse(ex.message!!.contains("s3cr3t-token"), "the rejection must name no token")
+        assertEquals(listOf<Any>(first), queue.consumers(), "the rejected registration leaves no consumer")
+    }
+
+    @Test
+    fun `a name freed by a draining or swept instance can be registered again`() {
+        val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+        val draining = d.register(RegisterInstanceRequest(name = "host-1"))
+        d.deregister(draining.id)
+        assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+
+        val silent = d.instances().single { it.declaredName == "host-1" }
+        now += 61_000
+        assertEquals(listOf(silent), d.sweepExpired())
+        assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+    }
+
+    @Test
+    fun `the same name in another domain is its own instance`() {
+        val a = domain()
+        val b = ExternalRunnerDomain("other", RunnerConfig.External(token = "t"), queue, clock = { now })
+        assertEquals("workers:host-1", a.register(RegisterInstanceRequest(name = "host-1")).affinityInstance)
+        assertEquals("other:host-1", b.register(RegisterInstanceRequest(name = "host-1")).affinityInstance)
+    }
+
+    @Test
+    fun `a nameless registration exposes no affinity identity`() {
+        val inst = domain().register(RegisterInstanceRequest())
+        assertNull(inst.declaredName)
+        assertNull(inst.affinityInstance)
+    }
 }

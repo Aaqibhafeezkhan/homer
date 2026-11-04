@@ -1,0 +1,11 @@
+name: affinity-parent
+description: Runs two affinity-tagged children in one flow, so both share one flow root (ADR-0099)
+commands:
+  - !<agent>
+    label: write-marker
+    agentName: affinity-sub
+    timeout: 180
+  - !<agent>
+    label: read-marker
+    agentName: affinity-check
+    timeout: 180

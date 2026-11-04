@@ -1,0 +1,16 @@
+name: affinity-sub
+description: Records which e2e-affinity instance served this flow, outside the session workspace (ADR-0099)
+runnerTags: [e2e-affinity]
+runnerClaimTimeoutSec: 120
+runnerAffinity:
+  group: e2e-affinity
+  waitSec: 60
+commands:
+  - !<script>
+    label: write-marker
+    content: |
+      mkdir -p /tmp/homer-affinity
+      echo "affinity-sub ran on $(hostname)"
+      # The marker is per flow root, so only a later run of this same flow reads it,
+      # and it lives outside the session workspace, which the runner wipes.
+      touch "/tmp/homer-affinity/$HMR_ROOT_PROCESS_ID"

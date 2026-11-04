@@ -9,6 +9,7 @@ import homer.app.runners.kubernetes.KubernetesRunner
 import homer.app.runners.kubernetes.RunnerStateSink
 import homer.app.runners.local.LocalRunner
 import homer.app.runners.queue.RegisteredRunner
+import homer.app.runners.queue.RunnerAffinityMemory
 import homer.app.runners.queue.RunnerClaimQueue
 import homer.app.runners.ssh.SshRunner
 import homer.app.runners.ssh.applySshClientTiming
@@ -31,7 +32,9 @@ internal fun buildRunnerRegistry(
     tracer: Tracer,
     k8sInstanceId: String,
 ): RunnerRegistry {
-    val queue = RunnerClaimQueue(maxPending = appConfig.server.maxPendingRunnerClaims)
+    // One memory for the whole registry: `runnerAffinity` keys on the flow root, which is
+    // process-scoped, so a per-runner memory would fragment it. In-memory by design (ADR-0099).
+    val queue = RunnerClaimQueue(maxPending = appConfig.server.maxPendingRunnerClaims, affinityMemory = RunnerAffinityMemory())
     return RunnerRegistry(
         entries = registeredRunners(appConfig, stateSink, tracer, k8sInstanceId),
         externalDomains = externalRunnerDomains(appConfig, queue),

@@ -124,6 +124,7 @@ class Process(
                 activeSessions = activeSessions,
                 commandIndices = commandIndices,
                 owner = owner,
+                rootProcessId = rootProcessId,
             )
         var acquiredSlot: Semaphore? = null
         try {

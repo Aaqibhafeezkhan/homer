@@ -3315,6 +3315,33 @@ Among idle matching consumers, a new request goes to the one that claimed
 least recently, so idle runners take turns
 ([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-consumers-take-turns.md)).
 
+**Runner affinity.** An agent may ask for its flow's runs to stay on the
+instance that served them before, with `runnerAffinity: {group, waitSec}` in
+the agent definition ([`AGENT.md`](AGENT.md) § Runner selection,
+[ADR-0099](../docs/adr/0099-runner-affinity-prefers-the-instance-holding-the-flows-caches.md)).
+The preference is resolved from the run's own flow root and the agent's group,
+so it is per flow, never per caller. While it holds:
+
+1. A matching runner that is **not** the preferred instance passes the request
+   over, and the preferred instance takes it ahead of older requests it also
+   matches.
+2. The wait is bounded by the agent's `waitSec` (never more than the claim
+   TTL). When it expires the request becomes claimable by any matching runner.
+3. The run falls back **at once** — no waiting at all — when the preferred
+   instance is no longer registered, is draining, or no longer matches the
+   run's filter.
+4. A runner that keeps taking preferred requests ahead of older ones it also
+   matches must take the oldest match after a fixed number of them, so an agent
+   that declares no `runnerAffinity` is never starved by one that does. A
+   request without a preference is never held back by any preference.
+
+The memory is in-process, bounded (1024 flow keys, six hours) and lost on
+restart: the next run of a flow then claims without a preference. The
+preference is scheduling only — it appears in no run record and no response
+field, and it never names a runner to a caller (ADR-0077). A static runner is
+its own single instance; an external instance is the name it registered with,
+so a nameless instance is never preferred.
+
 **Env and host visibility for tag-filtered runs.** An alias-filtered run knows
 its runner before the workspace env is composed, so per-runner `env` keeps its
 layer between `globalEnv` and agent `env` and `parentEnvAllowlist` applies as
@@ -3374,8 +3401,12 @@ An instance registers with a name, the tags it serves and a `concurrency`,
 then long-polls for claims. It matches an agent with `runner: workers` or an
 agent whose `runnerTags` are all among its announced tags; among matches the
 oldest run wins, exactly as for static runners, and among idle matching
-instances the one that claimed least recently gets it. Adding a domain needs a
-restart; adding an instance or a tag never does.
+instances the one that claimed least recently gets it. A name identifies one
+live instance of its domain: registering a name another live instance of the
+same domain already holds is refused with `422`, naming no token, so a
+reconnecting runner cannot silently take over a flow's preference
+(ADR-0099); a name held only by a draining or dropped instance is free. Adding
+a domain needs a restart; adding an instance or a tag never does.
 
 Every wait is bounded: an instance silent for `heartbeatTimeoutSec` is
 dropped and its runs fail; a command result is awaited for its `timeout` plus
@@ -3448,7 +3479,7 @@ instead ([ADR-0096](../docs/adr/0096-unhealthy-runners-stop-claiming-and-idle-co
 | `--tags` | `HOMER_RUNNER_TAGS` | none | Comma-separated tags this instance serves. |
 | `--concurrency` | `HOMER_RUNNER_CONCURRENCY` | `1` | Runs at once; above the domain's `maxConcurrencyPerInstance` the registration is refused. |
 | `--root` | `HOMER_RUNNER_ROOT` | `/var/homer-runner` | Where each session gets a fresh owner-only `<processId>-<random id>` directory, deleted when the session ends. |
-| `--name` | `HOMER_RUNNER_NAME` | the host name, shaped to the instance-name pattern | Instance name shown in Homer. |
+| `--name` | `HOMER_RUNNER_NAME` | the host name, shaped to the instance-name pattern | Instance name shown in Homer. One live instance of a domain holds a name: a second live registration with it is refused, and a name an agent's `runnerAffinity` prefers is that name. |
 | `--drain-timeout` | `HOMER_RUNNER_DRAIN_TIMEOUT` | `600` | Seconds in-flight runs may finish after `SIGTERM` or a failed health check before they are killed. |
 
 Exit codes: `1` for a usage error (a missing option or token, an unknown flag),
@@ -3504,7 +3535,7 @@ rate-limited by its domain's bucket, not the global one (see
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /api/v1/runner/register` | Body `{name?, tags?, concurrency?=1, version?}`. `201 {instanceId, pollSec, heartbeatTimeoutSec}`. `422` when tags violate the shape or `allowedTags`, `concurrency` is outside `1..maxConcurrencyPerInstance`, or `name` doesn't match `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`. `429` at `maxInstances`. |
+| `POST /api/v1/runner/register` | Body `{name?, tags?, concurrency?=1, version?}`. `201 {instanceId, pollSec, heartbeatTimeoutSec}`. `422` when tags violate the shape or `allowedTags`, `concurrency` is outside `1..maxConcurrencyPerInstance`, `name` doesn't match `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, or `name` is already held by a live instance of this domain. `429` at `maxInstances`. |
 | `DELETE /api/v1/runner/instances/{id}` | Stop offering claims to this instance; in-flight sessions continue. `204`. |
 | `POST /api/v1/runner/instances/{id}/claim` | Long-poll up to `pollSec` (30 s). `200 {sessionId, processId, agentName, tags}` or `204`. At most `concurrency` concurrent polls per instance, the next is `429`. Also a heartbeat. |
 | `POST /api/v1/runner/sessions/{sid}/next` | Body optionally `{completed: <result>}`, at most 64 KiB (`413` over it). Long-poll up to `pollSec`; `200 <op>` or `204`. Also a heartbeat. A result for an op that already has one is ignored. At most 3 concurrent polls per session, a further one is `429` — the refused call still records the result it carried, so only the wait is refused. |

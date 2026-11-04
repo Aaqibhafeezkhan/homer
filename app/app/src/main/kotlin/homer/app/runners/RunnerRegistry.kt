@@ -2,6 +2,7 @@ package homer.app.runners
 
 import homer.app.exceptions.ConfigurationException
 import homer.app.models.Agent
+import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerFilter
 import homer.app.runners.external.ExternalRunnerDomain
 import homer.app.runners.local.LocalRunner
@@ -94,20 +95,21 @@ class RunnerRegistry(
     fun forAlias(
         alias: String,
         claimTimeout: Duration,
+        affinity: RunnerAffinity? = null,
     ): Runner {
         if (localRunnerDisabled && alias == LocalRunner.ALIAS) {
             throw ConfigurationException(
                 "runner '${LocalRunner.ALIAS}' is disabled (server.localRunner.enabled: false); route the agent to another runner",
             )
         }
-        return QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout)
+        return QueuedRunner(RunnerFilter.Alias(alias), queue, listOf(get(alias)), claimTimeout, affinity)
     }
 
     fun forAgent(agent: Agent): Runner {
         val timeout = agent.runnerClaimTimeoutSec?.seconds ?: defaultClaimTimeout
         return when (val filter = agent.runnerFilter) {
-            is RunnerFilter.Alias -> forAlias(filter.alias, timeout)
-            is RunnerFilter.Tags -> QueuedRunner(filter, queue, candidates(filter), timeout)
+            is RunnerFilter.Alias -> forAlias(filter.alias, timeout, agent.runnerAffinity)
+            is RunnerFilter.Tags -> QueuedRunner(filter, queue, candidates(filter), timeout, agent.runnerAffinity)
         }
     }
 

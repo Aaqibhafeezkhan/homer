@@ -52,7 +52,11 @@ always-on "does the production Dockerfile still build" gate.
   exercises `runner: local`; ssh and kubernetes runners aren't exercised by
   this suite. Runner selection by `runnerTags` against the local runner is
   covered by `RunnerSelectionTest`: the fixture config tags it via
-  `server.localRunner.tags`.
+  `server.localRunner.tags`. Runner affinity (ADR-0099) is covered by
+  `RunnerAffinityTest` against two more instances of one domain
+  (`homer-runner-affinity-a` / `-b`, tag `e2e-affinity`, concurrency 1 each):
+  a two-step flow must land both steps on one of them, and an agent with no
+  `runnerAffinity` on the same tag must still run.
 
 ## Running
 

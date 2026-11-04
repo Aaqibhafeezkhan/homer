@@ -187,7 +187,7 @@ class ArtifactorySecretExposureTest {
                 )
             }
         }
-        assertTrue(buildBlocks == 4, "$e2eCompose should build exactly 4 images, found $buildBlocks.")
+        assertTrue(buildBlocks == 6, "$e2eCompose should build exactly 6 images, found $buildBlocks.")
     }
 
     @Test

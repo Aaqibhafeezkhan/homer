@@ -33,6 +33,11 @@ class StaticRunnerConsumer(
 
     override val alias: String get() = runner.alias
 
+    // A static runner is its own single instance: `local`/`ssh` are one machine, and a
+    // `kubernetes` preference resolves to the only consumer that would have served the run
+    // anyway, so affinity is a no-op there with no per-kind branch. See ADR-0099.
+    override val affinityInstance: String get() = runner.alias
+
     private val permits: Semaphore? = concurrency?.let { Semaphore(it) }
     private val inUseCount = AtomicInteger(0)
 

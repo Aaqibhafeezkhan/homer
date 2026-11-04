@@ -1,0 +1,7 @@
+name: affinity-plain
+description: Same tag as the affinity agents with no runnerAffinity — an ordinary run must not be held back (ADR-0099)
+runnerTags: [e2e-affinity]
+commands:
+  - !<script>
+    label: report-host
+    content: echo "affinity-plain ran on $(hostname)"
