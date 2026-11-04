@@ -15,7 +15,17 @@ internal fun claimExpiryReasons(
     affinity: ClaimAffinity?,
     timeout: Duration,
 ): Pair<String, String> {
-    if (affinity?.heldWholeWait(timeout.inWholeMilliseconds) == true) {
+    // The preference is the cause only while it actually blocked someone: if the preferred
+    // instance has left (unregistered or draining) or never matched the run's filter, it ordered
+    // no consumer at expiry, and the run-visible cause must not send the debug of a failed run
+    // after a preference that was not in the way. See ADR-0099.
+    val preferenceHeld =
+        affinity != null &&
+            affinity.heldWholeWait(timeout.inWholeMilliseconds) &&
+            consumers.any {
+                it.affinityInstance == affinity.preferredInstance && !it.draining && it.matchesFilter(filter)
+            }
+    if (preferenceHeld) {
         val cause = "its preferred runner did not take it"
         return "$cause; ${matchingStates(consumers, filter)}" to cause
     }

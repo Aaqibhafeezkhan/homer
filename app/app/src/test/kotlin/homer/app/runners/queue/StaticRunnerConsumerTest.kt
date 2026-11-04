@@ -54,6 +54,22 @@ class StaticRunnerConsumerTest {
         }
 
     @Test
+    fun `a stopped consumer leaves its records off the queue`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 10)
+            val consumer = StaticRunnerConsumer(FakeRunner("local"), tags = emptySet(), concurrency = 1, queue = queue)
+            val job = consumer.start(backgroundScope)
+
+            assertEquals(listOf<ClaimConsumerInfo>(consumer), queue.consumers())
+
+            // Cancelling the job is the stop path: the completion hook must detach the consumer,
+            // so expiry reasons and matching stop naming it.
+            job.cancel()
+            runCurrent()
+            assertTrue(queue.consumers().isEmpty(), "a stopped consumer must not stay a possible claimer")
+        }
+
+    @Test
     fun `concurrency gates claims and closing a session frees the permit`() =
         runTest {
             val queue = RunnerClaimQueue(maxPending = 10)

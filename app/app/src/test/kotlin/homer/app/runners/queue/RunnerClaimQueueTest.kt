@@ -48,7 +48,7 @@ class RunnerClaimQueueTest {
         override val concurrency: Int? = null,
         override var inUse: Int = 0,
         override val affinityInstance: String? = null,
-        override val draining: Boolean = false,
+        override var draining: Boolean = false,
     ) : ClaimConsumerInfo
 
     /** Declares no instance identity at all — a nameless external instance (ADR-0099). */
@@ -763,6 +763,127 @@ class RunnerClaimQueueTest {
             assertTrue(taken.complete(mockk(relaxed = true)))
             run.await()
             assertEquals(0, queue.waiterCount())
+        }
+
+    @Test
+    fun `a waiter parked behind a preference is woken when the preferred instance deregisters as draining`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val takeY = async { queue.take(y) }
+            runCurrent()
+            assertEquals(1, queue.waiterCount(), "y is parked behind the preference for dom:X")
+
+            // Deregister flips `draining` before it leaves through unregisterConsumer; the
+            // held-back waiter must still wake and claim at once, not at the 600 s deadline.
+            x.draining = true
+            queue.unregisterConsumer(x)
+            val taken = takeY.await()
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+            assertEquals(0, queue.waiterCount())
+        }
+
+    @Test
+    fun `detaching a stopped consumer leaves a waiter parked behind its preference`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val takeY = async { queue.take(y) }
+            runCurrent()
+            assertEquals(1, queue.waiterCount(), "y is parked behind the preference for dom:X")
+
+            // Shutdown only: the records go so no expiry reason names the consumer, but nothing
+            // will serve a woken run before the queue itself stops, so nobody is woken.
+            queue.detachConsumer(x)
+            runCurrent()
+            assertTrue(takeY.isActive, "a detached consumer's departure must not wake a parked waiter")
+            assertEquals(1, queue.waiterCount())
+            assertEquals(listOf<ClaimConsumerInfo>(y), queue.consumers())
+
+            takeY.cancel()
+            run.cancel()
+            runCurrent()
+        }
+
+    @Test
+    fun `a waitSec equal to the claim TTL still names the preference as the cause`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:secret-name") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(
+                Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:secret-name", concurrency = 1, inUse = 1),
+            )
+
+            // The wait clamps onto the claim TTL exactly: the boundary decides which expiry
+            // message the run reads, and there the preference is the cause.
+            val ex =
+                assertThrows<RunnerClaimTimeoutException> {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 30))
+                }
+            assertTrue(ex.publicReason.contains("preferred runner did not take it"), ex.publicReason)
+            assertFalse(ex.publicReason.contains("secret-name"), ex.publicReason)
+        }
+
+    @Test
+    fun `a claim that expires after its preferred instance left keeps the plain expiry reason`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:secret-name") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(
+                Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:secret-name", concurrency = 1, inUse = 1),
+            )
+            queue.registerConsumer(Consumer("dom2", tags = setOf("gpu"), affinityInstance = "dom:other", concurrency = 1, inUse = 1))
+
+            val run =
+                async {
+                    runCatching {
+                        queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 600))
+                    }
+                }
+            runCurrent()
+            // The preferred instance unregisters mid-wait: at expiry it holds nobody back, so the
+            // run-visible cause must be the queue state an operator sees, not a preference.
+            queue.unregisterConsumer(queue.consumers().first { it.affinityInstance == "dom:secret-name" })
+            val ex = assertIs<RunnerClaimTimeoutException>(run.await().exceptionOrNull())
+            assertFalse(ex.publicReason.contains("preferred runner did not take it"), ex.publicReason)
+            assertEquals("every matching runner was at its concurrency limit", ex.publicReason)
+        }
+
+    @Test
+    fun `a claim that expires while its preferred instance never matched the filter keeps the plain reason`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:secret-name") }
+            val queue = affinityQueue(memory)
+            // Registered under the name the flow recorded, but for another tag set: the
+            // preference never ordered a consumer for this run.
+            queue.registerConsumer(
+                Consumer("dom", tags = setOf("cpu"), affinityInstance = "dom:secret-name", concurrency = 1, inUse = 1),
+            )
+
+            val ex =
+                assertThrows<RunnerClaimTimeoutException> {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 600))
+                }
+            assertFalse(ex.publicReason.contains("preferred runner did not take it"), ex.publicReason)
+            assertEquals("no registered runner matches those tags", ex.publicReason)
         }
 
     @Test

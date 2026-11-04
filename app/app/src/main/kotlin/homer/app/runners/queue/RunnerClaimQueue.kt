@@ -90,9 +90,17 @@ class RunnerClaimQueue(
         val departed = info.affinityInstance ?: return emptyList()
         val now = clock()
         return pending
-            .filter { it.isPending && it.affinity?.preferredInstance == departed }
+            .filter { it.isPending }
             .flatMap { request ->
-                waiters.filter { it.consumer.matches(request.filter) && preferenceBlocks(it.consumer, request, now) }
+                val affinity = request.affinity ?: return@flatMap emptyList()
+                if (affinity.preferredInstance != departed || !affinity.isActive(request.enqueuedAtMs, now)) {
+                    return@flatMap emptyList()
+                }
+                // preferenceBlocks() cannot be reused here: deregister flips `draining` before it
+                // calls unregisterConsumer, so the departing instance no longer counts as blocking
+                // and the scan would wake nobody on the drain path. The waiters it held back are
+                // woken by identity instead; a spurious wake only rescans and re-parks.
+                waiters.filter { it.consumer.matches(request.filter) && it.consumer.affinityInstance != departed }
             }
     }
 
