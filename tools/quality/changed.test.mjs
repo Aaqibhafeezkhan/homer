@@ -67,6 +67,8 @@ test('--only narrows the selection and alone selects a warn-mode check', () => {
   assert.deepEqual([...selectChecks([`${SRC}/A.kt`], ALL, ['mutation-backend'])], ['mutation-backend']);
   assert.ok(!selectChecks([`${SRC}/A.kt`], ALL).has('mutation-backend'));
   assert.equal(selectChecks(['console/lib/a.ts'], ALL, ['mutation-backend']).size, 0);
+  // PIT mutates :app only.
+  assert.equal(selectChecks(['app/homer-runner/src/main/kotlin/R.kt', `${TEST}/ATest.kt`], ALL, ['mutation-backend']).size, 0);
   assert.throws(() => selectChecks([], ALL, ['nope']), /unknown check nope/);
 });
 

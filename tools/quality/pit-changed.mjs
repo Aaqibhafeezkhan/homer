@@ -3,7 +3,8 @@
  * backend classes whose lines the change adds or modifies, and the findings and score cover only
  * the mutants on those lines, as the console's `mutation:changed` does. The change is
  * `MUTATE_BASE..HEAD`, or with `MUTATE_WORKTREE=1` the working tree's (the diff mode,
- * tools/quality/changed.mjs). No changed backend source line: a skipped report, no Gradle run.
+ * tools/quality/changed.mjs). Only `:app` is mutated; no changed code line there: a skipped report,
+ * no Gradle run.
  * Usage (repository root, JAVA_HOME on a JDK 25): MUTATE_BASE=<rev> node tools/quality/pit-changed.mjs
  */
 import { spawnSync } from 'node:child_process';
@@ -38,13 +39,47 @@ export function classGlobs(file, source) {
   return [...new Set(names)].filter(Boolean).flatMap((name) => [`${pkg}.${name}`, `${pkg}.${name}$*`]);
 }
 
-// A comment, blank, package or import line holds no code PIT can mutate.
-const NO_CODE = /^\s*(?:$|\/\/|\/\*|\*|package\s|import\s)/;
+const quoteAt = (source, i) => (source.startsWith('"""', i) ? '"""' : source[i] === '"' || source[i] === "'" ? source[i] : null);
 
-/** The changed lines of `source` that may hold code. */
+/**
+ * The lines of a Kotlin source holding anything outside a comment. Lexes just enough for that:
+ * block comments nest, and a comment opener inside a string or char literal is text.
+ */
+export function codeLineNumbers(source) {
+  const code = new Set();
+  let line = 1;
+  let depth = 0;
+  let quote = null;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\n') {
+      line++;
+      if (quote !== '"""') quote = null;
+    } else if (depth > 0) {
+      const marker = source.slice(i, i + 2);
+      if (marker === '/*' || marker === '*/') [depth, i] = [depth + (marker === '/*' ? 1 : -1), i + 1];
+    } else if (quote) {
+      code.add(line);
+      if (c === '\\' && quote !== '"""') i++;
+      else if (source.startsWith(quote, i)) [quote, i] = [null, i + quote.length - 1];
+    } else if (source.startsWith('//', i)) {
+      while (i + 1 < source.length && source[i + 1] !== '\n') i++;
+    } else if (source.startsWith('/*', i)) {
+      [depth, i] = [1, i + 1];
+    } else if (!/\s/.test(c)) {
+      code.add(line);
+      quote = quoteAt(source, i);
+      if (quote) i += quote.length - 1;
+    }
+  }
+  return code;
+}
+
+/** The changed lines of `source` that hold code PIT can mutate: not comments, blank, package or import lines. */
 export function codeLines(source, lines) {
+  const code = codeLineNumbers(source);
   const text = source.split('\n');
-  return new Set([...lines].filter((n) => !NO_CODE.test(text[n - 1] ?? '')));
+  return new Set([...lines].filter((n) => code.has(n) && !/^\s*(?:package|import)\s/.test(text[n - 1] ?? '')));
 }
 
 /**
@@ -61,6 +96,8 @@ export function changedSources(changed, read) {
     const at = source === null ? null : pitPath(file, source);
     const code = at ? codeLines(source, fileLines) : new Set();
     if (code.size === 0) continue;
+    // PIT reports both under one path, so a line could not be told apart: refuse rather than drop one.
+    if (lines.has(at)) throw new Error(`${lines.get(at).path} and ${file} share PIT source path ${at}: one package, one file name`);
     classGlobs(file, source).forEach((g) => globs.add(g));
     lines.set(at, { path: file, lines: code });
   }
@@ -89,7 +126,7 @@ export function main() {
   const base = process.env.MUTATE_BASE;
   const { globs, lines } = changedSources(base ? changedSince(base) : new Map(), readSource);
   if (globs.length === 0) {
-    const reason = base ? 'no changed backend code lines' : 'no MUTATE_BASE';
+    const reason = base ? 'no changed :app code lines' : 'no MUTATE_BASE';
     return writeCheck(REPORT_DIR, CHECK, `${TITLE} (skipped: ${reason})`, [], { skipped: reason });
   }
   const xml = path.join(REPORT_DIR, 'mutations.xml');

@@ -41,6 +41,8 @@ const TESTED_MODULES = new Set(['app', 'agentdebug', 'homer-runner']);
 const KOTLIN_FILE = /^app\/([\w-]+)\/src\/(main|test)\/kotlin\/(?:(.+)\/)?([^/]+)\.kt$/;
 // Kotlin sources only: a build-script change compiles nothing the diff mode measures (docs/quality-checks.md).
 const BACKEND = /^app\/(?!buildSrc\/).+\.kt$/;
+// PIT mutates :app only (pit-changed.mjs).
+const APP_MAIN = /^app\/app\/src\/main\/kotlin\/.+\.kt$/;
 const CONSOLE = /^console\/.+\.(?:[cm]?js|tsx?|json)$/;
 const DTO_SOURCES = /^(?:app\/app\/src\/main\/kotlin\/.+\.kt|console\/types\/homer\.ts)$/;
 const DTO_TEST = 'homer.app.models.DtoContractTest';
@@ -71,7 +73,7 @@ export function selectChecks(files, checks, only) {
     ...(backend || front ? ['crap', 'diff-coverage', 'duplication'] : []),
     ...(files.some((f) => DTO_SOURCES.test(f)) ? ['dto-contract'] : []),
     ...(front ? ['mutation-console'] : []),
-    ...(backend ? ['mutation-backend'] : []),
+    ...(files.some((f) => APP_MAIN.test(f)) ? ['mutation-backend'] : []),
   ]);
   return new Set(
     checks
