@@ -3,6 +3,7 @@ package homer.app.executors.llm
 import homer.app.exceptions.ClaudeCliVersionMismatchException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.LlmOutputJson
+import homer.app.infra.parseNdjsonLenient
 import homer.app.models.ClaudeCmdOptions
 import homer.app.models.ClaudeSubagent
 import homer.app.models.Command
@@ -13,10 +14,12 @@ import homer.app.models.Translation
 import homer.app.models.TurnStatus
 import homer.app.models.When
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.io.File
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -26,6 +29,12 @@ import kotlin.test.assertTrue
 
 class ClaudeHarnessTest {
     private val harness = ClaudeHarness()
+
+    private companion object {
+        /** The Claude Code release `app/Dockerfile` pins, and the capture below was recorded from. */
+        const val PINNED_VERSION = "2.1.318"
+    }
+
     private val command = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions())
 
     private fun line(json: String) = LlmOutputJson.parseToJsonElement(json).jsonObject
@@ -618,21 +627,106 @@ class ClaudeHarnessTest {
         assertTrue(ClaudeHarness(dropSystemSubtypes = setOf("hook_progress")).stdOutFilter(command) != null)
     }
 
+    /** A capture under `src/test/resources/claude/`, as text. */
+    private fun capture(name: String): String =
+        requireNotNull(javaClass.getResourceAsStream("/claude/$name")) { "missing test resource /claude/$name" }
+            .use { it.readBytes().decodeToString() }
+
+    /** Every capture committed under `src/test/resources/claude/`, as `name to text`. */
+    private fun captures(): List<Pair<String, String>> =
+        File(requireNotNull(javaClass.getResource("/claude")) { "missing test resource directory /claude" }.toURI())
+            .listFiles { it.extension == "jsonl" }
+            .orEmpty()
+            .sortedBy { it.name }
+            .map { it.name to it.readText() }
+
+    /** Every event the harness reads out of a capture, in stream order. */
+    private fun eventsOf(text: String): List<LlmEvent> =
+        text
+            .lineSequence()
+            .filter { it.isNotBlank() }
+            .flatMap { (harness.translate(line(it)) as? Translation.Events)?.events ?: emptyList() }
+            .toList()
+
+    /** The capture's raw lines, as the harness's `inspect` reads them. */
+    private fun rawOf(text: String): List<JsonObject> =
+        text
+            .lineSequence()
+            .filter { it.isNotBlank() }
+            .map { line(it) }
+            .toList()
+
     @Test
     fun `the recorded CLI stream yields a model and exactly one successful turn end`() {
-        val text = requireNotNull(javaClass.getResourceAsStream("/claude/cli-2.1-stream.jsonl")).use { it.readBytes().decodeToString() }
-        val all =
-            text
-                .lineSequence()
-                .filter { it.isNotBlank() }
-                .flatMap {
-                    (harness.translate(line(it)) as? Translation.Events)?.events
-                        ?: emptyList()
-                }.toList()
+        val text = capture("cli-2.1-stream.jsonl")
+        val all = eventsOf(text)
         assertEquals(1, all.count { it is LlmEvent.TurnEnd && it.status == TurnStatus.Success })
         assertTrue(all.filterIsInstance<LlmEvent.SessionStart>().first().model != null)
         assertTrue(all.any { it is LlmEvent.ToolCall })
         assertTrue(text.lineSequence().filter { it.isNotBlank() }.none { harness.translate(line(it)) is Translation.Malformed })
+    }
+
+    @Test
+    fun `the pinned CLI capture yields a model and exactly one successful turn end`() {
+        val text = capture("cli-2.1.318-stream.jsonl")
+        val all = eventsOf(text)
+        assertEquals(1, all.count { it is LlmEvent.TurnEnd && it.status == TurnStatus.Success })
+        assertTrue(all.filterIsInstance<LlmEvent.SessionStart>().first().model != null)
+        assertTrue(all.any { it is LlmEvent.ToolCall })
+        assertTrue(text.lineSequence().filter { it.isNotBlank() }.none { harness.translate(line(it)) is Translation.Malformed })
+    }
+
+    @Test
+    fun `the pinned CLI capture satisfies the version pin it was recorded from, and a one-digit-off pin throws`() {
+        val text = capture("cli-2.1.318-stream.jsonl")
+        val events = eventsOf(text)
+        val raw = rawOf(text)
+        assertEquals(
+            Inspection.Success,
+            ClaudeHarness(requireClaudeCodeVersion = PINNED_VERSION).inspect(events, raw, command),
+            "the capture's system line must report $PINNED_VERSION, the version app/Dockerfile pins",
+        )
+        assertThrows<ClaudeCliVersionMismatchException> {
+            ClaudeHarness(requireClaudeCodeVersion = "2.1.317").inspect(events, raw, command)
+        }
+    }
+
+    @Test
+    fun `every committed CLI capture carries no secret-looking string`() {
+        val forbidden =
+            mapOf(
+                "an Anthropic API key" to Regex("""sk-ant-"""),
+                "an authorization header" to Regex("""(?i)authorization\s*[":=]"""),
+                "a bearer token" to Regex("""(?i)bearer\s+\S"""),
+                "an unresolved @SYSENV reference" to Regex("""@SYSENV"""),
+                "a real home directory" to Regex("""/home/(?!agent/)"""),
+            )
+        val captures = captures()
+        assertTrue(captures.isNotEmpty(), "no capture found under src/test/resources/claude/")
+        for ((name, text) in captures) {
+            for ((what, pattern) in forbidden) {
+                assertFalse(
+                    pattern.containsMatchIn(text),
+                    "$name holds $what (${pattern.pattern}); scrub it before committing (root CLAUDE.md §12 rule 7)",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `an unknown field and a truncated line from the pinned CLI degrade instead of throwing`() {
+        val text = capture("cli-2.1.318-stream.jsonl")
+        val tail = text.lineSequence().filter { it.isNotBlank() }.last()
+        // A field this CLI version adds to the capture's last line, which Homer decodes into a typed
+        // model: `ignoreUnknownKeys` must tolerate it, or the line would turn Malformed.
+        val withUnknownField = line(tail.dropLast(1) + ""","homer_unknown_field":{"nested":[1,2]}}""")
+        assertIs<Translation.Events>(harness.translate(withUnknownField))
+        assertEquals(Translation.Ignored, harness.translate(line("""{"type":"homer_new_event","payload":1}""")))
+
+        // A killed CLI's truncated tail and a bare non-object line: skipped and counted, never thrown.
+        val lenient = parseNdjsonLenient(sequenceOf(tail.take(40), "[1,2,3]", "not json at all"))
+        assertEquals(0, lenient.events.size)
+        assertEquals(3L, lenient.skippedLines)
     }
 
     // ========== §12 denial: maxTurnsExitCode bound (moved from ClaudeExecutorTest) ==========

@@ -140,13 +140,11 @@ RUN apk add --no-cache \
 
 # Install Claude Code CLI, Codex CLI and opencode globally (binaries accessible
 # to all users; they back the !<claude>, !<codex> and !<opencode> command types).
-# CLAUDE_CODE_VERSION defaults to the latest published version; pin it
-# (--build-arg CLAUDE_CODE_VERSION=x.y.z) for reproducible builds and to match
+# All three are pinned (CWE-1357): an unpinned global npm install ships every
+# later release of a binary that runs agent prompts with the workspace's secrets
+# in its environment. Bump the pins deliberately; CLAUDE_CODE_VERSION must match
 # server.requireClaudeCodeVersion.
-ARG CLAUDE_CODE_VERSION=latest
-# The Codex and opencode CLIs are pinned (CWE-1357): an unpinned global npm
-# install ships every later release of a binary that runs agent prompts with the
-# workspace's secrets in its environment. Bump the pins deliberately.
+ARG CLAUDE_CODE_VERSION=2.1.318
 ARG CODEX_VERSION=0.166.0
 ARG OPENCODE_VERSION=1.19.5
 # The npm cache is cleaned in the same layer: nothing reads it at run time.

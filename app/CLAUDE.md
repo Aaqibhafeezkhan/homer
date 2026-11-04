@@ -87,7 +87,8 @@ Test files mirror the production package layout: `services/FooService.kt` gets
 `services/FooServiceTest.kt` (root §6). Property-based tests use kotest-property inside a plain
 JUnit test (`checkAll` in `runTest`, no Kotest engine), e.g. `models/CmdArgsTokenizerPropertyTest.kt`.
 Fixtures are inline `"""…"""` strings, except `claude/`
-(real CLI captures named for the CLI's `major.minor`, scrubbed to `test-*`) and `llm/<id>/` (one
+(real CLI captures named for the CLI's `major.minor` — patch-qualified, e.g.
+`cli-2.1.318-stream.jsonl`, when a `major.minor` name is already taken — scrubbed to `test-*`) and `llm/<id>/` (one
 directory per harness; Codex and opencode written from their documented JSON schemas, ADR-0070). A CLI bump is
 verified by adding a capture, never by editing an inline string —
 [ADR-0057](../docs/adr/0057-claude-output-modelled-only-where-read.md).

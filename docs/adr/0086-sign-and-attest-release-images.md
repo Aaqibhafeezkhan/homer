@@ -93,9 +93,8 @@ gh attestation verify "oci://$image" --repo livesport/homer \
   unsigned, and a consumer that verifies refuses it. A rerun of the release
   rebuilds the image, so it pushes and signs a new digest: the build is not
   reproducible, because several installs in the backend image take the newest
-  version at build time, among them the Claude Code and Codex CLIs
-  (`CLAUDE_CODE_VERSION` defaults to `latest`), the LangGraph Python packages
-  and the Alpine packages. The unsigned digest stays in the registry until it
+  version at build time, among them the LangGraph Python packages and the
+  Alpine packages. The unsigned digest stays in the registry until it
   is pruned, so a consumer verifies the digest it actually deploys.
 - Neutral: images that the upstream CI builds during the migration (ADR-0085) are not
   signed. They go to the internal registry only.
