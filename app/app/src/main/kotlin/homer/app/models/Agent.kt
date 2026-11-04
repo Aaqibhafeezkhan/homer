@@ -44,6 +44,11 @@ data class Agent(
     val runnerTags: List<String> = emptyList(),
     /** Seconds to wait for a runner to claim a run; null = `server.runnerClaimTimeoutSec`. */
     val runnerClaimTimeoutSec: Int? = null,
+    /**
+     * Opt-in preference for the runner instance that already holds this flow's
+     * host-local caches. Null = route exactly as without it. See ADR-0099.
+     */
+    val runnerAffinity: RunnerAffinity? = null,
     // Optional JSON Schema (Draft 2020-12) validating the JSON request body of
     // POST /api/v1/agent/{name}. Null = no payload validation. A malformed schema
     // causes the agent to be skipped at load (AgentsService). Validation happens
@@ -107,6 +112,7 @@ data class Agent(
         require(runnerClaimTimeoutSec == null || runnerClaimTimeoutSec >= 1) {
             "Agent '$name': runnerClaimTimeoutSec must be >= 1 when set, got $runnerClaimTimeoutSec"
         }
+        runnerAffinity?.let { RunnerAffinityValidation.validate("Agent '$name'", it) }
     }
 
     // Reads the legacy alias on purpose: it is the fallback for agents still using it.
@@ -158,6 +164,21 @@ data class Agent(
     val effectiveFromInputTags: List<String> =
         (tags.fromInputs + telemetry.traceTags).distinct()
 }
+
+/**
+ * Opt-in, flow-scoped runner affinity: this agent's runs prefer the runner
+ * instance that already holds the flow's host-local caches (a checkout, a
+ * package cache, build products). [group] is a free label naming one such cache
+ * set; [waitSec] bounds how long a run waits for its instance before any
+ * matching runner may take it. The preference is soft: it only orders runners
+ * that already match the agent's `runner`/`runnerTags` filter, and a run never
+ * waits longer than its claim TTL. See ADR-0099.
+ */
+@Serializable
+data class RunnerAffinity(
+    val group: String,
+    val waitSec: Int,
+)
 
 /**
  * Minimum spacing between runs of one agent — the frequency bound `lockStrategy`

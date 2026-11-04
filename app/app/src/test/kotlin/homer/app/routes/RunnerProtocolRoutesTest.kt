@@ -77,6 +77,9 @@ class RunnerProtocolRoutesTest {
     @TempDir
     lateinit var tmp: Path
 
+    /** A registration body for the named instance: one live instance holds a name, so tests that register twice must differ. */
+    private fun registerBody(name: String) = """{"name":"$name","tags":["linux","gpu"],"concurrency":1}"""
+
     private val queue = RunnerClaimQueue(maxPending = 10)
     private val workers =
         ExternalRunnerDomain(
@@ -104,7 +107,7 @@ class RunnerProtocolRoutesTest {
 
     private suspend fun ApplicationTestBuilder.register(
         token: String = "workers-token",
-        body: String = """{"name":"host-1","tags":["linux","gpu"],"concurrency":1}""",
+        body: String = registerBody("host-1"),
     ): HttpResponse =
         client.post("/api/v1/runner/register") {
             header(HttpHeaders.Authorization, "Bearer $token")
@@ -112,10 +115,10 @@ class RunnerProtocolRoutesTest {
             setBody(body)
         }
 
-    private suspend fun ApplicationTestBuilder.registered(): RegisterInstanceResponse =
+    private suspend fun ApplicationTestBuilder.registered(name: String = "host-1"): RegisterInstanceResponse =
         apiJson.decodeFromString(
             RegisterInstanceResponse.serializer(),
-            register()
+            register(body = registerBody(name))
                 .also {
                     assertEquals(HttpStatusCode.Created, it.status)
                 }.bodyAsText(),
@@ -177,9 +180,23 @@ class RunnerProtocolRoutesTest {
             assertEquals(HttpStatusCode.UnprocessableEntity, register(body = """{"concurrency":17}""").status)
             assertEquals(HttpStatusCode.UnprocessableEntity, register(body = """{"name":"bad name"}""").status)
             assertEquals(HttpStatusCode.BadRequest, register(body = """{"tags": "not-a-list"}""").status)
-            registered()
-            registered()
-            assertEquals(HttpStatusCode.TooManyRequests, register().status)
+            // Distinct names: one live instance holds a name, so the bound is reached with two.
+            registered(name = "host-1")
+            registered(name = "host-2")
+            assertEquals(HttpStatusCode.TooManyRequests, register(body = registerBody("host-3")).status)
+        }
+
+    @Test
+    fun `a second live registration of the same name is 422 and the body carries no token`() =
+        testApplication {
+            mount()
+            assertEquals(HttpStatusCode.Created, register(body = """{"name":"host-1"}""").status)
+
+            val duplicate = register(body = """{"name":"host-1"}""")
+            assertEquals(HttpStatusCode.UnprocessableEntity, duplicate.status)
+            val body = duplicate.bodyAsText()
+            assertTrue(body.contains("host-1"), "the refusal names the instance it refused: $body")
+            assertFalse(body.contains("workers-token"), "the refusal must name no domain token: $body")
         }
 
     @Test

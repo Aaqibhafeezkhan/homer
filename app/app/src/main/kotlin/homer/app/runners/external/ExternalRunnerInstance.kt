@@ -18,8 +18,18 @@ class ExternalRunnerInstance(
     val declaredConcurrency: Int,
     val version: String?,
     val registeredAt: Long,
+    /** The name the request declared, null when it sent none ([name] then falls back to an id prefix). */
+    val declaredName: String? = null,
 ) : ClaimConsumerInfo {
     override val concurrency: Int? get() = declaredConcurrency
+
+    /**
+     * The instance's affinity identity: its declared name qualified with the domain alias, so a
+     * preference can never name an instance of another domain. Null for a nameless instance —
+     * an id prefix is not a stable identity across reconnects, so it is never preferred and
+     * never recorded. See ADR-0099.
+     */
+    override val affinityInstance: String? get() = declaredName?.let { "$alias:$it" }
 
     private val activeSessions = AtomicInteger(0)
     private val openPolls = AtomicInteger(0)
@@ -30,7 +40,7 @@ class ExternalRunnerInstance(
     var lastSeenAt: Long = registeredAt
 
     @Volatile
-    var draining: Boolean = false
+    override var draining: Boolean = false
 
     /**
      * At most `concurrency` claim polls may be open at once, counting live sessions
@@ -59,5 +69,5 @@ class ExternalRunnerInstance(
         activeSessions.decrementAndGet()
     }
 
-    override fun matches(filter: RunnerFilter): Boolean = !draining && activeSessions.get() < declaredConcurrency && super.matches(filter)
+    override fun matches(filter: RunnerFilter): Boolean = !draining && activeSessions.get() < declaredConcurrency && matchesFilter(filter)
 }

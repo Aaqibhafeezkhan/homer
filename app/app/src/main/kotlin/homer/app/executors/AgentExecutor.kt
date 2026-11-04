@@ -56,6 +56,8 @@ class AgentExecutor(
     private val activeSessions: ActiveSessionsRegistry,
     private val commandIndices: List<Int>? = null,
     private val owner: String? = null,
+    /** The flow's first run id, handed to the runner so `runnerAffinity` can key on it. See ADR-0099. */
+    private val rootProcessId: Int? = null,
 ) {
     // Not a constructor parameter — no caller has ever needed a different TextCompiler.
     private val textCompiler: TextCompiler = DefaultTextCompiler()
@@ -70,6 +72,7 @@ class AgentExecutor(
                 workspace = workspace.config,
                 env = workspace.config.env,
                 parentContext = parentContext,
+                rootProcessId = rootProcessId,
             )
         logger.debug("Process {}: opening session on runner '{}'", processId, runner.alias)
         val session = runner.openSession(sessionParams)

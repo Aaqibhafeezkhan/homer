@@ -1,0 +1,7 @@
+name: affinity-parent
+description: Starts the flow's first child; the flow root Homer stamps here is the affinity key (ADR-0099)
+commands:
+  - !<agent>
+    label: start-flow
+    agentName: affinity-sub
+    timeout: 180

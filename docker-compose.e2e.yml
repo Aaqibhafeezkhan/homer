@@ -96,6 +96,49 @@ services:
       - HOMER_RUNNER_CONCURRENCY=1
       - HOMER_RUNNER_NAME=e2e-crash-runner
 
+  # Two named instances of one external domain (ADR-0099): RunnerAffinityTest proves a
+  # flow's later run lands on the instance that served its first. Distinct names are
+  # required — one live instance holds a name. Concurrency 1 keeps the two apart.
+  homer-runner-affinity-a:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: homer-runner
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    network_mode: "service:homer-backend"
+    depends_on:
+      homer-backend:
+        condition: service_healthy
+    environment:
+      - HOMER_RUNNER_URL=http://127.0.0.1:8080
+      - HOMER_RUNNER_TOKEN=e2e-affinity-domain-token-0123456789
+      - HOMER_RUNNER_TAGS=e2e-affinity
+      - HOMER_RUNNER_CONCURRENCY=1
+      - HOMER_RUNNER_NAME=affinity-a
+
+  homer-runner-affinity-b:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: homer-runner
+      secrets:
+        - artifactory_url
+        - artifactory_user
+        - artifactory_token
+    network_mode: "service:homer-backend"
+    depends_on:
+      homer-backend:
+        condition: service_healthy
+    environment:
+      - HOMER_RUNNER_URL=http://127.0.0.1:8080
+      - HOMER_RUNNER_TOKEN=e2e-affinity-domain-token-0123456789
+      - HOMER_RUNNER_TAGS=e2e-affinity
+      - HOMER_RUNNER_CONCURRENCY=1
+      - HOMER_RUNNER_NAME=affinity-b
+
   # Started via `docker compose run --name homer-e2e-runner e2e-runner`
   # (see DOCKER.md § E2E test stack) — `run` propagates the exit code;
   # one-off containers ignore container_name, hence --name on the command.
@@ -113,6 +156,10 @@ services:
       homer-runner:
         condition: service_started
       homer-runner-crash:
+        condition: service_started
+      homer-runner-affinity-a:
+        condition: service_started
+      homer-runner-affinity-b:
         condition: service_started
     environment:
       - E2E_BASE_URL=http://homer-backend:8080

@@ -2,11 +2,18 @@ package homer.app.runners.external
 
 import homer.app.exceptions.RunnerRegistrationRejectedException
 import homer.app.exceptions.TooManyRunnerInstancesException
+import homer.app.fixtures.TestFixtures
+import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerConfig
 import homer.app.models.RunnerFilter
+import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
+import homer.app.runners.queue.RunnerAffinityMemory
 import homer.app.runners.queue.RunnerClaimQueue
 import io.mockk.mockk
+import io.opentelemetry.context.Context
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -14,6 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class ExternalRunnerDomainTest {
     private var now = 1_000_000L
@@ -21,6 +29,18 @@ class ExternalRunnerDomainTest {
 
     private fun domain(config: RunnerConfig.External = RunnerConfig.External(token = "t")) =
         ExternalRunnerDomain("workers", config, queue, clock = { now })
+
+    private fun params(
+        processId: Int,
+        rootProcessId: Int? = null,
+    ) = RunnerSessionParams(
+        processId = processId,
+        agentName = "demo",
+        workspace = TestFixtures.mockWorkspaceConfig(),
+        env = emptyMap(),
+        parentContext = Context.current(),
+        rootProcessId = rootProcessId,
+    )
 
     @Test
     fun `register creates an instance and a queue consumer`() {
@@ -107,38 +127,72 @@ class ExternalRunnerDomainTest {
     }
 
     @Test
-    fun `deregister stops claims and removes the instance once idle`() {
-        val d = domain()
-        val inst = d.register(RegisterInstanceRequest())
-        inst.sessionOpened()
+    fun `deregister stops claims and removes the instance once idle`() =
+        runTest {
+            val d = domain()
+            val inst = d.register(RegisterInstanceRequest())
+            inst.sessionOpened()
 
-        assertTrue(d.deregister(inst.id))
-        assertTrue(inst.draining)
-        assertTrue(queue.consumers().isEmpty())
-        assertEquals(inst, d.instance(inst.id), "in-flight sessions keep the instance addressable")
+            assertTrue(d.deregister(inst.id))
+            assertTrue(inst.draining)
+            assertTrue(queue.consumers().isEmpty())
+            assertEquals(inst, d.instance(inst.id), "in-flight sessions keep the instance addressable")
 
-        inst.sessionClosed()
-        d.releaseIfIdle(inst)
-        assertNull(d.instance(inst.id))
-        assertFalse(d.deregister(inst.id))
-    }
+            inst.sessionClosed()
+            d.releaseIfIdle(inst)
+            assertNull(d.instance(inst.id))
+            assertFalse(d.deregister(inst.id))
+        }
 
     @Test
-    fun `sweepExpired drops an instance silent past the heartbeat timeout and reports it`() {
-        val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
-        val quiet = d.register(RegisterInstanceRequest(name = "quiet"))
-        val chatty = d.register(RegisterInstanceRequest(name = "chatty"))
+    fun `deregistering the preferred instance wakes the run parked behind it`() =
+        runTest {
+            val memory = RunnerAffinityMemory().also { it.record(1, "gpu", "workers:host-1") }
+            val affinityQueue = RunnerClaimQueue(maxPending = 10, affinityMemory = memory)
+            val d = ExternalRunnerDomain("workers", RunnerConfig.External(token = "t"), affinityQueue, clock = { now })
+            val preferred = d.register(RegisterInstanceRequest(name = "host-1", tags = listOf("gpu"), concurrency = 1))
+            val other = d.register(RegisterInstanceRequest(name = "host-2", tags = listOf("gpu"), concurrency = 1))
 
-        now += 59_000
-        d.touch(chatty)
-        now += 2_000
-        val expired = d.sweepExpired()
+            val run =
+                async {
+                    affinityQueue.awaitClaim(
+                        params(1, rootProcessId = 1),
+                        RunnerFilter.Tags(setOf("gpu")),
+                        300.seconds,
+                        RunnerAffinity("gpu", 600),
+                    )
+                }
+            runCurrent()
+            val takeOther = async { affinityQueue.take(other) }
+            runCurrent()
+            assertTrue(takeOther.isActive, "the other instance passes the request over while the preference is active")
 
-        assertEquals(listOf(quiet), expired)
-        assertNull(d.instance(quiet.id))
-        assertEquals(chatty, d.instance(chatty.id))
-        assertEquals(listOf<Any>(chatty), queue.consumers())
-    }
+            // The drain route: `deregister` flips draining before it leaves through
+            // unregisterConsumer, and the held-back waiter must wake all the same.
+            assertTrue(d.deregister(preferred.id))
+            val taken = takeOther.await()
+            assertEquals(1, taken.params.processId)
+            taken.complete(mockk<RunnerSession>(relaxed = true))
+            run.await()
+        }
+
+    @Test
+    fun `sweepExpired drops an instance silent past the heartbeat timeout and reports it`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val quiet = d.register(RegisterInstanceRequest(name = "quiet"))
+            val chatty = d.register(RegisterInstanceRequest(name = "chatty"))
+
+            now += 59_000
+            d.touch(chatty)
+            now += 2_000
+            val expired = d.sweepExpired()
+
+            assertEquals(listOf(quiet), expired)
+            assertNull(d.instance(quiet.id))
+            assertEquals(chatty, d.instance(chatty.id))
+            assertEquals(listOf<Any>(chatty), queue.consumers())
+        }
 
     @Test
     fun `couldServe follows allowedTags and instanceTagSets follows registrations`() {
@@ -161,4 +215,44 @@ class ExternalRunnerDomainTest {
             assertEquals(mapOf("CACHE" to "/c"), d.runnerEnv)
             assertThrows<IllegalStateException> { d.openSession(mockk<RunnerSessionParams>(relaxed = true)) }
         }
+
+    @Test
+    fun `a live instance holds its declared name, so a second one is rejected`() {
+        val d = domain(RunnerConfig.External(token = "s3cr3t-token"))
+        val first = d.register(RegisterInstanceRequest(name = "host-1"))
+        assertEquals("workers:host-1", first.affinityInstance)
+
+        val ex = assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(name = "host-1")) }
+        assertFalse(ex.message!!.contains("s3cr3t-token"), "the rejection must name no token")
+        assertEquals(listOf<Any>(first), queue.consumers(), "the rejected registration leaves no consumer")
+    }
+
+    @Test
+    fun `a name freed by a draining or swept instance can be registered again`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val draining = d.register(RegisterInstanceRequest(name = "host-1"))
+            d.deregister(draining.id)
+            assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+
+            val silent = d.instances().single { it.declaredName == "host-1" }
+            now += 61_000
+            assertEquals(listOf(silent), d.sweepExpired())
+            assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+        }
+
+    @Test
+    fun `the same name in another domain is its own instance`() {
+        val a = domain()
+        val b = ExternalRunnerDomain("other", RunnerConfig.External(token = "t"), queue, clock = { now })
+        assertEquals("workers:host-1", a.register(RegisterInstanceRequest(name = "host-1")).affinityInstance)
+        assertEquals("other:host-1", b.register(RegisterInstanceRequest(name = "host-1")).affinityInstance)
+    }
+
+    @Test
+    fun `a nameless registration exposes no affinity identity`() {
+        val inst = domain().register(RegisterInstanceRequest())
+        assertNull(inst.declaredName)
+        assertNull(inst.affinityInstance)
+    }
 }

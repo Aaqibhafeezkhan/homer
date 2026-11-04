@@ -45,4 +45,9 @@ data class RunnerSessionParams(
     val workspace: WorkspaceConfig,
     val env: Map<String, String>,
     val parentContext: Context,
+    /**
+     * The flow's first run id, Homer-stamped (ADR-0058) — never agent-writable.
+     * `runnerAffinity` keys its memory on it. Null for a run with no flow root.
+     */
+    val rootProcessId: Int? = null,
 )

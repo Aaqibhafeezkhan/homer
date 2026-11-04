@@ -3,11 +3,13 @@ package homer.app.runners
 import homer.app.exceptions.ConfigurationException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerConfig
 import homer.app.runners.external.ExternalRunnerDomain
 import homer.app.runners.external.RegisterInstanceRequest
 import homer.app.runners.queue.QueuedRunner
 import homer.app.runners.queue.RegisteredRunner
+import homer.app.runners.queue.RunnerAffinityMemory
 import homer.app.runners.queue.RunnerClaimQueue
 import io.mockk.every
 import io.mockk.mockk
@@ -127,6 +129,38 @@ class RunnerRegistryTest {
         assertEquals("tags:linux", byTags.alias)
         assertEquals(Duration.parse("7s"), (byTags as QueuedRunner).claimTimeout)
     }
+
+    private fun params(
+        processId: Int,
+        rootProcessId: Int,
+    ) = RunnerSessionParams(
+        processId = processId,
+        agentName = "demo",
+        workspace = TestFixtures.mockWorkspaceConfig(),
+        env = emptyMap(),
+        parentContext = Context.current(),
+        rootProcessId = rootProcessId,
+    )
+
+    @Test
+    fun `forAgent carries the agent's affinity into the claim, forAlias carries none`() =
+        runTest {
+            val memory = RunnerAffinityMemory(clock = { testScheduler.currentTime })
+            val queue = RunnerClaimQueue(maxPending = 10, clock = { testScheduler.currentTime }, affinityMemory = memory)
+            val registry = RunnerRegistry(listOf(RegisteredRunner(stubRunner("local"))), queue = queue)
+            registry.start(backgroundScope)
+
+            // A run of an agent declaring runnerAffinity records the instance that served it
+            // under its flow's key — a static runner is its own single instance.
+            val agent = AgentFixtures.simpleAgent().copy(runnerAffinity = RunnerAffinity("gpu", 30))
+            registry.forAgent(agent).openSession(params(1, rootProcessId = 7))
+            assertEquals("local", memory.preferredFor(7, "gpu"))
+
+            // forAlias is the `runnerCmd` path: it declares no affinity, so the run's flow root
+            // reaches the queue but nothing is preferred and nothing is recorded.
+            registry.forAlias("local").openSession(params(2, rootProcessId = 8))
+            assertNull(memory.preferredFor(8, "gpu"))
+        }
 
     @Test
     fun `start registers one consumer per entry with its facets`() =

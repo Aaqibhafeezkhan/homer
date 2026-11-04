@@ -1,11 +1,13 @@
 package homer.app.models
 
 import homer.app.fixtures.AgentFixtures
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class AgentTest {
     private val sampleParam = Param(paramName = "id")
@@ -107,6 +109,34 @@ class AgentTest {
     fun `runnerClaimTimeoutSec must be at least 1 when set`() {
         assertEquals(600, AgentFixtures.simpleAgent().copy(runnerClaimTimeoutSec = 600).runnerClaimTimeoutSec)
         assertThrows<IllegalArgumentException> { AgentFixtures.simpleAgent().copy(runnerClaimTimeoutSec = 0) }
+    }
+
+    @Test
+    fun `runnerAffinity defaults to null and accepts a valid block`() {
+        assertNull(AgentFixtures.simpleAgent().runnerAffinity)
+        val affinity = RunnerAffinity("gpu", 30)
+        assertEquals(affinity, AgentFixtures.simpleAgent().copy(runnerAffinity = affinity).runnerAffinity)
+    }
+
+    @Test
+    fun `a malformed runnerAffinity is rejected at construction`() {
+        val ex =
+            assertThrows<IllegalArgumentException> {
+                AgentFixtures.simpleAgent().copy(runnerAffinity = RunnerAffinity("bad group", 30))
+            }
+        assertTrue(ex.message!!.startsWith("Agent '${AgentFixtures.simpleAgent().name}': runnerAffinity.group"), ex.message)
+        assertThrows<IllegalArgumentException> {
+            AgentFixtures.simpleAgent().copy(runnerAffinity = RunnerAffinity("gpu", 0))
+        }
+    }
+
+    @Test
+    fun `a valid runnerAffinity round-trips through JSON`() {
+        val json = Json { encodeDefaults = false }
+        val agent = AgentFixtures.simpleAgent().copy(runnerAffinity = RunnerAffinity("gpu", 30))
+
+        val decoded = json.decodeFromString(Agent.serializer(), json.encodeToString(Agent.serializer(), agent))
+        assertEquals(agent.runnerAffinity, decoded.runnerAffinity)
     }
 
     @Test

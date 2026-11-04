@@ -1,0 +1,18 @@
+name: affinity-check
+description: Fails unless this flow's first run left its marker on the instance serving this one (ADR-0099)
+runnerTags: [e2e-affinity]
+runnerClaimTimeoutSec: 120
+runnerAffinity:
+  group: e2e-affinity
+  waitSec: 60
+commands:
+  - !<script>
+    label: check-marker
+    content: |
+      echo "affinity-check ran on $(hostname)"
+      # The marker only exists on the instance that ran the flow's first child, so a
+      # preference that did not hold lands here without it and the run fails.
+      test -f "/tmp/homer-affinity/$HMR_ROOT_PROCESS_ID" || {
+        echo "no marker: this flow's first run was served by another instance"
+        exit 1
+      }

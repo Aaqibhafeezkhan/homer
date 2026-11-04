@@ -2437,6 +2437,21 @@ HOMER_RUNNER_TOKEN=… homer-runner --url https://homer.internal --tags linux,gp
         </article>
 
         <article class="f">
+          <h3>Runner affinity <span class="where">agent + claim queue</span></h3>
+          <p>Opt a flow into staying on the instance that served it. An agent declaring <code>runnerAffinity</code> makes
+            the claim queue prefer, for later runs of the same flow, the instance that claimed the flow's earlier ones —
+            so a warmed cache, checkout or model file is not rebuilt on a second machine. It narrows the choice among
+            runners that already match, never widens it; the preference is keyed on the run's own flow root (the first run
+            of the <code>!&lt;agent&gt;</code> chain) and never crosses flows. It is soft: another matching runner passes
+            the run over only until <code>waitSec</code> passes, the run falls back at once when the preferred instance is
+            gone, draining or no longer matching, and an agent without <code>runnerAffinity</code> is never delayed by one
+            with it. An external instance is identified by the name it registered with, and one live instance of a domain
+            holds a name. The memory is in-process and bounded (1024 flows, six hours), so a restart simply loses it.</p>
+          <pre><code>runnerTags: [linux, gpu]
+runnerAffinity: { group: gpu-boxes, waitSec: 30 }</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Pod annotations <span class="where">k8s runner</span></h3>
           <p>Passed through verbatim — the hook for annotation-driven tooling such as Vault Agent Injector, CSI secret
             drivers or a service mesh. Prefer file delivery for secrets.</p>

@@ -64,9 +64,18 @@ class ExternalRunnerDomain(
                 declaredConcurrency = request.concurrency,
                 version = request.version,
                 registeredAt = clock(),
+                declaredName = name,
             )
         synchronized(registerLock) {
             if (instances.size >= config.maxInstances) throw TooManyRunnerInstancesException(alias, config.maxInstances)
+            // One live instance per declared name: `runnerAffinity` names an instance by that name,
+            // so two of them would make the preference ambiguous. A draining instance is on its way
+            // out and a swept one is gone, so neither holds the name — a reconnecting runner is not
+            // locked out. Checked under the same lock as the insert, or two simultaneous
+            // registrations would both pass. See ADR-0099.
+            if (name != null && instances.values.any { !it.draining && it.declaredName == name }) {
+                throw RunnerRegistrationRejectedException(alias, "instance name '$name' is already used by a live instance")
+            }
             instances[id] = instance
         }
         queue.registerConsumer(instance)
@@ -117,7 +126,7 @@ class ExternalRunnerDomain(
     fun sessions(): List<ExternalRunnerSession> = sessions.values.toList()
 
     /** Stops offering claims; the instance stays addressable while it has sessions in flight. */
-    fun deregister(id: String): Boolean {
+    suspend fun deregister(id: String): Boolean {
         val instance = instances[id] ?: return false
         instance.draining = true
         queue.unregisterConsumer(instance)
@@ -140,7 +149,7 @@ class ExternalRunnerDomain(
     fun instanceTagSets(): Collection<Set<String>> = instances.values.filter { !it.draining }.map { it.tags }
 
     /** Drops every instance silent for longer than `heartbeatTimeoutSec`, failing each of its sessions. */
-    fun sweepExpired(): List<ExternalRunnerInstance> {
+    suspend fun sweepExpired(): List<ExternalRunnerInstance> {
         val deadline = clock() - config.heartbeatTimeoutSec * 1000
         val expired = instances.values.filter { it.lastSeenAt < deadline }
         expired.forEach { instance ->

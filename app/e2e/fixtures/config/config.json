@@ -30,6 +30,13 @@
       "homerApiUrl": "http://127.0.0.1:8080",
       "heartbeatTimeoutSec": 35,
       "extraUploads": [{ "local": "/app/config/extra-upload", "remote": ".homer/extra", "env": "E2E_EXTRA_DIR" }]
+    },
+    "e2e-affinity": {
+      "type": "external",
+      "token": "e2e-affinity-domain-token-0123456789",
+      "homerApiUrl": "http://127.0.0.1:8080",
+      "heartbeatTimeoutSec": 35,
+      "allowedTags": ["e2e-affinity"]
     }
   },
   "agentsSearchPath": "/app/agents",

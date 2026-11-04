@@ -74,6 +74,25 @@
       "minimum": 1,
       "description": "Seconds a run waits for a runner to claim it before failing; null = server.runnerClaimTimeoutSec (default 300)."
     },
+    "runnerAffinity": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["group", "waitSec"],
+      "description": "Opt-in preference for the runner instance that already holds this flow's host-local caches. Soft: it only orders runners that already match the agent's runner/runnerTags filter, and never widens it. See ADR-0099.",
+      "properties": {
+        "group": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$",
+          "description": "Free label naming one cache set. The preference key is the run's flow root plus this group, so the same group in another flow is a different key."
+        },
+        "waitSec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Seconds a run waits for its preferred instance before any matching runner may take it. The run's claim TTL bounds the whole wait."
+        }
+      }
+    },
     "inputSchema": {
       "type": ["object", "null"],
       "description": "JSON Schema (Draft 2020-12) validating the JSON request body of POST /api/v1/agent/{name}. A violation is rejected with HTTP 422 before the process is spawned."

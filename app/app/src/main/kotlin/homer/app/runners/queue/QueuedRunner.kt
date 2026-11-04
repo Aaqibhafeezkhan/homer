@@ -1,5 +1,6 @@
 package homer.app.runners.queue
 
+import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerFilter
 import homer.app.runners.Runner
 import homer.app.runners.RunnerSession
@@ -12,12 +13,17 @@ import kotlin.time.Duration
  * and the env-shaping facets are its own; for a tags filter they are derived
  * from every runner that could match (remote if any is, secret names unioned,
  * no runnerEnv: the serving runner's env arrives via RunnerSession.env). See ADR-0066.
+ *
+ * [affinity] is the agent's own `runnerAffinity`, carried into the claim so the
+ * queue prefers the instance its flow last ran on; a run through [forAlias]
+ * (a `runnerCmd` step) has none. See ADR-0099.
  */
 class QueuedRunner(
     private val filter: RunnerFilter,
     private val queue: RunnerClaimQueue,
     candidates: List<Runner>,
     val claimTimeout: Duration,
+    private val affinity: RunnerAffinity? = null,
 ) : Runner {
     init {
         if (filter is RunnerFilter.Alias) require(candidates.size == 1) { "alias filter needs exactly one candidate" }
@@ -36,5 +42,5 @@ class QueuedRunner(
 
     override val sysEnvBackedEnvNames: Set<String> = candidates.flatMapTo(mutableSetOf()) { it.sysEnvBackedEnvNames }
 
-    override suspend fun openSession(params: RunnerSessionParams): RunnerSession = queue.awaitClaim(params, filter, claimTimeout)
+    override suspend fun openSession(params: RunnerSessionParams): RunnerSession = queue.awaitClaim(params, filter, claimTimeout, affinity)
 }
