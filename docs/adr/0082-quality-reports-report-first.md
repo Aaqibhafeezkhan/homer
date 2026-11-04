@@ -102,17 +102,13 @@ package per layer. That emptied the lane, so the `architecture-backend-pending` 
 `quality-gate` line were removed; a rule tagged `report-only` again brings them back.
 
 Mutation testing of the backend (PIT, Nightly job `backend-mutation`) is a
-scheduled, non-gating pilot on the validators, parsers and security helpers
-listed in `app/app/build.gradle.kts`. PIT mutates bytecode, so
+scheduled, non-gating pilot; its scope is in the amendment of 2026-11-04 below. PIT mutates bytecode, so
 Kotlin-generated code yields mutants no test can meaningfully kill: in a wider
 trial run, 61% of the mutants were in kotlinx.serialization `$$serializer`
 classes and 20% in property accessors, against a handful in null-check
 intrinsics and coroutine state machines; the plugin that filters these for
-Kotlin is commercial. The pilot excludes `*$$serializer` classes, its report
-ignores mutants that only remove a call the compiler adds (null checks,
-coroutine result checks), and every backend test runs against each mutant, so
-code tested from another package is not reported as uncovered. Whether backend
-mutation testing joins the gate is decided on the pilot's numbers.
+Kotlin is commercial. Whether backend mutation testing joins the gate is
+decided on the pilot's numbers.
 
 A full console mutation run is about 7,500 mutants and takes hours on a cold
 incremental cache, so it is a manual job until the scope is sharded; merge
@@ -216,3 +212,13 @@ these checks find comes from the change, and a change can surface a finding in a
 touched: an export left unused, a query that loses its index. Filtering those out would only move
 the failure to the merge request. CI keeps the full checks; the diff mode is a faster approximation
 for the edit loop and does not replace the gate.
+
+*Amended (2026-11-04):* the backend PIT pilot moved from `homer.app.config` to the validators,
+parsers and security helpers listed in `app/app/build.gradle.kts` (864 mutants, about 12 minutes on
+a CI runner). It excludes `*$$serializer` classes. PIT runs, for each mutant, only the tests that
+cover the mutated line; those are now chosen from every backend package (`targetTests =
+homer.app.*`), so code tested from another package is no longer reported as uncovered. The report
+(`tools/quality/pit.mjs`) ignores mutants that only remove a call the Kotlin compiler adds (null
+checks, coroutine result checks, index-overflow guards): outside the score, no finding. PIT's own
+`avoidCallsTo` was tried for this and dropped: it skips every line that calls a listed class, and
+Kotlin compiles `==` on objects to `Intrinsics.areEqual`, so it hid 37 mutants that tests do kill.

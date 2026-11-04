@@ -217,7 +217,8 @@ tasks.register<JavaExec>("queryPlanReport") {
 }
 
 // Mutation-testing pilot (ADR-0082) on validators, parsers and security helpers; run nightly, not
-// part of `check`. Every test runs, so code tested from another package is not reported uncovered.
+// part of `check`. PIT runs the tests covering each mutated line, chosen from every backend package
+// (`targetTests`), so code tested from another package is not reported uncovered.
 pitest {
     pitestVersion = libs.versions.pitest
     junit5PluginVersion = libs.versions.pitestJunit5

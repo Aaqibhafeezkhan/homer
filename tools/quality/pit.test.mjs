@@ -116,6 +116,18 @@ test('only a removed call into the Kotlin runtime is ever a compiler-call mutant
   fc.assert(fc.property(fc.string(), (description) => !isCompilerCallMutant({ description }) || description.startsWith('removed call to kotlin/')));
 });
 
+test('every class pattern of the PIT scope names a backend source file', () => {
+  const root = path.join(import.meta.dirname, '..', '..');
+  const build = fs.readFileSync(path.join(root, 'app/app/build.gradle.kts'), 'utf8');
+  const patterns = [...build.matchAll(/"(homer\.app\.[\w.]+)\*"/g)].map((m) => m[1]);
+  assert.ok(patterns.length > 0, 'no PIT class patterns found in app/app/build.gradle.kts');
+  const stale = patterns.filter((p) => {
+    const at = path.join(root, 'app/app/src/main/kotlin', ...p.replace(/\.$/, '').split('.'));
+    return p.endsWith('.') ? !fs.existsSync(at) : !fs.existsSync(`${at}.kt`);
+  });
+  assert.deepEqual(stale, []);
+});
+
 test('main writes the mutation-backend report files and fails on a missing report', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-'));
   const xml = path.join(dir, 'mutations.xml');

@@ -167,4 +167,4 @@ The counts below are a snapshot, last refreshed when `detekt` became required (2
 | `crap.threshold` | 8 (the target), required | keep it: new and changed functions stay at CRAP ≤ 8 (in practice cc ≤ 7) |
 | `mutation-console` | per pull request | raise test strength; full runs need sharding before they can be scheduled |
 | detekt 2.0 stable | `detekt` runs on 2.0.0-alpha.6 | move to 2.0 stable once it ships |
-| Backend mutation testing | pilot | exclude `*$$serializer` classes, widen the scope, decide on the numbers |
+| Backend mutation testing | nightly pilot on validators, parsers and security helpers (864 mutants, score about 92%) | raise test strength on its survivors; decide on the numbers |

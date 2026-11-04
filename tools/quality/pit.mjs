@@ -15,7 +15,7 @@ const REPORT_DIR = 'app/app/build/reports/pitest';
 const SOURCE_ROOT = 'app/app/src/main/kotlin';
 const FINDING_STATUSES = { SURVIVED: 'survived', NO_COVERAGE: 'no coverage' };
 // Null checks, coroutine result checks and index-overflow guards the Kotlin compiler emits: removing
-// one changes nothing a test can observe. PIT's avoidCallsTo would skip their whole line instead.
+// one changes nothing a test can observe. Filtered here, not by avoidCallsTo: see ADR-0082.
 const COMPILER_CALL = /^removed call to kotlin\/(jvm\/internal\/Intrinsics|ResultKt|collections\/CollectionsKt)::(check|throw)/;
 const ENTITIES = { lt: '<', gt: '>', amp: '&', apos: "'", quot: '"' };
 
