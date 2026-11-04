@@ -213,7 +213,7 @@ touched: an export left unused, a query that loses its index. Filtering those ou
 the failure to the merge request. CI keeps the full checks; the diff mode is a faster approximation
 for the edit loop and does not replace the gate.
 
-*Amended (2026-11-04):* the backend PIT pilot moved from `homer.app.config` to the validators,
+*Amended (2026-11-04):* the backend PIT pilot widened from `homer.app.config` to the validators,
 parsers and security helpers listed in `app/app/build.gradle.kts` (864 mutants, about 12 minutes on
 a CI runner). It excludes `*$$serializer` classes. PIT runs, for each mutant, only the tests that
 cover the mutated line; those are now chosen from every backend package (`targetTests =

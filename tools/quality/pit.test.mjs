@@ -119,8 +119,13 @@ test('only a removed call into the Kotlin runtime is ever a compiler-call mutant
 test('every class pattern of the PIT scope names a backend source file', () => {
   const root = path.join(import.meta.dirname, '..', '..');
   const build = fs.readFileSync(path.join(root, 'app/app/build.gradle.kts'), 'utf8');
-  const patterns = [...build.matchAll(/"(homer\.app\.[\w.]+)\*"/g)].map((m) => m[1]);
-  assert.ok(patterns.length > 0, 'no PIT class patterns found in app/app/build.gradle.kts');
+  const scope = /val nightlyMutationScope =\s*setOf\(([\s\S]*?)\n\s*\)/.exec(build)?.[1];
+  assert.ok(scope, 'no nightlyMutationScope in app/app/build.gradle.kts');
+  const entries = [...scope.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(entries.length > 0, 'nightlyMutationScope is empty');
+  // Only a package (`a.b.*`) or a class prefix (`a.b.C*`) can be checked against the sources.
+  assert.deepEqual(entries.filter((e) => !/^homer\.app\.(?:[a-z]\w*\.)*(?:[A-Z]\w*)?\*$/.test(e)), []);
+  const patterns = entries.map((e) => e.slice(0, -1));
   const stale = patterns.filter((p) => {
     const at = path.join(root, 'app/app/src/main/kotlin', ...p.replace(/\.$/, '').split('.'));
     return p.endsWith('.') ? !fs.existsSync(at) : !fs.existsSync(`${at}.kt`);
