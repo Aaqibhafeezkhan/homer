@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
-import { decodeXml, main, parseMutations, pitFindings, pitStats } from './pit.mjs';
+import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats } from './pit.mjs';
 
 const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
@@ -101,11 +101,27 @@ test('an empty report has no score', () => {
   assert.equal(pitStats(parseMutations(report())).score, 'n/a');
 });
 
+test('removed calls the Kotlin compiler adds are compiler-call mutants, other removed calls are not', () => {
+  const removed = (call) => ({ description: `removed call to ${call}` });
+  for (const call of ['kotlin/jvm/internal/Intrinsics::checkNotNullExpressionValue', 'kotlin/ResultKt::throwOnFailure', 'kotlin/collections/CollectionsKt::throwIndexOverflow']) {
+    assert.equal(isCompilerCallMutant(removed(call)), true, call);
+  }
+  for (const call of ['kotlin/collections/CollectionsKt::sortWith', 'homer/app/infra/PathSafety::checkContained', 'kotlinx/serialization/json/JsonBuilder::setPrettyPrint']) {
+    assert.equal(isCompilerCallMutant(removed(call)), false, call);
+  }
+  assert.equal(isCompilerCallMutant({ description: 'negated conditional' }), false);
+});
+
+test('only a removed call into the Kotlin runtime is ever a compiler-call mutant', () => {
+  fc.assert(fc.property(fc.string(), (description) => !isCompilerCallMutant({ description }) || description.startsWith('removed call to kotlin/')));
+});
+
 test('main writes the mutation-backend report files and fails on a missing report', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-'));
   const xml = path.join(dir, 'mutations.xml');
-  fs.writeFileSync(xml, report(mutation('KILLED'), mutation('SURVIVED')));
+  const nullCheck = mutation('SURVIVED', { description: 'removed call to kotlin/jvm/internal/Intrinsics::checkNotNullParameter' });
+  fs.writeFileSync(xml, report(mutation('KILLED'), mutation('SURVIVED'), nullCheck));
   assert.match(main([xml, dir]), /^Backend mutation testing \(score 50\.0%\): 1 finding\(s\)\n/);
-  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\nignored=1\n');
   assert.throws(() => main([path.join(dir, 'missing.xml'), dir]), /did :app:pitest run\?/);
 });

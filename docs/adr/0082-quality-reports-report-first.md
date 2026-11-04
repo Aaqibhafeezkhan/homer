@@ -101,15 +101,18 @@ findings were split; the layering rule followed with ADR-0083's ports, and the c
 package per layer. That emptied the lane, so the `architecture-backend-pending` check and its
 `quality-gate` line were removed; a rule tagged `report-only` again brings them back.
 
-Mutation testing of the backend (PIT, job `homer-app-mutation`) is a
-scheduled, non-gating pilot on `homer.app.config`. PIT mutates bytecode, so
+Mutation testing of the backend (PIT, Nightly job `backend-mutation`) is a
+scheduled, non-gating pilot on the validators, parsers and security helpers
+listed in `app/app/build.gradle.kts`. PIT mutates bytecode, so
 Kotlin-generated code yields mutants no test can meaningfully kill: in a wider
 trial run, 61% of the mutants were in kotlinx.serialization `$$serializer`
 classes and 20% in property accessors, against a handful in null-check
 intrinsics and coroutine state machines; the plugin that filters these for
-Kotlin is commercial. Widening the scope starts with excluding `*$$serializer`;
-whether backend mutation testing joins the gate is decided on the pilot's
-numbers.
+Kotlin is commercial. The pilot excludes `*$$serializer` classes, its report
+ignores mutants that only remove a call the compiler adds (null checks,
+coroutine result checks), and every backend test runs against each mutant, so
+code tested from another package is not reported as uncovered. Whether backend
+mutation testing joins the gate is decided on the pilot's numbers.
 
 A full console mutation run is about 7,500 mutants and takes hours on a cold
 incremental cache, so it is a manual job until the scope is sharded; merge
