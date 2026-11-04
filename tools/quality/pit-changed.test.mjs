@@ -88,6 +88,27 @@ test('text inside a line comment or a closed block comment is never code', () =>
   fc.assert(fc.property(noMarkers, (body) => codeLineNumbers(`/*${body}*/`).size === 0));
 });
 
+test('a ${…} template is code again, its own literals and braces included', () => {
+  const lines = (...text) => [...codeLineNumbers(text.join('\n'))];
+  assert.deepEqual(lines('val s = "${ "a /* b" } c"', 'val t = 1'), [1, 2]);
+  assert.deepEqual(lines('val s = "${ "a\\"b" } /* c"', 'val t = 1'), [1, 2]);
+  assert.deepEqual(lines('val m = "${ listOf(1).map { it } }" /* x', 'y */', 'val t = 1'), [1, 3]);
+  assert.deepEqual(lines("val c = '\\'' + \"/*\"", 'val t = 1'), [1, 2]);
+});
+
+test('a backticked name may hold quotes and comment openers', () => {
+  assert.deepEqual([...codeLineNumbers("fun `it's /* fine`() = 1\n// note\nval t = 1")], [1, 3]);
+});
+
+test('a raw string closes at the last three quotes of a run', () => {
+  assert.deepEqual([...codeLineNumbers('val r = """"a"""" // x\n// note\nval t = 1')], [1, 3]);
+});
+
+test('a source the lexer cannot read to a clean end counts as code on every line', () => {
+  assert.deepEqual([...codeLineNumbers('val s = "open\n// a\n// b')], [1, 2, 3]);
+  assert.deepEqual([...codeLineNumbers('/* never closed\nval t = 1')], [1, 2]);
+});
+
 test('two changed sources with one PIT path are refused, not merged', () => {
   const text = source('homer.app.infra', 'class A');
   const changed = new Map([
@@ -110,19 +131,23 @@ test('only mutants on changed lines remain, with their repository path', () => {
   ]);
 });
 
-test('main mutates the changed classes through -PpitestTargetClasses and reports only their changed lines', async () => {
+/**
+ * Runs `main` in a temporary repository whose last commit adds `A.kt` with `text`, against a
+ * stand-in for Gradle that records its arguments, writes `mutations` as PIT's report and exits
+ * `exit`. Returns main's output (or the error it threw) and the recorded arguments, if any.
+ */
+async function runMain(text, { mutations = [], exit = 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-changed-'));
   const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
   git('commit', '-q', '--allow-empty', '-m', 'base');
   const base = git('rev-parse', 'HEAD');
   fs.mkdirSync(path.join(dir, `${SRC}/homer/app`), { recursive: true });
-  fs.writeFileSync(path.join(dir, `${SRC}/homer/app/A.kt`), source('homer.app', 'class A {\n  fun f() = 1\n}'));
-  // A stand-in for Gradle: records its arguments and writes the report PIT would.
-  const report = `<mutations>${[6, 7].map((line) => `<mutation status='SURVIVED'><sourceFile>A.kt</sourceFile><mutatedClass>homer.app.A</mutatedClass><mutatedMethod>f</mutatedMethod><lineNumber>${line}</lineNumber><description>d</description></mutation>`).join('')}</mutations>`;
+  fs.writeFileSync(path.join(dir, `${SRC}/homer/app/A.kt`), text);
+  const xml = mutations.map((line) => `<mutation status='SURVIVED'><sourceFile>A.kt</sourceFile><mutatedClass>homer.app.A</mutatedClass><mutatedMethod>f</mutatedMethod><lineNumber>${line}</lineNumber><description>d</description></mutation>`);
   fs.mkdirSync(path.join(dir, 'app'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'app/report.xml'), report);
-  fs.writeFileSync(path.join(dir, 'app/gradlew'), '#!/bin/sh\nprintf "%s\\n" "$@" > app/args.txt\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'app/report.xml'), `<mutations>${xml.join('')}</mutations>`);
+  fs.writeFileSync(path.join(dir, 'app/gradlew'), `#!/bin/sh\nprintf "%s\\n" "$@" > app/args.txt\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\nexit ${exit}\n`, { mode: 0o755 });
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const cwd = process.cwd();
@@ -131,15 +156,37 @@ test('main mutates the changed classes through -PpitestTargetClasses and reports
   process.chdir(dir);
   try {
     const { main } = await import('./pit-changed.mjs');
-    assert.match(main(), /^Backend mutation testing of the change \(score 0\.0%\): 2 finding\(s\)/);
-    const args = fs.readFileSync(path.join(dir, 'app/args.txt'), 'utf8').trim().split('\n');
-    assert.ok(args.includes(':app:pitest'));
-    assert.ok(args.includes('-PpitestTargetClasses=homer.app.A,homer.app.A$*,homer.app.AKt,homer.app.AKt$*'), args.join(' '));
+    let output;
+    try {
+      output = main();
+    } catch (error) {
+      output = error;
+    }
+    const argsFile = path.join(dir, 'app/args.txt');
+    return { output, args: fs.existsSync(argsFile) ? fs.readFileSync(argsFile, 'utf8').trim().split('\n') : null };
   } finally {
     process.chdir(cwd);
     if (saved === undefined) delete process.env.MUTATE_BASE;
     else process.env.MUTATE_BASE = saved;
   }
+}
+
+test('main mutates the changed classes through -PpitestTargetClasses and reports only their changed lines', async () => {
+  const { output, args } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { mutations: [6, 7] });
+  assert.match(output, /^Backend mutation testing of the change \(score 0\.0%\): 2 finding\(s\)/);
+  assert.ok(args.includes(':app:pitest'));
+  assert.ok(args.includes('-PpitestTargetClasses=homer.app.A,homer.app.A$*,homer.app.AKt,homer.app.AKt$*'), args.join(' '));
+});
+
+test('main skips a comment-only change without running Gradle', async () => {
+  const { output, args } = await runMain('package homer.app\n\n// only a note\n/* and a block */\n');
+  assert.match(output, /skipped: no changed :app code lines/);
+  assert.equal(args, null);
+});
+
+test('main fails when Gradle fails, rather than reporting', async () => {
+  const { output } = await runMain(source('homer.app', 'class A'), { exit: 1 });
+  assert.match(output.message, /:app:pitest exited 1/);
 });
 
 test('the Gradle property main passes is the one the build script reads', () => {

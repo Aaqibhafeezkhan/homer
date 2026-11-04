@@ -41,37 +41,71 @@ export function classGlobs(file, source) {
 
 const quoteAt = (source, i) => (source.startsWith('"""', i) ? '"""' : source[i] === '"' || source[i] === "'" ? source[i] : null);
 
+// One step inside a string or char literal; returns the index of the step's last character.
+function stepInLiteral(source, i, stack) {
+  const { quote } = stack.at(-1);
+  if (source[i] === '\\' && quote !== '"""') return i + 1;
+  if (quote !== "'" && source.startsWith('${', i)) {
+    stack.push({ braces: 0 });
+    return i + 1;
+  }
+  if (!source.startsWith(quote, i)) return i;
+  stack.pop();
+  // A raw string closes at the last three of a run of quotes: `""""` is a quote, then the end.
+  let end = i + quote.length - 1;
+  while (quote === '"""' && source[end + 1] === '"') end++;
+  return end;
+}
+
+// One step in code or in a `${…}` template expression; returns the index of the step's last character.
+function stepInCode(source, i, stack) {
+  // A backticked name (`fun \`it's fine\`()`) may hold quotes and comment openers: skip it whole.
+  if (source[i] === '`') return Math.max(i, source.indexOf('`', i + 1));
+  const quote = quoteAt(source, i);
+  if (quote) {
+    stack.push({ quote });
+    return i + quote.length - 1;
+  }
+  const template = stack.at(-1);
+  if (template && source[i] === '{') template.braces++;
+  else if (template && source[i] === '}') {
+    if (template.braces === 0) stack.pop();
+    else template.braces--;
+  }
+  return i;
+}
+
 /**
  * The lines of a Kotlin source holding anything outside a comment. Lexes just enough for that:
- * block comments nest, and a comment opener inside a string or char literal is text.
+ * block comments nest; a comment opener inside a string or char literal is text; a `${…}` template
+ * is code again, its own literals included. A source this lexer cannot read to a clean end (an
+ * unclosed literal or comment, which valid Kotlin never has) counts as code on every line.
  */
 export function codeLineNumbers(source) {
   const code = new Set();
+  const stack = [];
   let line = 1;
   let depth = 0;
-  let quote = null;
   for (let i = 0; i < source.length; i++) {
     const c = source[i];
     if (c === '\n') {
       line++;
-      if (quote !== '"""') quote = null;
     } else if (depth > 0) {
       const marker = source.slice(i, i + 2);
       if (marker === '/*' || marker === '*/') [depth, i] = [depth + (marker === '/*' ? 1 : -1), i + 1];
-    } else if (quote) {
+    } else if (stack.at(-1)?.quote) {
       code.add(line);
-      if (c === '\\' && quote !== '"""') i++;
-      else if (source.startsWith(quote, i)) [quote, i] = [null, i + quote.length - 1];
+      i = stepInLiteral(source, i, stack);
     } else if (source.startsWith('//', i)) {
       while (i + 1 < source.length && source[i + 1] !== '\n') i++;
     } else if (source.startsWith('/*', i)) {
       [depth, i] = [1, i + 1];
     } else if (!/\s/.test(c)) {
       code.add(line);
-      quote = quoteAt(source, i);
-      if (quote) i += quote.length - 1;
+      i = stepInCode(source, i, stack);
     }
   }
+  if (stack.length > 0 || depth > 0) return new Set(source.split('\n').map((_, n) => n + 1));
   return code;
 }
 
@@ -84,8 +118,9 @@ export function codeLines(source, lines) {
 
 /**
  * The changed backend sources: `{ globs, lines }`, `lines` mapping each source's PIT path to its
- * repository path and changed code lines. `read` returns a file's text, or null for one to skip. A
- * source whose changed lines are all comments is left out, so a comment-only change runs no PIT.
+ * repository path and changed lines. `read` returns a file's text, or null for one to skip. A
+ * source whose changed lines hold no code is left out, so a comment-only change runs no PIT; the
+ * changed lines kept are all of them, since PIT places no mutant on a comment line anyway.
  */
 export function changedSources(changed, read) {
   const globs = new Set();
@@ -94,12 +129,11 @@ export function changedSources(changed, read) {
     if (!SOURCE.test(file) || fileLines.size === 0) continue;
     const source = read(file);
     const at = source === null ? null : pitPath(file, source);
-    const code = at ? codeLines(source, fileLines) : new Set();
-    if (code.size === 0) continue;
+    if (!at || codeLines(source, fileLines).size === 0) continue;
     // PIT reports both under one path, so a line could not be told apart: refuse rather than drop one.
     if (lines.has(at)) throw new Error(`${lines.get(at).path} and ${file} share PIT source path ${at}: one package, one file name`);
     classGlobs(file, source).forEach((g) => globs.add(g));
-    lines.set(at, { path: file, lines: code });
+    lines.set(at, { path: file, lines: fileLines });
   }
   return { globs: [...globs].sort(), lines };
 }
