@@ -49,6 +49,17 @@ export function writeCheck(dir, check, title, findings, extra = {}) {
   return report;
 }
 
+/**
+ * Mutation score of both mutation reports (Stryker in console/scripts/mutation.mjs, PIT in pit.mjs):
+ * detected (killed or timed out) / (detected + survived + uncovered), one decimal; 'n/a' with no
+ * scored mutant. One definition, so the two job summaries stay comparable.
+ */
+export function mutationScore({ killed, timeout, survived, noCoverage }) {
+  const detected = killed + timeout;
+  const valid = detected + survived + noCoverage;
+  return valid === 0 ? 'n/a' : ((100 * detected) / valid).toFixed(1);
+}
+
 export function parseSummary(text) {
   return Object.fromEntries(
     text
