@@ -159,22 +159,23 @@ class RunnerStatusReportTest {
     }
 
     @Test
-    fun `a draining instance with a live session is listed as draining`() {
-        val queue = RunnerClaimQueue(maxPending = 10)
-        val domain = ExternalRunnerDomain("workers", RunnerConfig.External(token = "t".repeat(32)), queue)
-        val instance = domain.register(RegisterInstanceRequest(name = "host-1"))
-        instance.sessionOpened()
-        domain.deregister(instance.id)
-        val config = appConfig(mapOf("workers" to RunnerConfig.External(token = "t".repeat(32))))
-        val registry = RunnerRegistry(entries = emptyList(), externalDomains = listOf(domain), queue = queue)
+    fun `a draining instance with a live session is listed as draining`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 10)
+            val domain = ExternalRunnerDomain("workers", RunnerConfig.External(token = "t".repeat(32)), queue)
+            val instance = domain.register(RegisterInstanceRequest(name = "host-1"))
+            instance.sessionOpened()
+            domain.deregister(instance.id)
+            val config = appConfig(mapOf("workers" to RunnerConfig.External(token = "t".repeat(32))))
+            val registry = RunnerRegistry(entries = emptyList(), externalDomains = listOf(domain), queue = queue)
 
-        val workers = runnersStatus(config, registry).runners.first { it.alias == "workers" }
+            val workers = runnersStatus(config, registry).runners.first { it.alias == "workers" }
 
-        assertEquals(1, workers.inUse)
-        val listed = workers.instances!!.single()
-        assertEquals(true, listed.draining)
-        assertEquals(1, listed.activeSessions)
-    }
+            assertEquals(1, workers.inUse)
+            val listed = workers.instances!!.single()
+            assertEquals(true, listed.draining)
+            assertEquals(1, listed.activeSessions)
+        }
 
     @Test
     fun `runnerType maps every backend and an unconfigured alias`() {

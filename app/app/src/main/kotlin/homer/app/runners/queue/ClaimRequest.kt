@@ -66,4 +66,11 @@ class ClaimAffinity(
         enqueuedAtMs: Long,
         nowMs: Long,
     ): Boolean = preferredInstance != null && nowMs - enqueuedAtMs < waitMs
+
+    /**
+     * Whether the preference ordered consumers for [timeoutMs]'s whole length: its wait was
+     * clamped to the claim TTL, so it never expired before the claim did — matching runners
+     * passed the run over until the very end, and the expiry's cause is the preference.
+     */
+    fun heldWholeWait(timeoutMs: Long): Boolean = preferredInstance != null && waitMs >= timeoutMs
 }

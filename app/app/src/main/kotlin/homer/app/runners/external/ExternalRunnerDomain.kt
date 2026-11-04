@@ -126,7 +126,7 @@ class ExternalRunnerDomain(
     fun sessions(): List<ExternalRunnerSession> = sessions.values.toList()
 
     /** Stops offering claims; the instance stays addressable while it has sessions in flight. */
-    fun deregister(id: String): Boolean {
+    suspend fun deregister(id: String): Boolean {
         val instance = instances[id] ?: return false
         instance.draining = true
         queue.unregisterConsumer(instance)
@@ -149,7 +149,7 @@ class ExternalRunnerDomain(
     fun instanceTagSets(): Collection<Set<String>> = instances.values.filter { !it.draining }.map { it.tags }
 
     /** Drops every instance silent for longer than `heartbeatTimeoutSec`, failing each of its sessions. */
-    fun sweepExpired(): List<ExternalRunnerInstance> {
+    suspend fun sweepExpired(): List<ExternalRunnerInstance> {
         val deadline = clock() - config.heartbeatTimeoutSec * 1000
         val expired = instances.values.filter { it.lastSeenAt < deadline }
         expired.forEach { instance ->

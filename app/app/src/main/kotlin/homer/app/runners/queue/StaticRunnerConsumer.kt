@@ -65,7 +65,8 @@ class StaticRunnerConsumer(
                 }
             }
         // A stopped consumer must not be named in expiry reasons as if it could still claim.
-        job.invokeOnCompletion { queue.unregisterConsumer(this) }
+        // detach: shutdown only — nothing will serve a woken run before the queue itself stops.
+        job.invokeOnCompletion { queue.detachConsumer(this) }
         return job
     }
 

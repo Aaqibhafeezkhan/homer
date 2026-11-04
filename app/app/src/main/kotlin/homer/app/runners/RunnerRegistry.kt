@@ -10,6 +10,7 @@ import homer.app.runners.queue.QueuedRunner
 import homer.app.runners.queue.RegisteredRunner
 import homer.app.runners.queue.RunnerClaimQueue
 import homer.app.runners.queue.StaticRunnerConsumer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -61,7 +62,11 @@ class RunnerRegistry(
                         while (isActive) {
                             delay(sweepInterval)
                             externalDomains.forEach {
-                                runCatching { it.sweepExpired() }.onFailure { e ->
+                                try {
+                                    it.sweepExpired()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
                                     logger.warn("Runner '{}': heartbeat sweep failed", it.alias, e)
                                 }
                             }

@@ -107,38 +107,40 @@ class ExternalRunnerDomainTest {
     }
 
     @Test
-    fun `deregister stops claims and removes the instance once idle`() {
-        val d = domain()
-        val inst = d.register(RegisterInstanceRequest())
-        inst.sessionOpened()
+    fun `deregister stops claims and removes the instance once idle`() =
+        runTest {
+            val d = domain()
+            val inst = d.register(RegisterInstanceRequest())
+            inst.sessionOpened()
 
-        assertTrue(d.deregister(inst.id))
-        assertTrue(inst.draining)
-        assertTrue(queue.consumers().isEmpty())
-        assertEquals(inst, d.instance(inst.id), "in-flight sessions keep the instance addressable")
+            assertTrue(d.deregister(inst.id))
+            assertTrue(inst.draining)
+            assertTrue(queue.consumers().isEmpty())
+            assertEquals(inst, d.instance(inst.id), "in-flight sessions keep the instance addressable")
 
-        inst.sessionClosed()
-        d.releaseIfIdle(inst)
-        assertNull(d.instance(inst.id))
-        assertFalse(d.deregister(inst.id))
-    }
+            inst.sessionClosed()
+            d.releaseIfIdle(inst)
+            assertNull(d.instance(inst.id))
+            assertFalse(d.deregister(inst.id))
+        }
 
     @Test
-    fun `sweepExpired drops an instance silent past the heartbeat timeout and reports it`() {
-        val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
-        val quiet = d.register(RegisterInstanceRequest(name = "quiet"))
-        val chatty = d.register(RegisterInstanceRequest(name = "chatty"))
+    fun `sweepExpired drops an instance silent past the heartbeat timeout and reports it`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val quiet = d.register(RegisterInstanceRequest(name = "quiet"))
+            val chatty = d.register(RegisterInstanceRequest(name = "chatty"))
 
-        now += 59_000
-        d.touch(chatty)
-        now += 2_000
-        val expired = d.sweepExpired()
+            now += 59_000
+            d.touch(chatty)
+            now += 2_000
+            val expired = d.sweepExpired()
 
-        assertEquals(listOf(quiet), expired)
-        assertNull(d.instance(quiet.id))
-        assertEquals(chatty, d.instance(chatty.id))
-        assertEquals(listOf<Any>(chatty), queue.consumers())
-    }
+            assertEquals(listOf(quiet), expired)
+            assertNull(d.instance(quiet.id))
+            assertEquals(chatty, d.instance(chatty.id))
+            assertEquals(listOf<Any>(chatty), queue.consumers())
+        }
 
     @Test
     fun `couldServe follows allowedTags and instanceTagSets follows registrations`() {
@@ -174,17 +176,18 @@ class ExternalRunnerDomainTest {
     }
 
     @Test
-    fun `a name freed by a draining or swept instance can be registered again`() {
-        val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
-        val draining = d.register(RegisterInstanceRequest(name = "host-1"))
-        d.deregister(draining.id)
-        assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+    fun `a name freed by a draining or swept instance can be registered again`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val draining = d.register(RegisterInstanceRequest(name = "host-1"))
+            d.deregister(draining.id)
+            assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
 
-        val silent = d.instances().single { it.declaredName == "host-1" }
-        now += 61_000
-        assertEquals(listOf(silent), d.sweepExpired())
-        assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
-    }
+            val silent = d.instances().single { it.declaredName == "host-1" }
+            now += 61_000
+            assertEquals(listOf(silent), d.sweepExpired())
+            assertEquals("host-1", d.register(RegisterInstanceRequest(name = "host-1")).name)
+        }
 
     @Test
     fun `the same name in another domain is its own instance`() {
