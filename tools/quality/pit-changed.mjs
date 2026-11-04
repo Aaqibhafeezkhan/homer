@@ -60,7 +60,12 @@ function stepInLiteral(source, i, stack) {
 // One step in code or in a `${…}` template expression; returns the index of the step's last character.
 function stepInCode(source, i, stack) {
   // A backticked name (`fun \`it's fine\`()`) may hold quotes and comment openers: skip it whole.
-  if (source[i] === '`') return Math.max(i, source.indexOf('`', i + 1));
+  if (source[i] === '`') {
+    const close = source.indexOf('`', i + 1);
+    if (close >= 0) return close;
+    stack.push({ quote: '`' }); // never closed: leave the source unclean, so the fail-safe applies
+    return source.length;
+  }
   const quote = quoteAt(source, i);
   if (quote) {
     stack.push({ quote });

@@ -104,9 +104,22 @@ test('a raw string closes at the last three quotes of a run', () => {
   assert.deepEqual([...codeLineNumbers('val r = """"a"""" // x\n// note\nval t = 1')], [1, 3]);
 });
 
+test('a template inside a raw string is code, and the raw string still closes', () => {
+  assert.deepEqual([...codeLineNumbers('val r = """${ "a /* b" }"""\n// note\nval t = 1')], [1, 3]);
+});
+
 test('a source the lexer cannot read to a clean end counts as code on every line', () => {
   assert.deepEqual([...codeLineNumbers('val s = "open\n// a\n// b')], [1, 2, 3]);
   assert.deepEqual([...codeLineNumbers('/* never closed\nval t = 1')], [1, 2]);
+  assert.deepEqual([...codeLineNumbers('val s = "${ x\n// a')], [1, 2]);
+  assert.deepEqual([...codeLineNumbers('fun `never closed() = 1\n// a')], [1, 2]);
+});
+
+test('a source with any changed code line keeps all its changed lines, comment lines included', () => {
+  const text = source('homer.app', 'class A {\n  // note\n  fun f() = 1\n}');
+  const { lines } = changedSources(new Map([[`${SRC}/homer/app/A.kt`, new Set([6, 7])]]), () => text);
+  // The lexer only decides whether PIT runs; a line it misread must still filter mutants.
+  assert.deepEqual(lines.get(`${SRC}/homer/app/A.kt`).lines, new Set([6, 7]));
 });
 
 test('two changed sources with one PIT path are refused, not merged', () => {
