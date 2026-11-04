@@ -30,7 +30,7 @@ const CHECKS = [
   'query-plans',
   'query-repeats',
 ].map((name) => ({ name, mode: 'required' }));
-const ALL = [...CHECKS, { name: 'mutation-console', mode: 'warn' }];
+const ALL = [...CHECKS, { name: 'mutation-console', mode: 'warn' }, { name: 'mutation-backend', mode: 'warn' }];
 const SRC = 'app/app/src/main/kotlin/homer/app';
 const TEST = 'app/app/src/test/kotlin/homer/app';
 
@@ -64,6 +64,9 @@ test('--only narrows the selection and alone selects a warn-mode check', () => {
   assert.deepEqual([...selectChecks(['console/lib/a.ts'], ALL, ['eslint-warnings', 'detekt'])], ['eslint-warnings']);
   assert.deepEqual([...selectChecks(['console/lib/a.ts'], ALL, ['mutation-console'])], ['mutation-console']);
   assert.ok(!selectChecks(['console/lib/a.ts'], ALL).has('mutation-console'));
+  assert.deepEqual([...selectChecks([`${SRC}/A.kt`], ALL, ['mutation-backend'])], ['mutation-backend']);
+  assert.ok(!selectChecks([`${SRC}/A.kt`], ALL).has('mutation-backend'));
+  assert.equal(selectChecks(['console/lib/a.ts'], ALL, ['mutation-backend']).size, 0);
   assert.throws(() => selectChecks([], ALL, ['nope']), /unknown check nope/);
 });
 

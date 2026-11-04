@@ -10,9 +10,9 @@
 import fs from 'node:fs';
 import { mutationScore, runMain, writeCheck } from './lib.mjs';
 
-const CHECK = 'mutation-backend';
-const REPORT_DIR = 'app/app/build/reports/pitest';
-const SOURCE_ROOT = 'app/app/src/main/kotlin';
+export const CHECK = 'mutation-backend';
+export const REPORT_DIR = 'app/app/build/reports/pitest';
+export const SOURCE_ROOT = 'app/app/src/main/kotlin';
 const FINDING_STATUSES = { SURVIVED: 'survived', NO_COVERAGE: 'no coverage' };
 // Null checks, coroutine result checks and index-overflow guards the Kotlin compiler emits: removing
 // one changes nothing a test can observe. Filtered here, not by avoidCallsTo: see ADR-0082.
@@ -80,12 +80,22 @@ export function pitStats(mutations) {
   return { score: mutationScore(stats), ...stats };
 }
 
-export function main([xmlFile = `${REPORT_DIR}/mutations.xml`, outDir = REPORT_DIR]) {
-  if (!fs.existsSync(xmlFile)) throw new Error(`no ${xmlFile}: did :app:pitest run?`);
-  const all = parseMutations(fs.readFileSync(xmlFile, 'utf8'));
+/** Writes the check's report files for `all` mutants, compiler-call mutants left out; returns the report text. */
+export function writeReport(outDir, title, all) {
   const mutations = all.filter((m) => !isCompilerCallMutant(m));
   const stats = { ...pitStats(mutations), ignored: all.length - mutations.length };
-  return writeCheck(outDir, CHECK, `Backend mutation testing (score ${stats.score}%)`, pitFindings(mutations), stats);
+  const score = stats.score === 'n/a' ? 'no mutants' : `score ${stats.score}%`;
+  return writeCheck(outDir, CHECK, `${title} (${score})`, pitFindings(mutations), stats);
+}
+
+/** The `<mutation>` elements of PIT's XML report `xmlFile`. */
+export function readMutations(xmlFile) {
+  if (!fs.existsSync(xmlFile)) throw new Error(`no ${xmlFile}: did :app:pitest run?`);
+  return parseMutations(fs.readFileSync(xmlFile, 'utf8'));
+}
+
+export function main([xmlFile = `${REPORT_DIR}/mutations.xml`, outDir = REPORT_DIR]) {
+  return writeReport(outDir, 'Backend mutation testing', readMutations(xmlFile));
 }
 
 runMain(import.meta, main);
