@@ -23,6 +23,7 @@ import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -644,6 +645,39 @@ class RunnerClaimQueueTest {
             assertEquals(1, taken.params.processId)
             assertTrue(taken.complete(mockk(relaxed = true)))
             run.await()
+        }
+
+    @Test
+    fun `a consumer that claims on the rescan after its affinity deadline leaves no waiter behind`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            queue.registerConsumer(Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X"))
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+
+            val first =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 30))
+                }
+            runCurrent()
+            val takeY = async { queue.take(y) }
+            runCurrent()
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            takeY.await().complete(mockk(relaxed = true))
+            first.await()
+            assertEquals(0, queue.waiterCount(), "the waiter whose deadline passed must not stay parked")
+
+            // A later request must still reach a consumer: a waiter nobody awaits would be handed
+            // this request by dispatch() and never release the reservation, so the run would fail
+            // at its claim TTL instead of being served.
+            val second = async { queue.awaitClaim(params(2), gpuFilter(), 300.seconds) }
+            runCurrent()
+            val taken = withTimeoutOrNull(1.seconds) { queue.take(y) }
+            assertNotNull(taken, "the request was reserved for a waiter no take() call owns")
+            assertEquals(2, taken.params.processId)
+            taken.complete(mockk(relaxed = true))
+            second.await()
         }
 
     @Test

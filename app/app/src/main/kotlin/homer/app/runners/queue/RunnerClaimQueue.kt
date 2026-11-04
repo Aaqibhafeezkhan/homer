@@ -212,7 +212,9 @@ class RunnerClaimQueue(
         match.affinity?.let { affinity ->
             consumer.affinityInstance?.let { affinityMemory.record(affinity.rootProcessId, affinity.group, it) }
         }
-        previous?.let { releaseReservation(it) }
+        // This call is returning, so its last waiter stops being parked even when no wake removed
+        // it (a rescan after the affinity deadline): one left in `waiters` holds a later request.
+        previous?.let { abandon(it) }
         return match
     }
 
