@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Changed: the runner image pins the Claude Code CLI version** — A build installs a chosen release of the CLI instead of whatever npm published that day; the `CLAUDE_CODE_VERSION` build argument overrides the pin.
+
 ### Console
 
 - **Changed: the process list's Commands column** — Each run shows its command squares only, six to a line, with the command and, once it has ended, its duration in each square's tooltip; the columns are reordered and the kill button is a red circle-with-cross icon.
