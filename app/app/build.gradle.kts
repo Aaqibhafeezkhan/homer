@@ -216,12 +216,44 @@ tasks.register<JavaExec>("queryPlanReport") {
     args(captured.get().asFile.absolutePath, report.get().asFile.absolutePath)
 }
 
-// Mutation-testing pilot (ADR-0082): a narrow, pure package; run on demand, not part of `check`.
+// Mutation-testing pilot (ADR-0082) on validators, parsers and security helpers; run nightly, not
+// part of `check`. PIT runs the tests covering each mutated line, chosen from every backend package
+// (`targetTests`), so code tested from another package is not reported uncovered.
+val nightlyMutationScope =
+    setOf(
+        "homer.app.config.*",
+        "homer.app.infra.AgentDefinitionValidator*",
+        "homer.app.infra.AgentInputChecks*",
+        "homer.app.infra.BoundedRegex*",
+        "homer.app.infra.CronSupport*",
+        "homer.app.infra.HmacVerifier*",
+        "homer.app.infra.InputSchemaValidator*",
+        "homer.app.infra.LlmOutputJson*",
+        "homer.app.infra.OutputLineFilter*",
+        "homer.app.infra.ParamValidator*",
+        "homer.app.infra.PathSafety*",
+        "homer.app.infra.PurgeSchedule*",
+        "homer.app.infra.RedosPatternDetector*",
+        "homer.app.infra.ReservedEnvNames*",
+        "homer.app.infra.ReservedHeaders*",
+        "homer.app.infra.ResultToEnvMapper*",
+        "homer.app.infra.SecretRedactor*",
+        "homer.app.infra.TokenComparison*",
+        "homer.app.infra.WhenEvaluator*",
+        "homer.app.models.PurgeAfterParser*",
+        "homer.app.models.RunnerTagValidation*",
+        "homer.app.models.AgentGroupValidation*",
+        "homer.app.executors.ArtifactNameResolver*",
+        "homer.app.runners.TarExtraction*",
+        "homer.app.auth.CsrfProtection*",
+    )
+
 pitest {
     pitestVersion = libs.versions.pitest
     junit5PluginVersion = libs.versions.pitestJunit5
-    targetClasses = setOf("homer.app.config.*")
-    targetTests = setOf("homer.app.config.*")
+    targetClasses = nightlyMutationScope
+    excludedClasses = setOf("*\$\$serializer")
+    targetTests = setOf("homer.app.*")
     outputFormats = setOf("XML", "HTML")
     timestampedReports = false
     threads = 4

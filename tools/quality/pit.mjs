@@ -1,6 +1,7 @@
 /**
  * Backend mutation testing (PIT pilot, ADR-0082): turns PIT's `mutations.xml` into the shared
  * report files of check `mutation-backend`, one finding per survived or uncovered mutant.
+ * Mutants that only remove a call the Kotlin compiler adds are ignored: outside the score, no finding.
  * Usage (repository root): node tools/quality/pit.mjs [mutations.xml] [out dir]
  *
  * Not a quality-gate check yet: the nightly job only shows the report in its job summary
@@ -13,6 +14,9 @@ const CHECK = 'mutation-backend';
 const REPORT_DIR = 'app/app/build/reports/pitest';
 const SOURCE_ROOT = 'app/app/src/main/kotlin';
 const FINDING_STATUSES = { SURVIVED: 'survived', NO_COVERAGE: 'no coverage' };
+// Null checks, coroutine result checks and index-overflow guards the Kotlin compiler emits: removing
+// one changes nothing a test can observe. Filtered here, not by avoidCallsTo: see ADR-0082.
+const COMPILER_CALL = /^removed call to kotlin\/(jvm\/internal\/Intrinsics|ResultKt|collections\/CollectionsKt)::(check|throw)/;
 const ENTITIES = { lt: '<', gt: '>', amp: '&', apos: "'", quot: '"' };
 
 /** XML text with its predefined and numeric character references resolved. */
@@ -60,6 +64,9 @@ export function pitFindings(mutations) {
     .sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
+/** Whether the mutant only removes a call the Kotlin compiler added. */
+export const isCompilerCallMutant = (m) => COMPILER_CALL.test(m.description);
+
 const SCORED = { KILLED: 'killed', SURVIVED: 'survived', NO_COVERAGE: 'noCoverage', TIMED_OUT: 'timeout' };
 
 /**
@@ -75,8 +82,9 @@ export function pitStats(mutations) {
 
 export function main([xmlFile = `${REPORT_DIR}/mutations.xml`, outDir = REPORT_DIR]) {
   if (!fs.existsSync(xmlFile)) throw new Error(`no ${xmlFile}: did :app:pitest run?`);
-  const mutations = parseMutations(fs.readFileSync(xmlFile, 'utf8'));
-  const stats = pitStats(mutations);
+  const all = parseMutations(fs.readFileSync(xmlFile, 'utf8'));
+  const mutations = all.filter((m) => !isCompilerCallMutant(m));
+  const stats = { ...pitStats(mutations), ignored: all.length - mutations.length };
   return writeCheck(outDir, CHECK, `Backend mutation testing (score ${stats.score}%)`, pitFindings(mutations), stats);
 }
 
