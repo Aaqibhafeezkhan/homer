@@ -1,11 +1,7 @@
 name: affinity-parent
-description: Runs two affinity-tagged children in one flow, so both share one flow root (ADR-0099)
+description: Starts the flow's first child; the flow root Homer stamps here is the affinity key (ADR-0099)
 commands:
   - !<agent>
-    label: write-marker
+    label: start-flow
     agentName: affinity-sub
-    timeout: 180
-  - !<agent>
-    label: read-marker
-    agentName: affinity-check
     timeout: 180

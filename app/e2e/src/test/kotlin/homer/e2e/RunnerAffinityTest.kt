@@ -33,6 +33,13 @@ class RunnerAffinityTest : E2eTestBase() {
             instanceNames().takeIf { it.containsAll(setOf("affinity-a", "affinity-b")) }
         }
 
+    /** The children of [parentProcessId], by agent name. */
+    private suspend fun childrenOf(parentProcessId: Int): Map<String, ProcessInfo> =
+        HomerApi
+            .decode<ProcessList>(HomerApi.statusAll(mapOf("parentProcessId" to "$parentProcessId")))
+            .processes
+            .associateBy { it.agentName }
+
     /** The hostname a run reported, which is how two runs on one instance are told from two instances. */
     private suspend fun hostOf(info: ProcessInfo): String {
         val stdout = HomerApi.artifactText(info.id, info.executions.firstOrNull()?.stdOut, "cmd_0.out")
@@ -44,32 +51,31 @@ class RunnerAffinityTest : E2eTestBase() {
     fun `the flow's second run lands on the instance that served its first`() =
         runBlocking {
             awaitInstances()
-            // One parent, two `!<agent>` steps: both children share the parent's flow root, so
-            // both carry the same (flow root, group) affinity key.
+            // An `!<agent>` hop is fire-and-forget: the parent starts a child and returns, so the
+            // ordering the case needs must come from the flow itself. The parent starts
+            // `affinity-sub`, whose first command writes the marker on the instance serving it
+            // and whose second starts `affinity-check` — only after the marker exists, and with
+            // the same flow root, so both children carry one (flow root, group) affinity key.
             val parentId = HomerApi.startRun("affinity-parent")
-            val parent = Awaits.awaitTerminal(parentId, timeoutMs = 180_000)
+            Awaits.awaitTerminal(parentId, timeoutMs = 180_000)
 
+            val started = childrenOf(parentId)
+            assertEquals(setOf("affinity-sub"), started.keys, "the flow's first child: $started")
+            val sub = Awaits.awaitTerminal(started.getValue("affinity-sub").id, timeoutMs = 180_000)
+            assertEquals("FINISHED", sub.status, "the flow's first run: $sub")
+
+            val checkRow = childrenOf(sub.id)
+            assertEquals(setOf("affinity-check"), checkRow.keys, "the flow's second child: $checkRow")
+            val check = Awaits.awaitTerminal(checkRow.getValue("affinity-check").id, timeoutMs = 180_000)
             assertEquals(
                 "FINISHED",
-                parent.status,
-                "the second run must find the marker the first left on its instance: $parent",
+                check.status,
+                "the second run must find the marker the first left on its instance: $check",
             )
-            val children =
-                HomerApi
-                    .decode<ProcessList>(HomerApi.statusAll(mapOf("parentProcessId" to "$parentId")))
-                    .processes
-                    .associateBy { it.agentName }
             assertEquals(
-                setOf("affinity-sub", "affinity-check"),
-                children.keys,
-                "both steps of the flow must have run as child runs: $children",
-            )
-            assertEquals("FINISHED", children.getValue("affinity-sub").status, "the first run: $parent")
-            assertEquals("FINISHED", children.getValue("affinity-check").status, "the second run: $parent")
-            assertEquals(
-                hostOf(children.getValue("affinity-sub")),
-                hostOf(children.getValue("affinity-check")),
-                "both runs of one flow must be served by one instance: $children",
+                hostOf(sub),
+                hostOf(check),
+                "both runs of one flow must be served by one instance: $sub / $check",
             )
         }
 

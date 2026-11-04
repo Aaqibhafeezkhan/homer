@@ -1,5 +1,5 @@
 name: affinity-sub
-description: Records which e2e-affinity instance served this flow, outside the session workspace (ADR-0099)
+description: Records which e2e-affinity instance served this flow, then starts the flow's second child (ADR-0099)
 runnerTags: [e2e-affinity]
 runnerClaimTimeoutSec: 120
 runnerAffinity:
@@ -14,3 +14,9 @@ commands:
       # The marker is per flow root, so only a later run of this same flow reads it,
       # and it lives outside the session workspace, which the runner wipes.
       touch "/tmp/homer-affinity/$HMR_ROOT_PROCESS_ID"
+  # Started only after the marker above is written, and it inherits this run's flow
+  # root, so it carries the same (flow root, group) affinity key (ADR-0099).
+  - !<agent>
+    label: read-marker
+    agentName: affinity-check
+    timeout: 180

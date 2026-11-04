@@ -887,6 +887,25 @@ class RunnerClaimQueueTest {
         }
 
     @Test
+    fun `a claim that expires while its preferred instance is draining keeps the plain reason`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:secret-name") }
+            val queue = affinityQueue(memory)
+            // Registered under the name the flow recorded and matching the filter, but draining:
+            // the preference held nobody back at expiry, so the run must not debug a preference.
+            queue.registerConsumer(
+                Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:secret-name", concurrency = 1, inUse = 1, draining = true),
+            )
+
+            val ex =
+                assertThrows<RunnerClaimTimeoutException> {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 30.seconds, RunnerAffinity("gpu", 600))
+                }
+            assertFalse(ex.publicReason.contains("preferred runner did not take it"), ex.publicReason)
+            assertEquals("every matching runner was at its concurrency limit", ex.publicReason)
+        }
+
+    @Test
     fun `unregistering an instance no pending request prefers wakes nobody`() =
         runTest {
             val memory = memory().also { it.record(1, "gpu", "dom:X") }
