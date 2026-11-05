@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-11-05
+
 ### Homer
 
 - **Added: `runnerAffinity` on the agent definition** — Opts a flow into staying on the runner instance that served its earlier runs, within a bounded wait and with immediate fallback. See [ADR-0099](docs/adr/0099-runner-affinity-prefers-the-instance-holding-the-flows-caches.md).
