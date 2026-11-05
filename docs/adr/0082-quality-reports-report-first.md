@@ -259,5 +259,5 @@ per package (`tools/quality/pit-full.mjs`): one job per directory that holds Kot
 writing its PIT XML, and one job merging them into the single `mutation-backend` report. A shard
 that fails or times out leaves the report `partial`, which names the missing shards and judges no
 stale exception. A shard that outgrows the limit on its own is split further or, failing that, run
-on homer-factory instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
+on a self-hosted runner instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
 checking its entries are gone with it.
