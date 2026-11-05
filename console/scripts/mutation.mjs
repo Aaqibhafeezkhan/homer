@@ -86,9 +86,16 @@ export function withinRanges(report, ranges, consoleDir = CONSOLE_DIR) {
 
 const collapse = (text) => text.replace(/\s+/g, ' ').trim();
 
+// A report's mutants are keyed one file after another: split the source once, not once per mutant.
+let splitCache = { source: null, lines: [] };
+function linesOf(source) {
+  if (splitCache.source !== source) splitCache = { source, lines: source.split('\n') };
+  return splitCache.lines;
+}
+
 // The text of `location` (1-based line and column, start inclusive, end exclusive) in `source`.
 function sourceText(source, { start, end }) {
-  const lines = source.split('\n');
+  const lines = linesOf(source);
   if (start.line === end.line) return (lines[start.line - 1] ?? '').slice(start.column - 1, end.column - 1);
   return [(lines[start.line - 1] ?? '').slice(start.column - 1), ...lines.slice(start.line, end.line - 1), (lines[end.line - 1] ?? '').slice(0, end.column - 1)].join('\n');
 }
@@ -102,7 +109,7 @@ function sourceText(source, { start, end }) {
  */
 export function mutantKey(file, mutant, source, consoleDir = CONSOLE_DIR) {
   const relative = (path.isAbsolute(file) ? path.relative(consoleDir, file) : file).split(path.sep).join('/');
-  const line = (source ?? '').split('\n')[mutant.location.start.line - 1];
+  const line = linesOf(source ?? '')[mutant.location.start.line - 1];
   const lineText = line === undefined ? '<unknown>' : collapse(line);
   return `${relative}#${mutant.mutatorName}#${collapse(sourceText(source ?? '', mutant.location))}→${collapse(mutant.replacement ?? '')}#${lineText}`;
 }
@@ -156,6 +163,29 @@ export function mutationStats(report) {
   return { score: mutationScore(stats), ...stats };
 }
 
+export const EXCEPTIONS_FILE = path.join(CONSOLE_DIR, '..', CONSOLE_EXCEPTIONS);
+
+/**
+ * Writes the check's report files for Stryker's `fullReport`: restricted to `ranges` when `changed`,
+ * minus the mutants the exceptions file accepts (listed in `mutation-console-accepted.txt`). Returns the report text.
+ */
+export function writeMutationReport(fullReport, { changed, ranges }, { exceptionsFile = EXCEPTIONS_FILE, reportsDir = REPORTS_DIR } = {}) {
+  const strykerReport = changed ? withinRanges(fullReport, ranges) : fullReport;
+  const { report: scored, accepted, stale, miscounted } = acceptExceptions(strykerReport, loadExceptions(exceptionsFile), { full: !changed });
+  const stats = mutationStats(scored);
+  writeAccepted(path.join(reportsDir, CHECK), CHECK, accepted);
+  return writeReports(
+    CHECK,
+    {
+      title: TITLE,
+      findings: [...mutantFindings(scored), ...staleFindings(stale, CONSOLE_EXCEPTIONS), ...countFindings(miscounted, CONSOLE_EXCEPTIONS)],
+      detail: `(score ${stats.score}%, ${changed ? `${ranges.length} changed range(s)` : 'full run'})`,
+      extra: { ...stats, accepted: accepted.length },
+    },
+    reportsDir,
+  );
+}
+
 function changedSince(base) {
   if (!base) return new Map();
   return process.env.MUTATE_WORKTREE === '1' ? worktreeChanges(base, ['.'], CONSOLE_DIR) : changedLines(gitDiff(base, ['.'], CONSOLE_DIR));
@@ -178,17 +208,7 @@ function main() {
   runTool('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
   if (!fs.existsSync(STRYKER_REPORT)) throw new Error(`${STRYKER_REPORT} not found — Stryker wrote no JSON report.`);
   const fullReport = JSON.parse(fs.readFileSync(STRYKER_REPORT, 'utf8'));
-  const strykerReport = changed ? withinRanges(fullReport, ranges) : fullReport;
-  const exceptions = loadExceptions(path.join(CONSOLE_DIR, '..', CONSOLE_EXCEPTIONS));
-  const { report: scored, accepted, stale, miscounted } = acceptExceptions(strykerReport, exceptions, { full: !changed });
-  const stats = mutationStats(scored);
-  writeAccepted(path.join(REPORTS_DIR, CHECK), CHECK, accepted);
-  const report = writeReports(CHECK, {
-    title: TITLE,
-    findings: [...mutantFindings(scored), ...staleFindings(stale, CONSOLE_EXCEPTIONS), ...countFindings(miscounted, CONSOLE_EXCEPTIONS)],
-    detail: `(score ${stats.score}%, ${changed ? `${ranges.length} changed range(s)` : 'full run'})`,
-    extra: { ...stats, accepted: accepted.length },
-  });
+  const report = writeMutationReport(fullReport, { changed, ranges });
   printReport(CHECK, report);
 }
 
