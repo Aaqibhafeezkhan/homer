@@ -1,5 +1,7 @@
 package homer.app.runners
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.mockk.every
 import io.mockk.mockk
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -8,6 +10,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.LoggerFactory
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -21,6 +24,7 @@ import kotlin.io.path.readText
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import ch.qos.logback.classic.Logger as LogbackLogger
 
 class TarExtractionTest {
     /** A plain (uncompressed) tar with [entries], positioned at its first entry. */
@@ -35,6 +39,19 @@ class TarExtractionTest {
         }
         val tar = TarArchiveInputStream(ByteArrayInputStream(bytes.toByteArray()))
         return tar to tar.nextEntry
+    }
+
+    /** The formatted WARN lines [TarExtraction] logs (through the `TarStreams` logger) while [block] runs. */
+    private fun warningsDuring(block: () -> Unit): List<String> {
+        val logger = LoggerFactory.getLogger(TarStreams::class.java) as LogbackLogger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            block()
+        } finally {
+            logger.detachAppender(appender)
+        }
+        return appender.list.filter { it.level.toString() == "WARN" }.map { it.formattedMessage }
     }
 
     private fun extract(
@@ -88,11 +105,25 @@ class TarExtractionTest {
         val failingView = mockk<PosixFileAttributeView> { every { setPermissions(any()) } throws IOException("chmod refused") }
         val (tar, entry) = tarOf(executableEntry("link"))
 
-        val denied =
-            assertThrows<SecurityException> {
-                TarExtraction.extractEntry(tar, entry, true, local, "", DownloadMode.OVERWRITE, null, "test") { _, _ -> failingView }
+        lateinit var denied: SecurityException
+        val warnings =
+            warningsDuring {
+                denied =
+                    assertThrows<SecurityException> {
+                        TarExtraction.extractEntry(
+                            tar,
+                            entry,
+                            true,
+                            local,
+                            "",
+                            DownloadMode.OVERWRITE,
+                            null,
+                            "test",
+                        ) { _, _ -> failingView }
+                    }
             }
 
+        assertEquals(emptyList(), warnings, "a clean removal logs no removal failure")
         assertFalse(Files.exists(local.resolve("landing.txt"), LinkOption.NOFOLLOW_LINKS), "the landing file must be removed")
         assertFalse(Files.exists(link, LinkOption.NOFOLLOW_LINKS), "the link must be removed")
         assertTrue("Could not normalize the mode" in denied.message.orEmpty())
@@ -166,8 +197,11 @@ class TarExtractionTest {
         val sub = Files.createDirectories(local.resolve("sub"))
         val link = Files.createSymbolicLink(local.resolve("link"), Path.of("sub/landing.txt"))
         try {
-            val denied = extractWithFailingChmod(local, "link") { sub.toFile().setWritable(false) }
+            lateinit var denied: SecurityException
+            val warnings = warningsDuring { denied = extractWithFailingChmod(local, "link") { sub.toFile().setWritable(false) } }
 
+            assertEquals(1, warnings.size, "only the landing path's removal failed: $warnings")
+            assertTrue(warnings.single().startsWith("Could not remove the landing path '"), warnings.single())
             assertTrue("content was left behind at the link's destination" in denied.message.orEmpty(), denied.message)
             assertTrue(Files.exists(sub.resolve("landing.txt")), "the landing file could not be removed")
             assertFalse(Files.exists(link, LinkOption.NOFOLLOW_LINKS), "the link itself must still be removed")
@@ -183,13 +217,42 @@ class TarExtractionTest {
         val ro = Files.createDirectories(local.resolve("ro"))
         Files.createSymbolicLink(ro.resolve("link"), Path.of("../landing.txt"))
         try {
-            val denied = extractWithFailingChmod(local, "ro/link") { ro.toFile().setWritable(false) }
+            lateinit var denied: SecurityException
+            val warnings = warningsDuring { denied = extractWithFailingChmod(local, "ro/link") { ro.toFile().setWritable(false) } }
 
+            assertEquals(1, warnings.size, "only the link's removal failed: $warnings")
+            assertTrue(
+                warnings.single().matches(Regex("Could not remove '.*/ro/link' after a failed mode normalization")),
+                warnings.single(),
+            )
             assertTrue("the target could not be removed" in denied.message.orEmpty(), denied.message)
             assertFalse(Files.exists(local.resolve("landing.txt")), "the landing file must be removed")
             assertTrue(Files.exists(ro.resolve("link"), LinkOption.NOFOLLOW_LINKS), "the link could not be removed")
         } finally {
             ro.toFile().setWritable(true)
         }
+    }
+
+    @Test
+    fun `each extracted file is closed after it is written`(
+        @TempDir local: Path,
+    ) {
+        val os =
+            java.lang.management.ManagementFactory
+                .getOperatingSystemMXBean() as com.sun.management.UnixOperatingSystemMXBean
+        val before = os.openFileDescriptorCount
+
+        repeat(FD_LEAK_ENTRIES) {
+            val (tar, entry) = tarOf(executableEntry("f$it.sh"))
+            extract(tar, entry, local)
+        }
+
+        // A leaked stream per entry would add FD_LEAK_ENTRIES descriptors; the margin absorbs unrelated ones.
+        val opened = os.openFileDescriptorCount - before
+        assertTrue(opened < FD_LEAK_ENTRIES / 2, "extraction left $opened file descriptors open")
+    }
+
+    private companion object {
+        const val FD_LEAK_ENTRIES = 100
     }
 }

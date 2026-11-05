@@ -53,6 +53,35 @@ class InputSchemaValidatorTest {
     }
 
     @Test
+    fun `a meta-invalid schema is refused with the meta-schema's messages`() {
+        val bad = obj("""{"type":"object","properties":"oops"}""")
+        val ex = assertThrows<IllegalArgumentException> { validator.precompile(bad) }
+        assertTrue(ex.message!!.startsWith("inputSchema is not a valid JSON Schema: "), "got: ${ex.message}")
+        assertTrue(ex.message!!.endsWith("string found, object expected"), "expected the meta-schema violation, got: ${ex.message}")
+    }
+
+    @Test
+    fun `an unresolvable ref throws at precompile, not at the first validation`() {
+        val schema = obj("""{"type":"object","properties":{"a":{"${'$'}ref":"#/${'$'}defs/missing"}}}""")
+        assertThrows<Exception> { validator.precompile(schema) }
+    }
+
+    @Test
+    fun `ReDoS-prone pattern inside an array of subschemas is rejected at precompile`() {
+        val schema =
+            obj(
+                """
+                {
+                  "type": "string",
+                  "allOf": [ { "minLength": 1 }, { "pattern": "^(a+)+$" } ]
+                }
+                """.trimIndent(),
+            )
+        val ex = assertThrows<IllegalArgumentException> { validator.precompile(schema) }
+        assertTrue(ex.message!!.contains("ReDoS"), "expected a ReDoS rejection, got: ${ex.message}")
+    }
+
+    @Test
     fun `safe pattern in a property compiles`() {
         val schema =
             obj(

@@ -32,6 +32,13 @@ class CronSupportTest {
     }
 
     @Test
+    fun `validate returns the failure's own message, not the exception class name`() {
+        val reason = CronSupport.validate(CronConfig(expression = "* * * * *", timezone = "Not/AZone"))
+        assertNotNull(reason)
+        assertTrue(reason.contains("Not/AZone"), "expected the message to name the zone, got: $reason")
+    }
+
+    @Test
     fun `validate returns a reason for a six-field expression because UNIX cron has no seconds field`() {
         // Observed: CronType.UNIX is five fields, so a leading seconds field is rejected.
         assertReason(CronConfig(expression = "0 * * * * *", timezone = "UTC"))
