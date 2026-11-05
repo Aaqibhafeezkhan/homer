@@ -73,16 +73,19 @@ export function runShard(shard) {
 /**
  * The mutation-backend report of every `<shard>.xml` in `dir`. A full run (stale exceptions judged)
  * only when every shard of the checkout (`shards()`) is there; else the summary names the missing
- * ones as `partial`.
+ * ones as `partial`. An XML that is no shard of the checkout (a package since renamed or removed) is refused.
  */
 export function merge(dir) {
   const files = fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.xml')).map((e) => e.name).sort() : [];
   const present = new Set(files.map((name) => name.slice(0, -'.xml'.length)));
-  const missing = shards().filter((shard) => !present.has(shard));
+  const all = shards();
+  const stale = files.filter((name) => !all.includes(name.slice(0, -'.xml'.length)));
+  if (stale.length > 0) throw new Error(`${dir}: not a shard of this checkout (renamed or removed package?): ${stale.join(', ')}`);
+  const missing = all.filter((shard) => !present.has(shard));
   const read = sourceReader();
-  const all = files.flatMap((name) => readMutations(path.join(dir, name), read));
+  const mutations = files.flatMap((name) => readMutations(path.join(dir, name), read));
   const extra = missing.length > 0 ? { partial: missing.join(',') } : {};
-  return writeReport(REPORT_DIR, TITLE, all, { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: missing.length === 0, extra });
+  return writeReport(REPORT_DIR, TITLE, mutations, { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: missing.length === 0, extra });
 }
 
 export function main([command, ...args]) {

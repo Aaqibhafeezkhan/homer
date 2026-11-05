@@ -226,3 +226,17 @@ test('extra summary values follow the counts', () => {
   writeReport(dir, 'T', withKeys(parsed(mutation('KILLED')), lineOf('a')), { extra: { partial: 'homer.app.x' } });
   assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=0\npartial=homer\.app\.x\n$/);
 });
+
+test('writeReport lists the accepted mutants with their reason in mutation-backend-accepted.txt, and main reports them from the XML', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-accepted-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 1 }), mutation('SURVIVED', { line: 2 })), lineOf('if (x && y) {', 'if (z) {'));
+  const accepted = path.join(dir, 'mutation-backend-accepted.txt');
+  writeReport(dir, 'T', all, { exceptions: { [keyOfSource]: 'because' }, full: true });
+  assert.equal(fs.readFileSync(accepted, 'utf8'), `${keyOfSource}  — because\n`);
+  writeReport(dir, 'T', all, { full: true });
+  assert.equal(fs.readFileSync(accepted, 'utf8'), '');
+  const xml = path.join(dir, 'mutations.xml');
+  fs.writeFileSync(xml, report(mutation('KILLED')));
+  main([xml, dir]);
+  assert.equal(fs.readFileSync(accepted, 'utf8'), '');
+});

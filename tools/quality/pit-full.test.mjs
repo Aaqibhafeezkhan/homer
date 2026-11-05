@@ -105,6 +105,17 @@ test('run fails when Gradle fails, and keeps no shard report', () => {
   assert.match(output.message, /:app:pitest exited 1/);
 });
 
+test('run fails when Gradle exits 0 but wrote no report, and keeps no shard report', () => {
+  const { output } = inRepo(SOURCES, (dir) => {
+    try {
+      return main(['run', 'homer.app']);
+    } finally {
+      assert.equal(fs.existsSync(path.join(dir, 'reports/quality/mutation-backend-shards/homer.app.xml')), false);
+    }
+  });
+  assert.match(output.message, /wrote no report/);
+});
+
 test('a failed rerun of a shard leaves no report of its earlier run', () => {
   const earlier = 'reports/quality/mutation-backend-shards/homer.app.xml';
   const { output } = inRepo({ ...SOURCES, 'app/report.xml': xml(), [earlier]: xml(mutation('homer.app.ApplicationKt', 'Application.kt', 3)) }, (dir) => {
@@ -149,6 +160,15 @@ test('a merge of a single shard\'s report is partial, not a full run that finds 
   assert.match(output[0], /: 1 finding\(s\)\n/);
   assert.doesNotMatch(output[0], /stale/);
   assert.match(output[1], /\npartial=homer\.app,homer\.app\.infra\.llm\n$/);
+});
+
+test('a merge refuses an XML that is no shard of the checkout, naming it, rather than merge a stale report', () => {
+  const { output } = inRepo({ ...SOURCES, ...SHARD_REPORTS, ...LAST_SHARD, 'shards/homer.app.oldname.xml': xml(mutation('homer.app.oldname.X', 'X.kt', 3)) }, () => main(['merge', 'shards']));
+  assert.match(output.message, /not a shard of this checkout.*homer\.app\.oldname\.xml/);
+});
+
+test('shards of a missing source root is none', () => {
+  assert.deepEqual(shards(path.join(os.tmpdir(), 'pit-full-no-such-root')), []);
 });
 
 test('a merge with no shard report at all is partial on every shard', () => {

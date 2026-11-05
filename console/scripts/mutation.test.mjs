@@ -1,8 +1,12 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { changedLines } from '../../tools/quality/git-diff.mjs';
-import { acceptExceptions, changedRanges, mutantFindings, mutantKey, mutationStats, withinRanges } from './mutation.mjs';
+import { acceptExceptions, EXCEPTIONS_FILE, changedRanges, mutantFindings, mutantKey, mutationStats, withinRanges, writeMutationReport } from './mutation.mjs';
 
 const mutant = (status, line, mutatorName = 'ConditionalExpression', replacement = 'true') => ({
   id: `${status}-${line}`,
@@ -186,5 +190,26 @@ describe('accepted exceptions', () => {
     expect(killed.accepted).toEqual([]);
     expect(killed.stale).toEqual([killedKey]);
     expect(mutationStats(killed.report)).toMatchObject({ killed: 1, survived: 2 });
+  });
+
+  it('writes the accepted file from the exceptions file, and reads the one in the repository by default', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
+    const exceptionsFile = path.join(dir, 'console.json');
+    fs.writeFileSync(exceptionsFile, JSON.stringify({ [KEY]: 'because of  why' }));
+    const text = writeMutationReport(full(), { changed: false, ranges: [] }, { exceptionsFile, reportsDir: dir });
+    expect(text).toContain('1 finding(s)');
+    const out = path.join(dir, 'mutation-console');
+    expect(fs.readFileSync(path.join(out, 'mutation-console-accepted.txt'), 'utf8')).toBe(`${KEY}  — because of why\n`);
+    expect(fs.readFileSync(path.join(out, 'mutation-console-summary.txt'), 'utf8')).toMatch(/accepted=1\n/);
+    expect(EXCEPTIONS_FILE).toBe(path.resolve(import.meta.dirname, '../../tools/quality/mutation-exceptions/console.json'));
+    expect(fs.existsSync(EXCEPTIONS_FILE)).toBe(true);
+  });
+
+  it('judges no stale exception in a changed-lines run', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
+    const exceptionsFile = path.join(dir, 'console.json');
+    fs.writeFileSync(exceptionsFile, JSON.stringify({ 'lib/gone.ts#M#a→b': 'r' }));
+    expect(writeMutationReport(full(), { changed: true, ranges: ['lib/a.ts:1-3'] }, { exceptionsFile, reportsDir: dir })).toContain('2 finding(s)');
+    expect(fs.readFileSync(path.join(dir, 'mutation-console', 'mutation-console-accepted.txt'), 'utf8')).toBe('');
   });
 });

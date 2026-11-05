@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
-import { applyExceptions, countFindings, formatAccepted, loadExceptions, staleFindings } from './mutation-exceptions.mjs';
+import { applyExceptions, countFindings, formatAccepted, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 const write = (text) => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exceptions-')), 'e.json');
@@ -99,4 +99,13 @@ test('a loaded entry is a non-empty reason, or for an <inline> key a reason with
     }),
     { numRuns: 200 },
   );
+});
+
+test('writeAccepted writes <check>-accepted.txt with one line per accepted mutant: key and reason', () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'accepted-')), 'nested');
+  writeAccepted(dir, 'mutation-x', [{ key: 'a#b#c', reason: 'one' }, { key: 'd#e#f', reason: 'two\nlines' }]);
+  assert.deepEqual(fs.readdirSync(dir), ['mutation-x-accepted.txt']);
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-x-accepted.txt'), 'utf8'), 'a#b#c  — one\nd#e#f  — two lines\n');
+  writeAccepted(dir, 'mutation-x', []);
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-x-accepted.txt'), 'utf8'), '');
 });
