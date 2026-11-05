@@ -191,8 +191,9 @@ function changedSince(base) {
   return process.env.MUTATE_WORKTREE === '1' ? worktreeChanges(base, ['.'], CONSOLE_DIR) : changedLines(gitDiff(base, ['.'], CONSOLE_DIR));
 }
 
-function main() {
-  loadExceptions(EXCEPTIONS_FILE); // a bad entry fails before the Stryker run, not after it
+/** The check: Stryker over the console (`--changed`: the lines changed since MUTATE_BASE), then its report. `run` is the test seam for `runTool`. */
+export function main({ exceptionsFile = EXCEPTIONS_FILE, run = runTool } = {}) {
+  loadExceptions(exceptionsFile); // a bad entry fails before the Stryker run, not after it
   const changed = process.argv.includes('--changed');
   let ranges = [];
   if (changed) {
@@ -206,10 +207,10 @@ function main() {
     }
   }
   fs.rmSync(STRYKER_REPORT, { force: true });
-  runTool('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
+  run('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
   if (!fs.existsSync(STRYKER_REPORT)) throw new Error(`${STRYKER_REPORT} not found — Stryker wrote no JSON report.`);
   const fullReport = JSON.parse(fs.readFileSync(STRYKER_REPORT, 'utf8'));
-  const report = writeMutationReport(fullReport, { changed, ranges });
+  const report = writeMutationReport(fullReport, { changed, ranges }, { exceptionsFile });
   printReport(CHECK, report);
 }
 

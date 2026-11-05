@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { changedLines } from '../../tools/quality/git-diff.mjs';
-import { acceptExceptions, EXCEPTIONS_FILE, changedRanges, mutantFindings, mutantKey, mutationStats, withinRanges, writeMutationReport } from './mutation.mjs';
+import { acceptExceptions, EXCEPTIONS_FILE, changedRanges, main, mutantFindings, mutantKey, mutationStats, withinRanges, writeMutationReport } from './mutation.mjs';
 
 const mutant = (status, line, mutatorName = 'ConditionalExpression', replacement = 'true') => ({
   id: `${status}-${line}`,
@@ -231,5 +231,15 @@ describe('accepted exceptions', () => {
     fs.writeFileSync(exceptionsFile, JSON.stringify({ 'lib/gone.ts#M#a→b': 'r' }));
     expect(writeMutationReport(full(), { changed: true, ranges: ['lib/a.ts:1-3'] }, { exceptionsFile, reportsDir: dir })).toContain('2 finding(s)');
     expect(fs.readFileSync(path.join(dir, 'mutation-console', 'mutation-console-accepted.txt'), 'utf8')).toBe('');
+  });
+});
+
+describe('main', () => {
+  it('fails on a malformed exceptions file before running Stryker', () => {
+    const exceptionsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-')), 'console.json');
+    fs.writeFileSync(exceptionsFile, '{"lib/a.ts#M#a→b#x": ""}');
+    const run = vi.fn();
+    expect(() => main({ exceptionsFile, run })).toThrow(/non-empty reason: lib\/a\.ts#M#a→b#x/);
+    expect(run).not.toHaveBeenCalled();
   });
 });
