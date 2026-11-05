@@ -7,6 +7,7 @@ import {
   lastCommandFromDots,
   parseProcessListParams,
   runDurationSeconds,
+  runStartTimestamp,
   PROCESS_STATUS_FILTERS,
 } from './process';
 import type { ProcessInfo, ProcessExecution } from '@/types/homer';
@@ -166,6 +167,41 @@ describe('lastCommandFromDots (property-based)', () => {
         expect(last.status).toBe(expected.resultCode === 0 ? 'success' : 'failed');
       }),
     );
+  });
+});
+
+describe('runStartTimestamp', () => {
+  it('returns the only history entry of a single-entry history', () => {
+    const process = makeProcess({ history: [{ timestamp: 1_700_000_000, status: 'CREATED' }] });
+    expect(runStartTimestamp(process)).toBe(1_700_000_000);
+  });
+
+  it('returns the first entry, not the last, of a multi-entry history', () => {
+    const process = makeProcess({
+      history: [
+        { timestamp: 1_700_000_000, status: 'CREATED' },
+        { timestamp: 1_700_000_500, status: 'WORKING' },
+        { timestamp: 1_700_003_600, status: 'FINISHED' },
+      ],
+    });
+    expect(runStartTimestamp(process)).toBe(1_700_000_000);
+  });
+
+  it('returns null when history is empty', () => {
+    expect(runStartTimestamp(makeProcess({ history: [] }))).toBeNull();
+  });
+
+  it('returns null when history is missing', () => {
+    expect(runStartTimestamp(makeProcess({ history: undefined }))).toBeNull();
+  });
+
+  it.each([
+    ['a NaN', NaN],
+    ['an infinite', Infinity],
+    ['a negatively infinite', -Infinity],
+  ])('returns null for %s first timestamp', (_name, timestamp) => {
+    // The entry is agent-written: a malformed one must not reach a formatter.
+    expect(runStartTimestamp(makeProcess({ history: [{ timestamp, status: 'CREATED' }] }))).toBeNull();
   });
 });
 
@@ -360,6 +396,15 @@ describe('runDurationSeconds / commandDotStates (property-based)', () => {
 
         const seconds = runDurationSeconds(made, n);
         expect(seconds === null || (Number.isFinite(seconds) && seconds >= 0)).toBe(true);
+
+        // The start is either unusable — an empty history or a malformed first
+        // entry — or exactly the instant the duration measures from.
+        const start = runStartTimestamp(made);
+        if (start === null) {
+          expect(p.history.length === 0 || !Number.isFinite(p.history[0].timestamp)).toBe(true);
+        } else {
+          expect(start).toBe(p.history[0].timestamp);
+        }
 
         // One dot per execution that ran, in order, plus the in-flight one —
         // computed here from the raw execution list, independently of the code.

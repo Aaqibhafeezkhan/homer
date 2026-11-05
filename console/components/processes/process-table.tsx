@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from './status-badge';
 import { FailureReason } from './failure-reason';
 import { TagChips } from './tag-chips';
-import { formatDuration, formatCost } from '@/lib/utils/format';
+import { formatDuration, formatCost, formatTimestamp } from '@/lib/utils/format';
 import {
   commandDotStates,
   isActiveStatus,
   isRetryableStatus,
   lastCommandFromDots,
   runDurationSeconds,
+  runStartTimestamp,
   type CommandDot,
   type LastCommand,
   type LastCommandStatus,
@@ -169,6 +170,12 @@ function DurationCell({ process, now }: { process: ProcessInfo; now: number }) {
   return <span>{seconds === null ? '—' : formatDuration(0, seconds)}</span>;
 }
 
+/** When the run started, or the same placeholder when its history says nothing usable. */
+function StartTimeCell({ process }: { process: ProcessInfo }) {
+  const start = runStartTimestamp(process);
+  return <span>{start === null ? '—' : formatTimestamp(start)}</span>;
+}
+
 /** The agent's group beside its name. Callers render it only when the run's agent has one. */
 function GroupLabel({ group }: { group: string }) {
   return (
@@ -317,6 +324,9 @@ function DesktopRow({ process, onTagClick, flowSummary, actions, now }: ProcessR
         </span>
       </TableCell>
       <TableCell className="text-sm text-muted-foreground">
+        <StartTimeCell process={process} />
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
         <DurationCell process={process} now={now} />
       </TableCell>
       <TableCell><CostCell process={process} /></TableCell>
@@ -340,6 +350,7 @@ function DesktopTable({
             <TableHead>Agent Name</TableHead>
             <TableHead>Commands</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Start time</TableHead>
             <TableHead>Duration</TableHead>
             <TableHead>Cost</TableHead>
             <TableHead>Runner</TableHead>

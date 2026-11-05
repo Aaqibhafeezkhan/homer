@@ -3246,8 +3246,9 @@ HOMER_LOG_DIR=/app/workspace</code></pre>
             <strong>roots view</strong> — one row per flow, showing that flow's run count, total cost and aggregate
             state (running / waiting on a question / failed / finished). Every filter, the sort order and the page offset live in the URL, so a filtered view is
             shareable and survives a reload, and the detail pages' back button returns to it. A Cost column shows each
-            run's spend, and the filter row shows the total for the currently filtered/paginated page. A Duration
-            column shows how long the run has been going, and the Commands column carries one square per command that
+            run's spend, and the filter row shows the total for the currently filtered/paginated page. A Start time
+            column shows when the run began, and a Duration column shows how long the run has been going; the
+            Commands column carries one square per command that
             executed — six to a line, each square naming its command, state and duration on hover (the still-running
             square names no duration yet). Status is a single
             icon, Kill and Retry are icon-only buttons, and the Runner column shows where

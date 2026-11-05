@@ -38,6 +38,22 @@ export function lastCommandFromDots(dots: CommandDot[]): LastCommand {
 }
 
 /**
+ * When the run started: the timestamp of its first history entry, or `null`
+ * when history is missing, empty or that entry is malformed — the entry is
+ * agent-written, so the caller renders a placeholder rather than `NaN`.
+ * `runDurationSeconds` measures from this same instant, so the two cannot
+ * disagree about where a run began.
+ */
+export function runStartTimestamp(process: ProcessInfo): number | null {
+  const history = process.history ?? [];
+  if (history.length === 0) {
+    return null;
+  }
+  const start = history[0].timestamp;
+  return Number.isFinite(start) ? start : null;
+}
+
+/**
  * The run's elapsed seconds: its first history entry to the last one for a
  * run that ended, to `now` while it is still active. `null` when history is
  * missing, malformed or would make the span negative, so the caller renders a
@@ -49,13 +65,14 @@ export function lastCommandFromDots(dots: CommandDot[]): LastCommand {
  * sentinel, so a nullable parameter would push the special case onto it.
  */
 export function runDurationSeconds(process: ProcessInfo, now: number): number | null {
-  const history = process.history ?? [];
-  if (history.length === 0) {
+  const start = runStartTimestamp(process);
+  if (start === null) {
     return null;
   }
-  const start = history[0].timestamp;
+  // A non-null start means history is non-empty, so the last entry exists.
+  const history = process.history ?? [];
   const last = history[history.length - 1].timestamp;
-  if (!Number.isFinite(start) || !Number.isFinite(last)) {
+  if (!Number.isFinite(last)) {
     return null;
   }
 
