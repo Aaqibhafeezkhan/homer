@@ -9,7 +9,7 @@ function req(pathname = '/'): NextRequest {
   return new NextRequest(`http://console.test${pathname}`, { headers: { 'x-existing': 'kept' } });
 }
 
-/** Request headers the middleware forwards to the app, as Next encodes them on the response. */
+/** Decodes Next.js's internal `x-middleware-request-*` header encoding (Next 16) back into the forwarded request headers. */
 function forwarded(response: Response): Map<string, string> {
   const names = (response.headers.get('x-middleware-override-headers') ?? '').split(',');
   return new Map(
