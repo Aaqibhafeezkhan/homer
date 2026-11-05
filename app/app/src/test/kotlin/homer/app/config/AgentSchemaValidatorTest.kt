@@ -14,6 +14,17 @@ class AgentSchemaValidatorTest {
     }
 
     @Test
+    fun `validating an agent object schema-checks the model's default values too`() {
+        // The test schema requires maxParallelRuns, which simpleAgent() leaves at its default (10):
+        // it reaches the schema only because validate(agent) encodes defaults.
+        val requiresADefault = AgentSchemaValidator("schemas/agent-requires-a-default.schema.json")
+        val errors = requiresADefault.validate(AgentFixtures.simpleAgent())
+        assertTrue(errors.isEmpty(), "expected the defaulted maxParallelRuns to be encoded and checked, got: $errors")
+        val violated = requiresADefault.validate(AgentFixtures.simpleAgent().copy(maxParallelRuns = 3))
+        assertTrue(violated.isNotEmpty(), "expected the test schema to check maxParallelRuns")
+    }
+
+    @Test
     fun `agent JSON with empty commands array fails schema validation`() {
         // commands has minItems: 1 in homer-agent.schema.json
         val errors = validator.validate("""{"name":"x","commands":[]}""")
