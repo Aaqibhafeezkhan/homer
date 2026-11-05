@@ -221,7 +221,8 @@ was considered and rejected: it narrows the window without closing it
 extracted entry on every sync-down, and needs a timing-based race test. The
 single-file branch already writes with `NOFOLLOW_LINKS` and lstat-refuses symlink
 components, so the residual is confined to the directory branch and to integrity at
-Homer's own UID.
+Homer's own UID. (2026-11-05 note: the single-file branch's mode normalization has a
+residual of its own; see the amendment of that date.)
 
 The disposition is **Accepted Risk** in the security scanner with this ADR cited, and `SECURITY.md`'s
 accepted-risks table carries the corresponding row.
@@ -280,6 +281,22 @@ security's request.
   *Where* columns, and links the ADR that argues the decision.
 - Accepted residual: two findings that share a CWE and a location are told
   apart by their description alone, because no id is recorded any more.
+
+## Amendment (2026-11-05): the single-file mode normalization follows a swapped-in link
+
+The single-file branch of `TarExtraction.extractEntry` normalized the mode through a
+`PosixFileAttributeView` obtained with `NOFOLLOW_LINKS`, meant to leave a link alone like
+the write before it. It does not: on Temurin 25 the JDK sets the mode of a symlink's target
+through that view, on Linux and on macOS (a mutation test found the two lookups
+indistinguishable, and a direct check confirmed it). A link swapped in at the target between
+the `NOFOLLOW_LINKS` write and the chmod therefore gets its destination set to `0755` or
+`0644` (CWE-59/CWE-367). **Accepted, not fixed**, like the directory branch's swap above:
+the race needs a concurrent writer holding Homer's own UID, which can already change the
+mode of every file it could point the link at, so no principal is crossed; the write itself
+still refuses a link. Closing it needs an `fchmod` on the descriptor the write used, which
+`java.nio` does not expose, or creating the file with its final mode, which the umask and an
+overwritten file's kept mode defeat. The ineffective option is removed, so the code no longer
+claims a guarantee it does not give, and both branches look the mode view up the same way.
 
 ## Pros and Cons of the Options
 

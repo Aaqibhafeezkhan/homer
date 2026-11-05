@@ -168,10 +168,11 @@ internal object TarExtraction {
     }
 
     /**
-     * The POSIX attribute view for an extracted [target]: the directory branch follows a
-     * contained link (the write above did), the single-file branch uses `NOFOLLOW_LINKS`
-     * like its write. Returns null on a non-POSIX target, where there is no mode to set.
-     * [override] is the test seam passed down from [TarStreams.extract]; null means the real lookup.
+     * The POSIX attribute view for an extracted [target], following a link on both branches: the
+     * JDK sets a symlink's target mode even through a `NOFOLLOW_LINKS` view (Temurin 25, Linux and
+     * macOS), so that option would only claim a guarantee it does not give. Returns null on a
+     * non-POSIX target, where there is no mode to set. [override] is the test seam passed down from
+     * [TarStreams.extract]; null means the real lookup.
      */
     private fun posixViewFor(
         target: Path,
@@ -179,11 +180,7 @@ internal object TarExtraction {
         override: ((Path, Boolean) -> PosixFileAttributeView?)?,
     ): PosixFileAttributeView? {
         if (override != null) return override(target, remoteIsDir)
-        return if (remoteIsDir) {
-            Files.getFileAttributeView(target, PosixFileAttributeView::class.java)
-        } else {
-            Files.getFileAttributeView(target, PosixFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
-        }
+        return Files.getFileAttributeView(target, PosixFileAttributeView::class.java)
     }
 
     /**
