@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
-import { decodeXml, isCompilerCallMutant, main, mutationKey, parseMutations, pitFindings, pitStats, writeReport } from './pit.mjs';
+import { withinChanged } from './pit-changed.mjs';
+import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
 
 const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
@@ -143,26 +144,50 @@ test('main writes the mutation-backend report files and fails on a missing repor
   assert.throws(() => main([path.join(dir, 'missing.xml'), dir]), /did :app:pitest run\?/);
 });
 
-const keyOfSource = 'homer/app/config/A.kt#run#negated conditional';
+const PIT = 'app/app/src/main/kotlin/homer/app/config/A.kt';
+const lineOf = (...text) => (file) => (file === PIT ? text.join('\n') : null);
+const keyOfSource = 'homer/app/config/A.kt#run#negated conditional#if (x && y) {';
+const parsed = (...ms) => parseMutations(report(...ms));
 
-test('the exception key holds no line number and is the same when the mutant moves', () => {
-  const [a, b] = parseMutations(report(mutation('SURVIVED', { line: 7 }), mutation('SURVIVED', { line: 90 })));
-  assert.equal(mutationKey(a), keyOfSource);
-  assert.equal(mutationKey(b), keyOfSource);
+test('the exception key holds the line text, not its number, and is the same when the mutant moves', () => {
+  const [a] = withKeys(parsed(mutation('SURVIVED', { line: 2 })), lineOf('', '  if (x   &&  y) {'));
+  const [b] = withKeys(parsed(mutation('SURVIVED', { line: 4 })), lineOf('', '', '', 'if (x && y) {', ''));
+  assert.equal(a.key, keyOfSource);
+  assert.equal(b.key, keyOfSource);
 });
 
-test('accepted exceptions leave the score and the findings and are listed with their reasons', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-accepted-'));
-  const all = parseMutations(report(mutation('KILLED'), mutation('SURVIVED', { line: 7 }), mutation('SURVIVED', { method: 'other' })));
-  const text = writeReport(dir, 'T', all, { exceptions: { [keyOfSource]: 'a log-only setting' }, full: true });
-  assert.match(text, /^T \(score 50\.0%\): 1 finding\(s\)\n/);
+test('a line past the end of the file, or an unreadable file, is keyed <inline>', () => {
+  const [past, unreadable] = withKeys(parsed(mutation('SURVIVED', { line: 3 }), mutation('SURVIVED', { line: 1, file: 'B.kt' })), lineOf('a', 'b', ''));
+  assert.equal(past.key, 'homer/app/config/A.kt#run#negated conditional#<inline>');
+  assert.equal(unreadable.key, 'homer/app/config/B.kt#run#negated conditional#<inline>');
+});
+
+test('an exception covers only the mutants on its own line text, not another one of the method', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-line-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 1 }), mutation('SURVIVED', { line: 2 })), lineOf('if (x && y) {', 'if (z) {'));
+  const text = writeReport(dir, 'T', all, { exceptions: { 'homer/app/config/A.kt#run#negated conditional#if (x && y) {': 'why' }, full: true });
+  assert.match(text, /1 finding\(s\)\n.*:2 {2}survived/);
   assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=1\n/);
-  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-accepted.txt'), 'utf8'), `${keyOfSource}  — a log-only setting\n`);
+});
+
+test('a full and a changed-lines run give the same key for a source outside its package directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-root-'));
+  fs.mkdirSync(path.join(root, 'elsewhere'));
+  fs.writeFileSync(path.join(root, 'elsewhere', 'A.kt'), 'package homer.app.config\n\nif (x) {\n');
+  const inRoot = sourceReader(root);
+  const read = (pit) => inRoot(pit.replace('app/app/src/main/kotlin', root));
+  const [full] = withKeys(parsed(mutation('SURVIVED', { line: 3 })), read);
+  assert.equal(full.key, 'homer/app/config/A.kt#run#negated conditional#if (x) {');
+  const lines = new Map([[full.path, { path: 'app/app/src/main/kotlin/homer/app/elsewhere/A.kt', lines: new Set([3]) }]]);
+  const [changed] = withinChanged([full], lines);
+  assert.equal(changed.path, 'app/app/src/main/kotlin/homer/app/elsewhere/A.kt');
+  assert.equal(changed.key, full.key);
+  assert.equal(read(`${root}/homer/app/config/missing.kt`), null);
 });
 
 test('a stale exception is a finding in a full run only', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-stale-'));
-  const all = parseMutations(report(mutation('KILLED')));
+  const all = withKeys(parsed(mutation('KILLED')), lineOf('a'));
   const exceptions = { 'gone.kt#m#d': 'reason' };
   assert.match(writeReport(dir, 'T', all, { exceptions, full: true }), /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}stale accepted exception: gone\.kt#m#d/);
   assert.match(writeReport(dir, 'T', all, { exceptions, full: false }), /0 finding\(s\)/);

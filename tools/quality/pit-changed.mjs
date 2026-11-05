@@ -14,19 +14,12 @@ import { declaredNames } from './changed.mjs';
 import { changedLines, gitDiff, worktreeChanges } from './git-diff.mjs';
 import { runMain, writeCheck } from './lib.mjs';
 import { BACKEND_EXCEPTIONS, loadExceptions } from './mutation-exceptions.mjs';
-import { CHECK, REPORT_DIR, SOURCE_ROOT, readMutations, writeReport } from './pit.mjs';
+import { CHECK, REPORT_DIR, SOURCE_ROOT, pitPath, readMutations, writeReport } from './pit.mjs';
+
+export { pitPath };
 
 const TITLE = 'Backend mutation testing of the change';
 const SOURCE = new RegExp(`^${SOURCE_ROOT}/.+\\.kt$`);
-
-/**
- * Where PIT places a source in its report: the package's directory and the file name, which is
- * not the file's own path when its directory does not match its package. Null without a package.
- */
-export function pitPath(file, source) {
-  const pkg = /^\s*package\s+([\w.]+)/m.exec(source)?.[1];
-  return pkg ? `${SOURCE_ROOT}/${pkg.replaceAll('.', '/')}/${path.posix.basename(file)}` : null;
-}
 
 /**
  * PIT target-class globs for a Kotlin source: its file class (`<File>Kt`, top-level functions) and
