@@ -241,6 +241,23 @@ describe('accepted exceptions', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('with --changed and no base, reports itself skipped into the given directory without running Stryker', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
+    const run = vi.fn();
+    const { argv } = process;
+    const base = process.env.MUTATE_BASE;
+    process.argv = [...argv, '--changed'];
+    delete process.env.MUTATE_BASE;
+    try {
+      main({ run, reportsDir: dir });
+    } finally {
+      process.argv = argv;
+      if (base !== undefined) process.env.MUTATE_BASE = base;
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(dir, 'mutation-console', 'mutation-console-summary.txt'), 'utf8')).toMatch(/skipped=no MUTATE_BASE\n/);
+  });
+
   it('runs Stryker over the console and reports it through the given exceptions file', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
     const exceptionsFile = path.join(dir, 'console.json');
