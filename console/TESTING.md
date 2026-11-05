@@ -171,6 +171,7 @@ when you fix it.
   - KILLED: Orange
   - CREATED: Gray
 - [ ] Hover a status icon and verify its tooltip names the status, and that the icon exposes the same name to a screen reader
+- [ ] Verify the Start time column shows the run's first history-entry timestamp, and an em dash when the run has no usable history
 - [ ] Verify the Duration column shows the elapsed time from the run's first history entry to its last, and ticks upward while the run is active
 - [ ] Verify the Commands cell shows one square per executed command — green for success, red for failure, pulsing blue for the command running now — at most six to a line with the rest wrapped below, and that hovering a square names the command, its state and its duration (the still-running square names no duration yet)
 
