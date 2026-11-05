@@ -240,9 +240,9 @@ accepted mutant leaves the score and the findings, is counted as `accepted` and 
 survivor stays visible, and an entry matching no mutant is a finding of its own in a full run (a pull
 request's changed-lines run never judges that); an entry is stale when it matches no survived or
 uncovered mutant. Keys carry no line number (backend: source path, mutated method, description and the
-mutant's line text, `<inline>` when the line is past the file's end; console: file, mutator and the
-original text with its replacement), so an edit above a mutant does not invalidate its entry. PIT
-descriptions are generic, so the backend key includes the line's text: an entry covers only that exact
+mutant's line text, `<inline>` when the line is past the file's end; console: file, mutator, the
+original text with its replacement and the mutated line's text), so an edit above a mutant does not invalidate its entry. PIT
+descriptions are generic, so both keys include the line's text: an entry covers only that exact
 line's mutants of that kind, and editing the line makes the entry stale, which forces a re-review. The exceptions live in one reviewed place for both
 languages instead of Stryker's in-code disable comments, which PIT has no counterpart for.
 

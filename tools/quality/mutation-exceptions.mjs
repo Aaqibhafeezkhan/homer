@@ -5,7 +5,7 @@
  * A key carries no line number, so it survives edits above the mutant, and it matches every mutant
  * with that key. Only undetected (survived or uncovered) mutants are offered to `applyExceptions`.
  * Keys: backend `<PIT source path>#<mutated method>#<description>` (tools/quality/pit.mjs),
- * console `<file>#<mutator>#<original text>→<replacement>` (console/scripts/mutation.mjs).
+ * console `<file>#<mutator>#<original text>→<replacement>#<line text>` (console/scripts/mutation.mjs).
  */
 import fs from 'node:fs';
 import path from 'node:path';

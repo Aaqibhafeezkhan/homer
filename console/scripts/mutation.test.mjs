@@ -122,13 +122,21 @@ describe('accepted exceptions', () => {
   const source = 'const a = 1;\nif (x   &&\n  y) {}\n';
   const at = (line, column, endLine, endColumn) => ({ start: { line, column }, end: { line: endLine, column: endColumn } });
   const survivor = (location, replacement = 'x ||  y') => ({ id: 's', mutatorName: 'LogicalOperator', replacement, status: 'Survived', location });
-  const KEY = 'lib/a.ts#LogicalOperator#x && y→x || y';
+  const KEY = 'lib/a.ts#LogicalOperator#x && y→x || y#if (x &&';
 
   it('builds a key from the original text of the span, whitespace collapsed, without a line number', () => {
     expect(mutantKey('lib/a.ts', survivor(at(2, 5, 3, 4)), source)).toBe(KEY);
     const moved = `// header\n\n${source}`;
     expect(mutantKey('lib/a.ts', survivor(at(4, 5, 5, 4)), moved)).toBe(KEY);
     expect(mutantKey('/repo/console/lib/a.ts', survivor(at(2, 5, 3, 4)), source, '/repo/console')).toBe(KEY);
+  });
+
+  it('gives same-text mutants on different lines different keys, and <unknown> for a missing line', () => {
+    const two = 'a = "";\nb = "";\n';
+    const first = mutantKey('lib/a.ts', survivor(at(1, 5, 1, 7), '"x"'), two);
+    const second = mutantKey('lib/a.ts', survivor(at(2, 5, 2, 7), '"x"'), two);
+    expect(first).not.toBe(second);
+    expect(mutantKey('lib/a.ts', survivor(at(9, 1, 9, 2)), two)).toMatch(/#<unknown>$/);
   });
 
   const full = () =>

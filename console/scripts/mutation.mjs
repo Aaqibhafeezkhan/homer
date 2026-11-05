@@ -95,12 +95,16 @@ function sourceText(source, { start, end }) {
 
 /**
  * The accepted-exception key of a mutant (tools/quality/mutation-exceptions.mjs):
- * `<file relative to console/>#<mutator>#<original text>→<replacement>`, whitespace runs collapsed to
- * one space. No line number, so the key is the same when the mutant moves.
+ * `<file relative to console/>#<mutator>#<original text>→<replacement>#<the mutated line's text>`,
+ * whitespace runs collapsed to one space, the line trimmed; `<unknown>` without that line. The line text
+ * keeps an entry from matching the same-text mutants elsewhere in the file. No line number, so the
+ * key is the same when the mutant moves with its line.
  */
 export function mutantKey(file, mutant, source, consoleDir = CONSOLE_DIR) {
   const relative = (path.isAbsolute(file) ? path.relative(consoleDir, file) : file).split(path.sep).join('/');
-  return `${relative}#${mutant.mutatorName}#${collapse(sourceText(source ?? '', mutant.location))}→${collapse(mutant.replacement ?? '')}`;
+  const line = (source ?? '').split('\n')[mutant.location.start.line - 1];
+  const lineText = line === undefined ? '<unknown>' : collapse(line);
+  return `${relative}#${mutant.mutatorName}#${collapse(sourceText(source ?? '', mutant.location))}→${collapse(mutant.replacement ?? '')}#${lineText}`;
 }
 
 /**
