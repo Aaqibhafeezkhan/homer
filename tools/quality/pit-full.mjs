@@ -52,16 +52,20 @@ export function shardGlobs(shard, root = SOURCE_ROOT) {
   return [...globs].sort();
 }
 
-/** PIT on one shard; its `mutations.xml` is copied to `<SHARD_DIR>/<shard>.xml`. */
+/**
+ * PIT on one shard; its `mutations.xml` is copied to `<SHARD_DIR>/<shard>.xml`. An older copy goes
+ * first, so a failed rerun leaves no report of an earlier run for `merge` to read.
+ */
 export function runShard(shard) {
   const globs = shardGlobs(shard);
   const xml = path.join(REPORT_DIR, 'mutations.xml');
+  const out = path.join(SHARD_DIR, `${shard}.xml`);
+  fs.rmSync(out, { force: true });
   fs.rmSync(xml, { force: true });
   const gradle = spawnSync(path.join('app', 'gradlew'), ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], { stdio: 'inherit' });
   if (gradle.status !== 0) throw new Error(`:app:pitest exited ${gradle.status ?? gradle.error?.message}`);
   if (!fs.existsSync(xml)) throw new Error(`no ${xml}: :app:pitest wrote no report`);
   fs.mkdirSync(SHARD_DIR, { recursive: true });
-  const out = path.join(SHARD_DIR, `${shard}.xml`);
   fs.copyFileSync(xml, out);
   return `${shard}: ${out}\n`;
 }

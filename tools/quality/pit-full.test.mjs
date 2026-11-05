@@ -105,6 +105,18 @@ test('run fails when Gradle fails, and keeps no shard report', () => {
   assert.match(output.message, /:app:pitest exited 1/);
 });
 
+test('a failed rerun of a shard leaves no report of its earlier run', () => {
+  const earlier = 'reports/quality/mutation-backend-shards/homer.app.xml';
+  const { output } = inRepo({ ...SOURCES, 'app/report.xml': xml(), [earlier]: xml(mutation('homer.app.ApplicationKt', 'Application.kt', 3)) }, (dir) => {
+    try {
+      return main(['run', 'homer.app']);
+    } finally {
+      assert.equal(fs.existsSync(path.join(dir, earlier)), false);
+    }
+  }, { exit: 1 });
+  assert.match(output.message, /:app:pitest exited 1/);
+});
+
 const SHARD_REPORTS = {
   'shards/homer.app.xml': xml(mutation('homer.app.ApplicationKt', 'Application.kt', 3), mutation('homer.app.ApplicationKt', 'Application.kt', 3, 'KILLED')),
   'shards/homer.app.infra.xml': xml(mutation('homer.app.infra.PathSafety', 'PathSafety.kt', 3)),
