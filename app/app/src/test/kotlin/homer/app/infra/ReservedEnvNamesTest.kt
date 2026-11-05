@@ -96,4 +96,29 @@ class ReservedEnvNamesTest {
         validatePayloadParam("HMR_LG_RESUME", "resumeParam", emptyMap())
         validatePayloadParam("ANSWER", "answerParam", mapOf("OTHER" to "1"))
     }
+
+    @Test
+    fun `isReserved rejects every exact host-controlled name`() {
+        listOf("PATH", "HOME", "USER", "SHELL", "LANG", "TZ", "PWD", "OLDPWD", "IFS", "BASH_ENV", "ENV").forEach {
+            assertTrue(ReservedEnvNames.isReserved(it), "$it must be reserved")
+        }
+    }
+
+    @Test
+    fun `isReserved rejects the HMR_, LD_, JAVA_ and LC_ prefixes`() {
+        listOf("HMR_AGENT_NAME", "LD_PRELOAD", "JAVA_TOOL_OPTIONS", "LC_ALL").forEach {
+            assertTrue(ReservedEnvNames.isReserved(it), "$it must be reserved")
+        }
+        // The prefixes are case-sensitive like the exact names.
+        listOf("hmr_agent_name", "ld_preload", "java_home", "lc_all").forEach {
+            assertFalse(ReservedEnvNames.isReserved(it), "$it must not be reserved")
+        }
+    }
+
+    @Test
+    fun `isReserved accepts ordinary names, including look-alikes of reserved ones`() {
+        listOf("MY_VAR", "API_TOKEN", "PATHS", "HOMER", "XHMR_A", "HMR", "LDAP_URL", "JAVAC", "LCD", "X_PATH").forEach {
+            assertFalse(ReservedEnvNames.isReserved(it), "$it must not be reserved")
+        }
+    }
 }

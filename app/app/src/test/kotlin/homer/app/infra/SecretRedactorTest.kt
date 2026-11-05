@@ -101,4 +101,23 @@ class SecretRedactorTest {
         assertEquals("saw ***", r.redact("saw workspace-value"))
         assertEquals("saw host-value", r.redact("saw host-value"))
     }
+
+    @Test
+    fun `a secret of exactly minNeedleLength is redacted and one character shorter is not`() {
+        val r =
+            SecretRedactor.from(
+                env = mapOf("AT" to "abcdefgh", "BELOW" to "ijklmno"),
+                secretEnvNames = setOf("AT", "BELOW"),
+                minNeedleLength = 8,
+            )
+        assertEquals("saw ***", r.redact("saw abcdefgh"))
+        assertEquals("saw ijklmno", r.redact("saw ijklmno"))
+    }
+
+    @Test
+    fun `a secret name absent from the env is resolved from the real host environment by default`() {
+        val hostPath = requireNotNull(System.getenv("PATH")) { "PATH is expected to be set" }
+        val r = SecretRedactor.from(env = emptyMap(), secretEnvNames = setOf("PATH"))
+        assertEquals("p=***", r.redact("p=$hostPath"))
+    }
 }

@@ -47,4 +47,13 @@ class AgentSchemaValidatorTest {
             )
         assertTrue(errors.isNotEmpty(), "expected a schema violation for runner + non-empty runnerTags")
     }
+
+    @Test
+    fun `an invalid agent object is reported through validate(agent)`() {
+        val badName = validator.validate(AgentFixtures.simpleAgent(name = "bad name"))
+        assertTrue(badName.isNotEmpty(), "expected a schema violation for a name with a space")
+
+        val noCommands = validator.validate(AgentFixtures.simpleAgent().copy(commands = emptyList()))
+        assertTrue(noCommands.isNotEmpty(), "expected a schema violation for an agent without commands")
+    }
 }
