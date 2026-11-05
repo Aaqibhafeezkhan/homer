@@ -2,6 +2,7 @@
  * Backend mutation testing (PIT pilot, ADR-0082): turns PIT's `mutations.xml` into the shared
  * report files of check `mutation-backend`, one finding per survived or uncovered mutant.
  * Mutants that only remove a call the Kotlin compiler adds are ignored: outside the score, no finding.
+ * Accepted exceptions (mutation-exceptions.mjs) leave the score and the findings, and are listed apart.
  * Usage (repository root): node tools/quality/pit.mjs [mutations.xml] [out dir]
  *
  * Not a quality-gate check yet: the nightly job only shows the report in its job summary
@@ -9,6 +10,7 @@
  */
 import fs from 'node:fs';
 import { mutationScore, runMain, writeCheck } from './lib.mjs';
+import { BACKEND_EXCEPTIONS, applyExceptions, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 export const CHECK = 'mutation-backend';
 export const REPORT_DIR = 'app/app/build/reports/pitest';
@@ -64,6 +66,9 @@ export function pitFindings(mutations) {
     .sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line);
 }
 
+/** The accepted-exception key of a mutant (mutation-exceptions.mjs): no line number, stable when it moves. */
+export const mutationKey = (m) => `${m.path.startsWith(`${SOURCE_ROOT}/`) ? m.path.slice(SOURCE_ROOT.length + 1) : m.path}#${oneLine(m.method)}#${oneLine(m.description)}`;
+
 /** Whether the mutant only removes a call the Kotlin compiler added. */
 export const isCompilerCallMutant = (m) => COMPILER_CALL.test(m.description);
 
@@ -80,12 +85,20 @@ export function pitStats(mutations) {
   return { score: mutationScore(stats), ...stats };
 }
 
-/** Writes the check's report files for `all` mutants, compiler-call mutants left out; returns the report text. */
-export function writeReport(outDir, title, all) {
+/**
+ * Writes the check's report files for `all` mutants: compiler-call mutants left out, then the undetected
+ * mutants `exceptions` accept (out of the score and the findings, listed in `<check>-accepted.txt`).
+ * A `full` run also reports the exceptions that match no mutant; returns the report text.
+ */
+export function writeReport(outDir, title, all, { exceptions = {}, full = false } = {}) {
   const mutations = all.filter((m) => !isCompilerCallMutant(m));
-  const stats = { ...pitStats(mutations), ignored: all.length - mutations.length };
+  const undetected = mutations.filter((m) => Object.hasOwn(FINDING_STATUSES, m.status));
+  const { kept, accepted, stale } = applyExceptions(undetected, mutationKey, exceptions, { full });
+  const scored = [...mutations.filter((m) => !undetected.includes(m)), ...kept];
+  const stats = { ...pitStats(scored), ignored: all.length - mutations.length, accepted: accepted.length };
   const score = stats.score === 'n/a' ? 'no mutants' : `score ${stats.score}%`;
-  return writeCheck(outDir, CHECK, `${title} (${score})`, pitFindings(mutations), stats);
+  writeAccepted(outDir, CHECK, accepted);
+  return writeCheck(outDir, CHECK, `${title} (${score})`, [...pitFindings(kept), ...staleFindings(stale, BACKEND_EXCEPTIONS)], stats);
 }
 
 /** The `<mutation>` elements of PIT's XML report `xmlFile`. */
@@ -95,7 +108,7 @@ export function readMutations(xmlFile) {
 }
 
 export function main([xmlFile = `${REPORT_DIR}/mutations.xml`, outDir = REPORT_DIR]) {
-  return writeReport(outDir, 'Backend mutation testing', readMutations(xmlFile));
+  return writeReport(outDir, 'Backend mutation testing', readMutations(xmlFile), { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: true });
 }
 
 runMain(import.meta, main);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { changedLines } from '../../tools/quality/git-diff.mjs';
-import { changedRanges, mutantFindings, mutationStats, withinRanges } from './mutation.mjs';
+import { acceptExceptions, changedRanges, mutantFindings, mutantKey, mutationStats, withinRanges } from './mutation.mjs';
 
 const mutant = (status, line, mutatorName = 'ConditionalExpression', replacement = 'true') => ({
   id: `${status}-${line}`,
@@ -115,5 +115,35 @@ describe('withinRanges', () => {
   it('matches report keys given as absolute paths', () => {
     const absolute = report({ '/repo/console/lib/a.ts': { mutants: [mutant('Survived', 5)] } });
     expect(mutantFindings(withinRanges(absolute, ['lib/a.ts:5-5'], '/repo/console'))).toHaveLength(1);
+  });
+});
+
+describe('accepted exceptions', () => {
+  const source = 'const a = 1;\nif (x   &&\n  y) {}\n';
+  const at = (line, column, endLine, endColumn) => ({ start: { line, column }, end: { line: endLine, column: endColumn } });
+  const survivor = (location, replacement = 'x ||  y') => ({ id: 's', mutatorName: 'LogicalOperator', replacement, status: 'Survived', location });
+  const KEY = 'lib/a.ts#LogicalOperator#x && y→x || y';
+
+  it('builds a key from the original text of the span, whitespace collapsed, without a line number', () => {
+    expect(mutantKey('lib/a.ts', survivor(at(2, 5, 3, 4)), source)).toBe(KEY);
+    const moved = `// header\n\n${source}`;
+    expect(mutantKey('lib/a.ts', survivor(at(4, 5, 5, 4)), moved)).toBe(KEY);
+    expect(mutantKey('/repo/console/lib/a.ts', survivor(at(2, 5, 3, 4)), source, '/repo/console')).toBe(KEY);
+  });
+
+  const full = () =>
+    report({ 'lib/a.ts': { source, mutants: [mutant('Killed', 1), survivor(at(2, 5, 3, 4)), mutant('Survived', 3, 'StringLiteral', '""')] } });
+
+  it('takes accepted mutants out of the score and the findings', () => {
+    const { report: scored, accepted, stale } = acceptExceptions(full(), { [KEY]: 'why' }, { full: true });
+    expect(accepted.map((a) => a.reason)).toEqual(['why']);
+    expect(stale).toEqual([]);
+    expect(mutationStats(scored)).toMatchObject({ killed: 1, survived: 1 });
+    expect(mutantFindings(scored)).toHaveLength(1);
+  });
+
+  it('reports a stale key in a full run only, and does not accept a killed mutant', () => {
+    expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: true }).stale).toEqual(['lib/gone.ts#M#a→b']);
+    expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: false }).stale).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
-import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats } from './pit.mjs';
+import { decodeXml, isCompilerCallMutant, main, mutationKey, parseMutations, pitFindings, pitStats, writeReport } from './pit.mjs';
 
 const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
@@ -139,6 +139,31 @@ test('main writes the mutation-backend report files and fails on a missing repor
   const nullCheck = mutation('SURVIVED', { description: 'removed call to kotlin/jvm/internal/Intrinsics::checkNotNullParameter' });
   fs.writeFileSync(xml, report(mutation('KILLED'), mutation('SURVIVED'), nullCheck));
   assert.match(main([xml, dir]), /^Backend mutation testing \(score 50\.0%\): 1 finding\(s\)\n/);
-  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\nignored=1\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\nignored=1\naccepted=0\n');
   assert.throws(() => main([path.join(dir, 'missing.xml'), dir]), /did :app:pitest run\?/);
+});
+
+const keyOfSource = 'homer/app/config/A.kt#run#negated conditional';
+
+test('the exception key holds no line number and is the same when the mutant moves', () => {
+  const [a, b] = parseMutations(report(mutation('SURVIVED', { line: 7 }), mutation('SURVIVED', { line: 90 })));
+  assert.equal(mutationKey(a), keyOfSource);
+  assert.equal(mutationKey(b), keyOfSource);
+});
+
+test('accepted exceptions leave the score and the findings and are listed with their reasons', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-accepted-'));
+  const all = parseMutations(report(mutation('KILLED'), mutation('SURVIVED', { line: 7 }), mutation('SURVIVED', { method: 'other' })));
+  const text = writeReport(dir, 'T', all, { exceptions: { [keyOfSource]: 'a log-only setting' }, full: true });
+  assert.match(text, /^T \(score 50\.0%\): 1 finding\(s\)\n/);
+  assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=1\n/);
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-accepted.txt'), 'utf8'), `${keyOfSource}  — a log-only setting\n`);
+});
+
+test('a stale exception is a finding in a full run only', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-stale-'));
+  const all = parseMutations(report(mutation('KILLED')));
+  const exceptions = { 'gone.kt#m#d': 'reason' };
+  assert.match(writeReport(dir, 'T', all, { exceptions, full: true }), /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}stale accepted exception: gone\.kt#m#d/);
+  assert.match(writeReport(dir, 'T', all, { exceptions, full: false }), /0 finding\(s\)/);
 });

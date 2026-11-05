@@ -13,6 +13,7 @@ import path from 'node:path';
 import { declaredNames } from './changed.mjs';
 import { changedLines, gitDiff, worktreeChanges } from './git-diff.mjs';
 import { runMain, writeCheck } from './lib.mjs';
+import { BACKEND_EXCEPTIONS, loadExceptions } from './mutation-exceptions.mjs';
 import { CHECK, REPORT_DIR, SOURCE_ROOT, readMutations, writeReport } from './pit.mjs';
 
 const TITLE = 'Backend mutation testing of the change';
@@ -172,7 +173,7 @@ export function main() {
   fs.rmSync(xml, { force: true });
   const gradle = spawnSync(path.join('app', 'gradlew'), ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], { stdio: 'inherit' });
   if (gradle.status !== 0) throw new Error(`:app:pitest exited ${gradle.status ?? gradle.error?.message}`);
-  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines));
+  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines), { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: false });
 }
 
 runMain(import.meta, () => main());

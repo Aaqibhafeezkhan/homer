@@ -1,6 +1,7 @@
 /**
  * Renders one check's report files (`<check>-summary.txt`, `<check>-report.txt`) as Markdown for a
- * GitHub Actions job summary: the summary values as a table, the findings in a collapsed list.
+ * GitHub Actions job summary: the summary values as a table, the findings and the accepted exceptions
+ * (`<check>-accepted.txt`, when present) each in a collapsed list.
  * Usage (repository root): node tools/quality/step-summary.mjs <dir> <check> <heading> >> "$GITHUB_STEP_SUMMARY"
  *
  * Findings quote source text (Stryker replacements, PIT descriptions), so every value is
@@ -16,8 +17,8 @@ export const escapeHtml = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&
 
 const cell = (text) => escapeHtml(text).replace(/\|/g, '&#124;').replace(/\r?\n/g, ' ');
 
-/** The Markdown section for one check; `summary` and `report` are the file texts, undefined when missing. */
-export function renderSummary(heading, summary, report) {
+/** The Markdown section for one check; `summary`, `report` and `accepted` are the file texts, undefined when missing. */
+export function renderSummary(heading, summary, report, accepted) {
   const out = [`### ${cell(heading)}`, ''];
   if (summary === undefined) return `${[...out, 'No report: the run wrote none, see the job log.'].join('\n')}\n`;
   const values = Object.entries(parseSummary(summary));
@@ -28,6 +29,12 @@ export function renderSummary(heading, summary, report) {
     if (findings.length > MAX_FINDINGS) shown.push(`… ${findings.length - MAX_FINDINGS} more in the job artifact`);
     out.push('', `<details><summary>${findings.length} finding(s)</summary>`, '', `<pre>${shown.join('\n')}</pre>`, '', '</details>');
   }
+  const acceptedLines = (accepted ?? '').trimEnd().split('\n').filter(Boolean);
+  if (acceptedLines.length > 0) {
+    const shown = acceptedLines.slice(0, MAX_FINDINGS).map(escapeHtml);
+    if (acceptedLines.length > MAX_FINDINGS) shown.push(`… ${acceptedLines.length - MAX_FINDINGS} more in the job artifact`);
+    out.push('', `<details><summary>${acceptedLines.length} accepted exception(s)</summary>`, '', `<pre>${shown.join('\n')}</pre>`, '', '</details>');
+  }
   return `${out.join('\n')}\n`;
 }
 
@@ -35,7 +42,7 @@ const readIfExists = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf
 
 export function main([dir, check, heading]) {
   if (!dir || !check || !heading) throw new Error('usage: step-summary.mjs <dir> <check> <heading>');
-  return renderSummary(heading, readIfExists(path.join(dir, `${check}-summary.txt`)), readIfExists(path.join(dir, `${check}-report.txt`)));
+  return renderSummary(heading, readIfExists(path.join(dir, `${check}-summary.txt`)), readIfExists(path.join(dir, `${check}-report.txt`)), readIfExists(path.join(dir, `${check}-accepted.txt`)));
 }
 
 runMain(import.meta, main);

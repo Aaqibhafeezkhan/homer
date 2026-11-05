@@ -81,3 +81,17 @@ test('main reads the check files from the directory and requires its arguments',
   assert.equal(main([dir, 'demo', 'Demo']), '### Demo\n\n| findings |\n| --- |\n| 0 |\n');
   assert.throws(() => main([dir, 'demo']), /usage/);
 });
+
+test('accepted exceptions render in their own escaped block after the findings', () => {
+  const text = renderSummary('PIT', summary, report, 'a.kt#m#x → <b>  — reason & more\n');
+  assert.ok(text.indexOf('2 finding(s)') < text.indexOf('1 accepted exception(s)'));
+  assert.ok(text.includes('<pre>a.kt#m#x → &lt;b&gt;  — reason &amp; more</pre>'));
+  assert.doesNotMatch(renderSummary('PIT', summary, report, ''), /accepted/);
+});
+
+test('main reads the accepted file when present', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'summary-accepted-'));
+  fs.writeFileSync(path.join(dir, 'demo-summary.txt'), 'findings=0\n');
+  fs.writeFileSync(path.join(dir, 'demo-accepted.txt'), 'k  — why\n');
+  assert.match(main([dir, 'demo', 'Demo']), /1 accepted exception\(s\)/);
+});

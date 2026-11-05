@@ -232,3 +232,13 @@ Only `:app` is mutated. The nightly scope stays a list in `app/app/build.gradle.
 `tools/quality/pit.test.mjs` reads to check that each entry still names a source file; a manifest
 both Gradle and the test read was not worth a second file format for some 25 entries.
 Whether either backend run turns `required` is decided on their numbers.
+
+*Amended (2026-11-05):* both mutation checks accept exceptions from a reviewed file per stack
+(`tools/quality/mutation-exceptions/backend.json` and `console.json`, a JSON object of key → reason). An
+accepted mutant leaves the score and the findings, is counted as `accepted` and listed with its reason in
+`<check>-accepted.txt`. This is not a baseline: there is no list of known findings, every unaccepted
+survivor stays visible, and an entry matching no mutant is a finding of its own in a full run (a pull
+request's changed-lines run never judges that). Keys carry no line number (backend: source path, mutated
+method and description; console: file, mutator and the original text with its replacement), so an edit
+above a mutant does not invalidate its entry. The exceptions live in one reviewed place for both
+languages instead of Stryker's in-code disable comments, which PIT has no counterpart for.
