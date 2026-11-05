@@ -13,19 +13,13 @@ import path from 'node:path';
 import { declaredNames } from './changed.mjs';
 import { changedLines, gitDiff, worktreeChanges } from './git-diff.mjs';
 import { runMain, writeCheck } from './lib.mjs';
-import { CHECK, REPORT_DIR, SOURCE_ROOT, readMutations, writeReport } from './pit.mjs';
+import { BACKEND_EXCEPTIONS, loadExceptions } from './mutation-exceptions.mjs';
+import { CHECK, REPORT_DIR, SOURCE_ROOT, pitPath, readMutations, writeReport } from './pit.mjs';
+
+export { pitPath };
 
 const TITLE = 'Backend mutation testing of the change';
 const SOURCE = new RegExp(`^${SOURCE_ROOT}/.+\\.kt$`);
-
-/**
- * Where PIT places a source in its report: the package's directory and the file name, which is
- * not the file's own path when its directory does not match its package. Null without a package.
- */
-export function pitPath(file, source) {
-  const pkg = /^\s*package\s+([\w.]+)/m.exec(source)?.[1];
-  return pkg ? `${SOURCE_ROOT}/${pkg.replaceAll('.', '/')}/${path.posix.basename(file)}` : null;
-}
 
 /**
  * PIT target-class globs for a Kotlin source: its file class (`<File>Kt`, top-level functions) and
@@ -151,8 +145,8 @@ export function withinChanged(mutations, lines) {
   });
 }
 
-// A branch decides what a source path holds: read regular files only, never through a link.
-const readSource = (file) => {
+/** A branch decides what a source path holds: read regular files only, never through a link; null otherwise. */
+export const readSource = (file) => {
   const stat = fs.lstatSync(file, { throwIfNoEntry: false });
   return stat?.isFile() ? fs.readFileSync(file, 'utf8') : null;
 };
@@ -172,7 +166,7 @@ export function main() {
   fs.rmSync(xml, { force: true });
   const gradle = spawnSync(path.join('app', 'gradlew'), ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], { stdio: 'inherit' });
   if (gradle.status !== 0) throw new Error(`:app:pitest exited ${gradle.status ?? gradle.error?.message}`);
-  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines));
+  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines), { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: false });
 }
 
 runMain(import.meta, () => main());

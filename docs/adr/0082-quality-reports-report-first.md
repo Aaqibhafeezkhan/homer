@@ -232,3 +232,32 @@ Only `:app` is mutated. The nightly scope stays a list in `app/app/build.gradle.
 `tools/quality/pit.test.mjs` reads to check that each entry still names a source file; a manifest
 both Gradle and the test read was not worth a second file format for some 25 entries.
 Whether either backend run turns `required` is decided on their numbers.
+
+*Amended (2026-11-05):* both mutation checks accept exceptions from a reviewed file per stack
+(`tools/quality/mutation-exceptions/backend.json` and `console.json`, a JSON object of key → reason).
+An accepted mutant leaves the score and the findings, is counted as `accepted` and listed with its
+reason in `<check>-accepted.txt`. This is not a baseline: there is no list of known findings, every
+unaccepted survivor stays visible, and an entry matching no mutant is a finding of its own in a full
+run (a pull request's changed-lines run never judges that); an entry is stale when it matches no
+survived or uncovered mutant. Keys carry no line number (backend: source path, mutated method,
+description and the mutant's line text, `<inline>` when the line is past the file's end; console:
+file, mutator, the original text with its replacement and the mutated line's text), so an edit above
+a mutant does not invalidate its entry. Both keys include the line's text, since neither PIT's
+description nor Stryker's original text and replacement tells two mutants of a method apart: an entry
+covers only that exact line's mutants of that kind, and editing the line makes the entry stale, which
+forces a re-review. An `<inline>` key has no line to tell them apart: it matches every mutant of its
+description that the Kotlin compiler inlined into the method, so its entry is
+`{ "reason": "…", "count": N }`, and a full run reports an entry matching any other number of mutants
+as a finding (still accepting them, so the score stays stable); a new inlined survivor there is never
+accepted silently. The exceptions live in one reviewed place for both languages instead of Stryker's
+in-code disable comments, which PIT has no counterpart for.
+
+*Amended (2026-11-05):* both full mutation runs are weekly (Nightly workflow, Sunday schedule, or
+by hand through its inputs), and the narrow nightly backend scope is dropped: PIT mutates every
+class of `:app`. A whole-backend run takes longer than GitHub's 6-hour job limit, so it is sharded
+per package (`tools/quality/pit-full.mjs`): one job per directory that holds Kotlin sources, each
+writing its PIT XML, and one job merging them into the single `mutation-backend` report. A shard
+that fails or times out leaves the report `partial`, which names the missing shards and judges no
+stale exception. A shard that outgrows the limit on its own is split further or, failing that, run
+on a self-hosted runner instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
+checking its entries are gone with it.

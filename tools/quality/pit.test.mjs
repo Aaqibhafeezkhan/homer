@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import fc from 'fast-check';
-import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats } from './pit.mjs';
+import { withinChanged } from './pit-changed.mjs';
+import { decodeXml, isCompilerCallMutant, main, mutationKey, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
 
 const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
@@ -116,29 +117,126 @@ test('only a removed call into the Kotlin runtime is ever a compiler-call mutant
   fc.assert(fc.property(fc.string(), (description) => !isCompilerCallMutant({ description }) || description.startsWith('removed call to kotlin/')));
 });
 
-test('every class pattern of the PIT scope names a backend source file', () => {
-  const root = path.join(import.meta.dirname, '..', '..');
-  const build = fs.readFileSync(path.join(root, 'app/app/build.gradle.kts'), 'utf8');
-  const scope = /val nightlyMutationScope =\s*setOf\(([\s\S]*?)\n\s*\)/.exec(build)?.[1];
-  assert.ok(scope, 'no nightlyMutationScope in app/app/build.gradle.kts');
-  const entries = [...scope.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(entries.length > 0, 'nightlyMutationScope is empty');
-  // Only a package (`a.b.*`) or a class prefix (`a.b.C*`) can be checked against the sources.
-  assert.deepEqual(entries.filter((e) => !/^homer\.app\.(?:[a-z]\w*\.)*(?:[A-Z]\w*)?\*$/.test(e)), []);
-  const patterns = entries.map((e) => e.slice(0, -1));
-  const stale = patterns.filter((p) => {
-    const at = path.join(root, 'app/app/src/main/kotlin', ...p.replace(/\.$/, '').split('.'));
-    return p.endsWith('.') ? !fs.existsSync(at) : !fs.existsSync(`${at}.kt`);
-  });
-  assert.deepEqual(stale, []);
-});
-
 test('main writes the mutation-backend report files and fails on a missing report', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-'));
   const xml = path.join(dir, 'mutations.xml');
   const nullCheck = mutation('SURVIVED', { description: 'removed call to kotlin/jvm/internal/Intrinsics::checkNotNullParameter' });
   fs.writeFileSync(xml, report(mutation('KILLED'), mutation('SURVIVED'), nullCheck));
   assert.match(main([xml, dir]), /^Backend mutation testing \(score 50\.0%\): 1 finding\(s\)\n/);
-  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\nignored=1\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), 'findings=1\nscore=50.0\nkilled=1\nsurvived=1\nnoCoverage=0\ntimeout=0\nerrors=0\nignored=1\naccepted=0\n');
   assert.throws(() => main([path.join(dir, 'missing.xml'), dir]), /did :app:pitest run\?/);
+});
+
+const PIT = 'app/app/src/main/kotlin/homer/app/config/A.kt';
+const lineOf = (...text) => (file) => (file === PIT ? text.join('\n') : null);
+const keyOfSource = 'homer/app/config/A.kt#run#negated conditional#if (x && y) {';
+const parsed = (...ms) => parseMutations(report(...ms));
+
+test('the exception key holds the line text, not its number, and is the same when the mutant moves', () => {
+  const [a] = withKeys(parsed(mutation('SURVIVED', { line: 2 })), lineOf('', '  if (x   &&  y) {'));
+  const [b] = withKeys(parsed(mutation('SURVIVED', { line: 4 })), lineOf('', '', '', 'if (x && y) {', ''));
+  assert.equal(a.key, keyOfSource);
+  assert.equal(b.key, keyOfSource);
+});
+
+test('the key survives lines inserted above the mutant and changes with the text of its own line', () => {
+  const line = fc.string().filter((text) => !text.includes('\n'));
+  const lines = fc.array(line, { maxLength: 5 });
+  fc.assert(
+    fc.property(lines, line, lines, lines, line, (above, text, below, inserted, other) => {
+      const source = (...rows) => (file) => (file === PIT ? `${rows.join('\n')}\n` : null);
+      const m = { path: PIT, line: above.length + 1, method: 'run', description: 'negated conditional' };
+      const key = mutationKey(m, source(...above, text, ...below));
+      assert.equal(mutationKey({ ...m, line: m.line + inserted.length }, source(...inserted, ...above, text, ...below)), key);
+      const collapsed = (t) => t.replace(/\s+/g, ' ').trim();
+      if (collapsed(other) !== collapsed(text)) assert.notEqual(mutationKey(m, source(...above, other, ...below)), key);
+    }),
+  );
+});
+
+test('a line past the end of the file, or an unreadable file, is keyed <inline>', () => {
+  const [past, unreadable] = withKeys(parsed(mutation('SURVIVED', { line: 3 }), mutation('SURVIVED', { line: 1, file: 'B.kt' })), lineOf('a', 'b', ''));
+  assert.equal(past.key, 'homer/app/config/A.kt#run#negated conditional#<inline>');
+  assert.equal(unreadable.key, 'homer/app/config/B.kt#run#negated conditional#<inline>');
+});
+
+test('an exception covers only the mutants on its own line text, not another one of the method', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-line-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 1 }), mutation('SURVIVED', { line: 2 })), lineOf('if (x && y) {', 'if (z) {'));
+  const text = writeReport(dir, 'T', all, { exceptions: { 'homer/app/config/A.kt#run#negated conditional#if (x && y) {': 'why' }, full: true });
+  assert.match(text, /1 finding\(s\)\n.*:2 {2}survived/);
+  assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=1\n/);
+});
+
+test('a full and a changed-lines run give the same key for a source outside its package directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-root-'));
+  fs.mkdirSync(path.join(root, 'elsewhere'));
+  fs.writeFileSync(path.join(root, 'elsewhere', 'A.kt'), 'package homer.app.config\n\nif (x) {\n');
+  const inRoot = sourceReader(root);
+  const read = (pit) => inRoot(pit.replace('app/app/src/main/kotlin', root));
+  const [full] = withKeys(parsed(mutation('SURVIVED', { line: 3 })), read);
+  assert.equal(full.key, 'homer/app/config/A.kt#run#negated conditional#if (x) {');
+  const lines = new Map([[full.path, { path: 'app/app/src/main/kotlin/homer/app/elsewhere/A.kt', lines: new Set([3]) }]]);
+  const [changed] = withinChanged([full], lines);
+  assert.equal(changed.path, 'app/app/src/main/kotlin/homer/app/elsewhere/A.kt');
+  assert.equal(changed.key, full.key);
+  assert.equal(read(`${root}/homer/app/config/missing.kt`), null);
+});
+
+test('a stale exception is a finding in a full run only', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-stale-'));
+  const all = withKeys(parsed(mutation('KILLED')), lineOf('a'));
+  const exceptions = { 'gone.kt#m#d': 'reason' };
+  assert.match(writeReport(dir, 'T', all, { exceptions, full: true }), /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}stale accepted exception: gone\.kt#m#d/);
+  assert.match(writeReport(dir, 'T', all, { exceptions, full: false }), /0 finding\(s\)/);
+});
+
+test('an <inline> exception matching another number of mutants than its count is a finding in a full run only', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-inline-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 9 }), mutation('SURVIVED', { line: 9 }), mutation('KILLED')), lineOf('a'));
+  const key = 'homer/app/config/A.kt#run#negated conditional#<inline>';
+  const summary = () => fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8');
+  assert.match(writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 2 } }, full: true }), /\(score 100\.0%\): 0 finding\(s\)/);
+  assert.match(summary(), /accepted=2\n/);
+  const miscounted = writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 1 } }, full: true });
+  assert.match(miscounted, /\(score 100\.0%\): 1 finding\(s\)\n/);
+  assert.match(miscounted, /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}accepted exception matched 2 mutants, expected 1: homer\/app\/config\/A\.kt#run#negated conditional#<inline>/);
+  assert.match(summary(), /accepted=2\n/);
+  assert.match(writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 1 } }, full: false }), /0 finding\(s\)/);
+});
+
+test('the source reader reads a file once, however many mutants it keys', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-cache-'));
+  fs.mkdirSync(path.join(root, 'homer/app/config'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'homer/app/config/A.kt'), 'package homer.app.config\n\nif (x) {\n');
+  const inRoot = sourceReader(root);
+  const read = (pit) => inRoot(pit.replace('app/app/src/main/kotlin', root));
+  const readFileSync = mock.method(fs, 'readFileSync');
+  try {
+    const keyed = withKeys(parsed(...Array.from({ length: 50 }, () => mutation('SURVIVED', { line: 3 }))), read);
+    assert.ok(keyed.every((m) => m.key.endsWith('#if (x) {')));
+    assert.equal(readFileSync.mock.calls.filter(({ arguments: [file] }) => String(file).endsWith('A.kt')).length, 1);
+  } finally {
+    readFileSync.mock.restore();
+  }
+});
+
+test('extra summary values follow the counts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-extra-'));
+  writeReport(dir, 'T', withKeys(parsed(mutation('KILLED')), lineOf('a')), { extra: { partial: 'homer.app.x' } });
+  assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=0\npartial=homer\.app\.x\n$/);
+});
+
+test('writeReport lists the accepted mutants with their reason in mutation-backend-accepted.txt, and main reports them from the XML', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-accepted-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 1 }), mutation('SURVIVED', { line: 2 })), lineOf('if (x && y) {', 'if (z) {'));
+  const accepted = path.join(dir, 'mutation-backend-accepted.txt');
+  writeReport(dir, 'T', all, { exceptions: { [keyOfSource]: 'because' }, full: true });
+  assert.equal(fs.readFileSync(accepted, 'utf8'), `${keyOfSource}  — because\n`);
+  writeReport(dir, 'T', all, { full: true });
+  assert.equal(fs.readFileSync(accepted, 'utf8'), '');
+  const xml = path.join(dir, 'mutations.xml');
+  fs.writeFileSync(xml, report(mutation('KILLED')));
+  main([xml, dir]);
+  assert.equal(fs.readFileSync(accepted, 'utf8'), '');
 });

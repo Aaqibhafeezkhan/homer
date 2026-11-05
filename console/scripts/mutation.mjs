@@ -8,6 +8,8 @@
  * are none. Whole files would make
  * an MR's run scale with the size of every file it touches (hours for a dozen components). Both
  * modes ignore static mutants, each of which reruns the whole suite.
+ * Accepted exceptions (tools/quality/mutation-exceptions/console.json) leave the score and the findings
+ * and are listed in `mutation-console-accepted.txt`; a full run also reports the entries matching no mutant.
  * Writes `reports/quality/mutation-console/`.
  */
 import fs from 'node:fs';
@@ -17,6 +19,7 @@ import { pathToFileURL } from 'node:url';
 
 import { changedLines, gitDiff, worktreeChanges } from '../../tools/quality/git-diff.mjs';
 import { mutationScore } from '../../tools/quality/lib.mjs';
+import { CONSOLE_EXCEPTIONS, applyExceptions, countFindings, loadExceptions, staleFindings, writeAccepted } from '../../tools/quality/mutation-exceptions.mjs';
 import { isScoredPath } from './crap.mjs';
 import { CONSOLE_DIR, REPORTS_DIR, printReport, repoPath, runTool, writeReports } from './quality-report.mjs';
 
@@ -81,6 +84,50 @@ export function withinRanges(report, ranges, consoleDir = CONSOLE_DIR) {
   return { ...report, files };
 }
 
+const collapse = (text) => text.replace(/\s+/g, ' ').trim();
+
+// A report's mutants are keyed one file after another: split the source once, not once per mutant.
+let splitCache = { source: null, lines: [] };
+function linesOf(source) {
+  if (splitCache.source !== source) splitCache = { source, lines: source.split('\n') };
+  return splitCache.lines;
+}
+
+// The text of `location` (1-based line and column, start inclusive, end exclusive) in `source`.
+function sourceText(source, { start, end }) {
+  const lines = linesOf(source);
+  if (start.line === end.line) return (lines[start.line - 1] ?? '').slice(start.column - 1, end.column - 1);
+  return [(lines[start.line - 1] ?? '').slice(start.column - 1), ...lines.slice(start.line, end.line - 1), (lines[end.line - 1] ?? '').slice(0, end.column - 1)].join('\n');
+}
+
+/**
+ * The accepted-exception key of a mutant (tools/quality/mutation-exceptions.mjs):
+ * `<file relative to console/>#<mutator>#<original text>→<replacement>#<the mutated line's text>`,
+ * whitespace runs collapsed to one space, the line trimmed; `<unknown>` without that line. The line text
+ * keeps an entry from matching the same-text mutants elsewhere in the file. No line number, so the
+ * key is the same when the mutant moves with its line.
+ */
+export function mutantKey(file, mutant, source, consoleDir = CONSOLE_DIR) {
+  const relative = (path.isAbsolute(file) ? path.relative(consoleDir, file) : file).split(path.sep).join('/');
+  const line = linesOf(source ?? '')[mutant.location.start.line - 1];
+  const lineText = line === undefined ? '<unknown>' : collapse(line);
+  return `${relative}#${mutant.mutatorName}#${collapse(sourceText(source ?? '', mutant.location))}→${collapse(mutant.replacement ?? '')}#${lineText}`;
+}
+
+/**
+ * Applies the exceptions to the undetected (survived or uncovered) mutants of `report`: returns the
+ * report without the accepted ones, them as `accepted`, and (only for a `full` run) the stale keys and
+ * the miscounted entries (`applyExceptions`).
+ */
+export function acceptExceptions(report, exceptions, { full }, consoleDir = CONSOLE_DIR) {
+  const undetected = mutants(report).filter(({ mutant }) => mutant.status in FINDING_STATUSES);
+  const keyOf = ({ file, mutant }) => mutantKey(file, mutant, report.files[file].source, consoleDir);
+  const { accepted, stale, miscounted } = applyExceptions(undetected, keyOf, exceptions, { full });
+  const dropped = new Set(accepted.map(({ mutant }) => mutant.mutant));
+  const files = Object.fromEntries(Object.entries(report.files).map(([file, data]) => [file, { ...data, mutants: data.mutants.filter((m) => !dropped.has(m)) }]));
+  return { report: { ...report, files }, accepted, stale, miscounted };
+}
+
 function shortReplacement(replacement) {
   const text = (replacement ?? '').replace(/\s+/g, ' ').trim();
   return text.length > REPLACEMENT_CHARS ? `${text.slice(0, REPLACEMENT_CHARS - 1)}…` : text;
@@ -116,6 +163,29 @@ export function mutationStats(report) {
   return { score: mutationScore(stats), ...stats };
 }
 
+export const EXCEPTIONS_FILE = path.join(CONSOLE_DIR, '..', CONSOLE_EXCEPTIONS);
+
+/**
+ * Writes the check's report files for Stryker's `fullReport`: restricted to `ranges` when `changed`,
+ * minus the mutants the exceptions file accepts (listed in `mutation-console-accepted.txt`). Returns the report text.
+ */
+export function writeMutationReport(fullReport, { changed, ranges }, { exceptionsFile = EXCEPTIONS_FILE, reportsDir = REPORTS_DIR } = {}) {
+  const strykerReport = changed ? withinRanges(fullReport, ranges) : fullReport;
+  const { report: scored, accepted, stale, miscounted } = acceptExceptions(strykerReport, loadExceptions(exceptionsFile), { full: !changed });
+  const stats = mutationStats(scored);
+  writeAccepted(path.join(reportsDir, CHECK), CHECK, accepted);
+  return writeReports(
+    CHECK,
+    {
+      title: TITLE,
+      findings: [...mutantFindings(scored), ...staleFindings(stale, CONSOLE_EXCEPTIONS), ...countFindings(miscounted, CONSOLE_EXCEPTIONS)],
+      detail: `(score ${stats.score}%, ${changed ? `${ranges.length} changed range(s)` : 'full run'})`,
+      extra: { ...stats, accepted: accepted.length },
+    },
+    reportsDir,
+  );
+}
+
 function changedSince(base) {
   if (!base) return new Map();
   return process.env.MUTATE_WORKTREE === '1' ? worktreeChanges(base, ['.'], CONSOLE_DIR) : changedLines(gitDiff(base, ['.'], CONSOLE_DIR));
@@ -138,14 +208,7 @@ function main() {
   runTool('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
   if (!fs.existsSync(STRYKER_REPORT)) throw new Error(`${STRYKER_REPORT} not found — Stryker wrote no JSON report.`);
   const fullReport = JSON.parse(fs.readFileSync(STRYKER_REPORT, 'utf8'));
-  const strykerReport = changed ? withinRanges(fullReport, ranges) : fullReport;
-  const stats = mutationStats(strykerReport);
-  const report = writeReports(CHECK, {
-    title: TITLE,
-    findings: mutantFindings(strykerReport),
-    detail: `(score ${stats.score}%, ${changed ? `${ranges.length} changed range(s)` : 'full run'})`,
-    extra: stats,
-  });
+  const report = writeMutationReport(fullReport, { changed, ranges });
   printReport(CHECK, report);
 }
 
