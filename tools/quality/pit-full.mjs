@@ -5,8 +5,8 @@
  * Usage (repository root, JAVA_HOME on a JDK 25):
  *   node tools/quality/pit-full.mjs shards                the shard names, as a JSON array
  *   node tools/quality/pit-full.mjs run <shard>           PIT on that shard → reports/quality/mutation-backend-shards/<shard>.xml
- *   node tools/quality/pit-full.mjs merge <dir> [shard…]  the mutation-backend report of every <shard>.xml in <dir>;
- *                                                         a full run only when every listed shard (default: all) is there
+ *   node tools/quality/pit-full.mjs merge <dir>           the mutation-backend report of every <shard>.xml in <dir>;
+ *                                                         a full run only when every shard of the checkout is there
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -68,12 +68,13 @@ export function runShard(shard) {
 
 /**
  * The mutation-backend report of every `<shard>.xml` in `dir`. A full run (stale exceptions judged)
- * only when every `expected` shard is there; else the summary names the missing ones as `partial`.
+ * only when every shard of the checkout (`shards()`) is there; else the summary names the missing
+ * ones as `partial`.
  */
-export function merge(dir, expected) {
+export function merge(dir) {
   const files = fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.xml')).map((e) => e.name).sort() : [];
   const present = new Set(files.map((name) => name.slice(0, -'.xml'.length)));
-  const missing = expected.filter((shard) => !present.has(shard));
+  const missing = shards().filter((shard) => !present.has(shard));
   const read = sourceReader();
   const all = files.flatMap((name) => readMutations(path.join(dir, name), read));
   const extra = missing.length > 0 ? { partial: missing.join(',') } : {};
@@ -83,8 +84,8 @@ export function merge(dir, expected) {
 export function main([command, ...args]) {
   if (command === 'shards' && args.length === 0) return `${JSON.stringify(shards())}\n`;
   if (command === 'run' && args.length === 1) return runShard(args[0]);
-  if (command === 'merge' && args.length >= 1) return merge(args[0], args.length > 1 ? args.slice(1) : shards());
-  throw new Error('usage: node tools/quality/pit-full.mjs shards | run <shard> | merge <dir> [shard…]');
+  if (command === 'merge' && args.length === 1) return merge(args[0]);
+  throw new Error('usage: node tools/quality/pit-full.mjs shards | run <shard> | merge <dir>');
 }
 
 runMain(import.meta, main);

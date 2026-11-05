@@ -114,7 +114,8 @@ jobs:
           path: reports/quality/mutation-backend-shards/${{ matrix.shard }}.xml
           retention-days: 7
 
-  # One report of every shard; partial (no stale exceptions judged) when a shard has no report.
+  # One report of every shard; partial (no stale exceptions judged) when a shard of the checkout has
+  # no report.
   backend-mutation-report:
     needs: [backend-mutation-shards, backend-mutation]
     if: always() && needs.backend-mutation-shards.result == 'success'
@@ -132,11 +133,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/shards
       - name: Merge the shards
-        env:
-          SHARDS: ${{ needs.backend-mutation-shards.outputs.shards }}
-        run: |
-          mapfile -t shards < <(jq -r '.[]' <<<"$SHARDS")
-          node tools/quality/pit-full.mjs merge "$RUNNER_TEMP/shards" "${shards[@]}"
+        run: node tools/quality/pit-full.mjs merge "$RUNNER_TEMP/shards"
       - name: Job summary
         if: always()
         run: node tools/quality/step-summary.mjs app/app/build/reports/pitest mutation-backend 'Backend mutation testing (PIT, all of :app)' >> "$GITHUB_STEP_SUMMARY"

@@ -423,7 +423,7 @@ app/gradlew -p app :app:queryPlanReport            # query plan of the SQL :app:
 app/gradlew -p app :architecture:test              # Konsist architecture rules, required (ADR-0082)
 app/gradlew -p app :architecture:architectureReportOnly  # pending (report-only) rules, none at present; never fails
 node tools/quality/pit-full.mjs run homer.app.infra  # PIT on one package (a shard of the weekly full run; `shards` lists them) → reports/quality/mutation-backend-shards/ (ADR-0082)
-node tools/quality/pit-full.mjs merge reports/quality/mutation-backend-shards homer.app.infra  # → mutation-backend report in app/app/build/reports/pitest/
+node tools/quality/pit-full.mjs merge reports/quality/mutation-backend-shards  # → mutation-backend report in app/app/build/reports/pitest/, `partial` unless every package's report is there
 MUTATE_BASE=origin/main node tools/quality/pit-changed.mjs  # PIT on the lines a change adds or modifies (check mutation-backend)
 ```
 

@@ -110,19 +110,20 @@ const SHARD_REPORTS = {
   'shards/homer.app.infra.xml': xml(mutation('homer.app.infra.PathSafety', 'PathSafety.kt', 3)),
   'tools/quality/mutation-exceptions/backend.json': JSON.stringify({ 'homer/app/Gone.kt#f#d#x': 'reason' }),
 };
+const LAST_SHARD = { 'shards/homer.app.infra.llm.xml': xml(mutation('homer.app.infra.llm.Price', 'Price.kt', 3, 'KILLED')) };
 const summary = (dir) => fs.readFileSync(path.join(dir, REPORT, 'mutation-backend-summary.txt'), 'utf8');
 
-test('merge reports the mutants of every shard and, with every shard there, judges stale exceptions', () => {
-  const { output } = inRepo({ ...SOURCES, ...SHARD_REPORTS }, (dir) => [main(['merge', 'shards', 'homer.app', 'homer.app.infra']), summary(dir)]);
+test('merge reports the mutants of every shard and, with every shard of the checkout there, judges stale exceptions', () => {
+  const { output } = inRepo({ ...SOURCES, ...SHARD_REPORTS, ...LAST_SHARD }, (dir) => [main(['merge', 'shards']), summary(dir)]);
   const [report, values] = output;
-  assert.match(report, /^Backend mutation testing \(score 33\.3%\): 3 finding\(s\)\n/);
+  assert.match(report, /^Backend mutation testing \(score 50\.0%\): 3 finding\(s\)\n/);
   assert.match(report, /homer\/app\/Application\.kt:3 {2}survived/);
   assert.match(report, /homer\/app\/infra\/PathSafety\.kt:3 {2}survived/);
   assert.match(report, /stale accepted exception: homer\/app\/Gone\.kt#f#d#x/);
   assert.doesNotMatch(values, /partial=/);
 });
 
-test('a merge missing a shard is partial: it names the missing shards and judges no stale exception', () => {
+test('a merge missing a shard of the checkout is partial: it names the missing shards and judges no stale exception', () => {
   const { output } = inRepo({ ...SOURCES, ...SHARD_REPORTS }, (dir) => [main(['merge', 'shards']), summary(dir)]);
   const [report, values] = output;
   assert.match(report, /: 2 finding\(s\)\n/);
@@ -130,10 +131,22 @@ test('a merge missing a shard is partial: it names the missing shards and judges
   assert.match(values, /\npartial=homer\.app\.infra\.llm\n$/);
 });
 
+test('a merge of a single shard\'s report is partial, not a full run that finds every other entry stale', () => {
+  const files = { ...SOURCES, 'shards/homer.app.infra.xml': SHARD_REPORTS['shards/homer.app.infra.xml'], 'tools/quality/mutation-exceptions/backend.json': SHARD_REPORTS['tools/quality/mutation-exceptions/backend.json'] };
+  const { output } = inRepo(files, (dir) => [main(['merge', 'shards']), summary(dir)]);
+  assert.match(output[0], /: 1 finding\(s\)\n/);
+  assert.doesNotMatch(output[0], /stale/);
+  assert.match(output[1], /\npartial=homer\.app,homer\.app\.infra\.llm\n$/);
+});
+
 test('a merge with no shard report at all is partial on every shard', () => {
-  const { output } = inRepo(SOURCES, (dir) => [main(['merge', 'missing', 'homer.app', 'homer.app.infra']), summary(dir)]);
+  const { output } = inRepo(SOURCES, (dir) => [main(['merge', 'missing']), summary(dir)]);
   assert.match(output[0], /\(no mutants\): 0 finding\(s\)/);
-  assert.match(output[1], /\npartial=homer\.app,homer\.app\.infra\n$/);
+  assert.match(output[1], /\npartial=homer\.app,homer\.app\.infra,homer\.app\.infra\.llm\n$/);
+});
+
+test('merge takes no shard list: the shards are those of the checkout', () => {
+  assert.throws(() => main(['merge', 'shards', 'homer.app.infra']), /usage: node tools\/quality\/pit-full\.mjs/);
 });
 
 test('an unknown command prints the usage', () => {
