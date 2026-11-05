@@ -5,7 +5,7 @@ import path from 'node:path';
 import { mock, test } from 'node:test';
 import fc from 'fast-check';
 import { withinChanged } from './pit-changed.mjs';
-import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
+import { decodeXml, isCompilerCallMutant, main, mutationKey, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
 
 const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
@@ -137,6 +137,21 @@ test('the exception key holds the line text, not its number, and is the same whe
   const [b] = withKeys(parsed(mutation('SURVIVED', { line: 4 })), lineOf('', '', '', 'if (x && y) {', ''));
   assert.equal(a.key, keyOfSource);
   assert.equal(b.key, keyOfSource);
+});
+
+test('the key survives lines inserted above the mutant and changes with the text of its own line', () => {
+  const line = fc.string().filter((text) => !text.includes('\n'));
+  const lines = fc.array(line, { maxLength: 5 });
+  fc.assert(
+    fc.property(lines, line, lines, lines, line, (above, text, below, inserted, other) => {
+      const source = (...rows) => (file) => (file === PIT ? `${rows.join('\n')}\n` : null);
+      const m = { path: PIT, line: above.length + 1, method: 'run', description: 'negated conditional' };
+      const key = mutationKey(m, source(...above, text, ...below));
+      assert.equal(mutationKey({ ...m, line: m.line + inserted.length }, source(...inserted, ...above, text, ...below)), key);
+      const collapsed = (t) => t.replace(/\s+/g, ' ').trim();
+      if (collapsed(other) !== collapsed(text)) assert.notEqual(mutationKey(m, source(...above, other, ...below)), key);
+    }),
+  );
 });
 
 test('a line past the end of the file, or an unreadable file, is keyed <inline>', () => {

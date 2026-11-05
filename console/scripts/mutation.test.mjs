@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { changedLines } from '../../tools/quality/git-diff.mjs';
@@ -139,6 +140,25 @@ describe('accepted exceptions', () => {
     expect(mutantKey('lib/a.ts', survivor(at(9, 1, 9, 2)), two)).toMatch(/#<unknown>$/);
   });
 
+  it('keeps the key when lines are inserted above the mutant, and changes it with the text of its own line', () => {
+    const line = fc.string().filter((text) => !text.includes('\n'));
+    const lines = fc.array(line, { maxLength: 5 });
+    const mutated = fc.tuple(line, fc.nat(), fc.nat()).map(([text, a, b]) => {
+      const [from, to] = [a % (text.length + 1), b % (text.length + 1)].sort((x, y) => x - y);
+      return { text, from: from + 1, to: to + 1 };
+    });
+    fc.assert(
+      fc.property(lines, mutated, lines, lines, line, (above, { text, from, to }, below, inserted, suffix) => {
+        const row = above.length + 1;
+        const source = (...rows) => `${rows.join('\n')}\n`;
+        const key = mutantKey('lib/a.ts', survivor(at(row, from, row, to)), source(...above, text, ...below));
+        const shifted = row + inserted.length;
+        expect(mutantKey('lib/a.ts', survivor(at(shifted, from, shifted, to)), source(...inserted, ...above, text, ...below))).toBe(key);
+        expect(mutantKey('lib/a.ts', survivor(at(row, from, row, to)), source(...above, `${text};${suffix}`, ...below))).not.toBe(key);
+      }),
+    );
+  });
+
   const full = () =>
     report({ 'lib/a.ts': { source, mutants: [mutant('Killed', 1), survivor(at(2, 5, 3, 4)), mutant('Survived', 3, 'StringLiteral', '""')] } });
 
@@ -161,5 +181,10 @@ describe('accepted exceptions', () => {
   it('reports a stale key in a full run only, and does not accept a killed mutant', () => {
     expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: true }).stale).toEqual(['lib/gone.ts#M#a→b']);
     expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: false }).stale).toEqual([]);
+    const killedKey = mutantKey('lib/a.ts', full().files['lib/a.ts'].mutants[0], source);
+    const killed = acceptExceptions(full(), { [killedKey]: 'r' }, { full: true });
+    expect(killed.accepted).toEqual([]);
+    expect(killed.stale).toEqual([killedKey]);
+    expect(mutationStats(killed.report)).toMatchObject({ killed: 1, survived: 2 });
   });
 });
