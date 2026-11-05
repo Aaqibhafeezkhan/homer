@@ -222,3 +222,13 @@ homer.app.*`), so code tested from another package is no longer reported as unco
 checks, coroutine result checks, index-overflow guards): outside the score, no finding. PIT's own
 `avoidCallsTo` was tried for this and dropped: it skips every line that calls a listed class, and
 Kotlin compiles `==` on objects to `Intrinsics.areEqual`, so it hid 37 mutants that tests do kill.
+
+*Amended (2026-11-04):* pull requests get the backend counterpart of the console's changed-lines
+run: check `mutation-backend` (`warn`, optional, job `homer-app-mutation`, `tools/quality/pit-changed.mjs`).
+PIT has no free filter by line, so it mutates each changed class whole, and only the mutants on
+changed lines count. The covering tests are chosen from every backend package, not the diff mode's
+related tests: a covering test that heuristic misses would turn a killed mutant into a false survivor.
+Only `:app` is mutated. The nightly scope stays a list in `app/app/build.gradle.kts`, which
+`tools/quality/pit.test.mjs` reads to check that each entry still names a source file; a manifest
+both Gradle and the test read was not worth a second file format for some 25 entries.
+Whether either backend run turns `required` is decided on their numbers.

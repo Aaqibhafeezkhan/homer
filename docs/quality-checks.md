@@ -49,7 +49,7 @@ required (ADR-0083), so the check is not listed until a rule enters it again.
 ```bash
 export JAVA_HOME=<path to a JDK 25>   # the backend checks run Gradle
 node tools/quality/changed.mjs                       # every required check the change touches
-node tools/quality/changed.mjs --only crap,detekt    # some checks; --only mutation-console runs Stryker
+node tools/quality/changed.mjs --only crap,detekt    # some checks; --only mutation-console / mutation-backend runs Stryker / PIT
 node tools/quality/changed.mjs --base <rev>          # another base than the merge base with origin/main
 ```
 
@@ -78,7 +78,8 @@ backend and console suites. It prints one table like the gate's, then each findi
   index. Those are marked `(outside the change)`.
 - **Not covered:** `app/buildSrc` is a build of its own (`app/gradlew -p app/buildSrc
   check`). The e2e and architecture modules' own code is not measured. Build-script-only
-  changes run no backend check. `mutation-console` runs only when `--only` names it.
+  changes run no backend check. `mutation-console` and `mutation-backend` run only when `--only`
+  names them.
 
 The diff mode is an approximation for the loop. The pull request's CI run still runs every
 check in full.
@@ -101,6 +102,7 @@ check in full.
 | `query-plans` | required | a full scan (`SCAN` without an index) of a table that grows with use (the list in SQLite rule 1, `app/CLAUDE.md`) in any SQL statement production code runs during `:app:test`. An unfiltered primary-key page (`ORDER BY id LIMIT n`) is no finding; a statement the planner cannot prepare is one, and an empty capture fails the report. A query no test runs is not checked | `QueryPlanCapture` (a test-only Exposed `GlobalStatementInterceptor`) records each statement and its source line; `QueryPlanReport` plans them with `EXPLAIN QUERY PLAN` on a freshly migrated schema without `sqlite_stat1` | `app/gradlew -p app :app:queryPlanReport`, then `node tools/quality/query-plans.mjs` |
 | `query-repeats` | required | a statement production code runs three or more times in one transaction during `:app:test`: a query or write per row in a loop (SQLite rule 2). A read is major, a write minor; a JDBC batch counts once. Deliberate repeats are listed with their reason in `tools/quality/query-repeats.mjs` | the same `QueryPlanCapture`, counting statements per transaction | `app/gradlew -p app :app:queryPlanReport`, then `node tools/quality/query-repeats.mjs` |
 | `mutation-console` | warn, optional (its job runs only on pull requests; a missing report does not fail the gate) | surviving mutants on the console lines a pull request changes, i.e. tests that run code without asserting it | Stryker (Vitest runner) | `cd console && MUTATE_BASE=origin/main npm run mutation:changed` |
+| `mutation-backend` | warn, optional (job `homer-app-mutation`, pull requests only) | surviving or uncovered mutants on the `:app` code lines a pull request changes (other modules are not mutated). PIT mutates each changed class whole and runs every `:app` test (package `homer.app.*`) that covers a mutant; mutants that only remove a call the Kotlin compiler adds are ignored. A change to comments only runs no PIT | PIT (`tools/quality/pit-changed.mjs`) | `MUTATE_BASE=origin/main node tools/quality/pit-changed.mjs` |
 
 Fixing a `crap` finding in the console: V8 counts JSX inside `cond && <X/>` as
 covered even when it never renders. After moving such a block into its own
@@ -167,4 +169,4 @@ The counts below are a snapshot, last refreshed when `detekt` became required (2
 | `crap.threshold` | 8 (the target), required | keep it: new and changed functions stay at CRAP ≤ 8 (in practice cc ≤ 7) |
 | `mutation-console` | per pull request | raise test strength; full runs need sharding before they can be scheduled |
 | detekt 2.0 stable | `detekt` runs on 2.0.0-alpha.6 | move to 2.0 stable once it ships |
-| Backend mutation testing | nightly pilot on validators, parsers and security helpers (864 mutants, score about 92%) | raise test strength on its survivors; decide on the numbers |
+| `mutation-backend` | per pull request; nightly pilot on validators, parsers and security helpers (864 mutants, score about 92%) | raise test strength on the nightly pilot's survivors; decide on the numbers whether a check turns required |

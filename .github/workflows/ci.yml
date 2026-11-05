@@ -177,6 +177,44 @@ jobs:
           path: reports.tgz
           retention-days: 7
 
+  # PIT on the backend lines a pull request changes (check `mutation-backend`, ADR-0082).
+  homer-app-mutation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # quality-gate waits for this job; the bound keeps one large PR from holding it for hours.
+    timeout-minutes: 20
+    # Report-only: a PIT failure warns, it does not block.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      # The checkout is the PR merge commit, so its first parent is the base it is measured against.
+      - run: |
+          MUTATE_BASE="$(git rev-parse HEAD^1)"
+          export MUTATE_BASE
+          node tools/quality/pit-changed.mjs
+      - name: Job summary
+        if: always()
+        run: node tools/quality/step-summary.mjs app/app/build/reports/pitest mutation-backend 'Backend mutation testing of the change (PIT)' >> "$GITHUB_STEP_SUMMARY"
+      - name: Pack reports
+        if: always()
+        run: tar -czf reports.tgz --ignore-failed-read app/app/build/reports/pitest/mutation-backend-* app/app/build/reports/pitest/gl-code-quality-mutation-backend.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reports-homer-app-mutation
+          path: reports.tgz
+          retention-days: 7
+
   homer-python-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -209,8 +247,8 @@ jobs:
   # Every quality report in one table (ADR-0082). A warn-mode check with findings
   # makes gate.mjs exit 3, which passes with a warning annotation; exit 1 fails.
   quality-gate:
-    needs: [homer-app-tests, homer-app-detekt, homer-console-tests, homer-console-mutation]
-    # homer-console-mutation is skipped outside pull requests; the gate still runs.
+    needs: [homer-app-tests, homer-app-detekt, homer-console-tests, homer-console-mutation, homer-app-mutation]
+    # The mutation jobs are skipped outside pull requests; the gate still runs.
     if: >-
       !cancelled()
       && needs.homer-app-tests.result == 'success'

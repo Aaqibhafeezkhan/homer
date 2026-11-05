@@ -423,6 +423,7 @@ app/gradlew -p app :app:queryPlanReport            # query plan of the SQL :app:
 app/gradlew -p app :architecture:test              # Konsist architecture rules, required (ADR-0082)
 app/gradlew -p app :architecture:architectureReportOnly  # pending (report-only) rules, none at present; never fails
 app/gradlew -p app :app:pitest                     # mutation-testing pilot → app/app/build/reports/pitest/ (ADR-0082)
+MUTATE_BASE=origin/main node tools/quality/pit-changed.mjs  # PIT on the lines a change adds or modifies (check mutation-backend)
 ```
 
 A Kotlin compiler warning fails the build (`allWarningsAsErrors` in the convention plugin, ADR-0082): opt in or

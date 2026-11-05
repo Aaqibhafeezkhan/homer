@@ -216,9 +216,10 @@ tasks.register<JavaExec>("queryPlanReport") {
     args(captured.get().asFile.absolutePath, report.get().asFile.absolutePath)
 }
 
-// Mutation-testing pilot (ADR-0082) on validators, parsers and security helpers; run nightly, not
-// part of `check`. PIT runs the tests covering each mutated line, chosen from every backend package
-// (`targetTests`), so code tested from another package is not reported uncovered.
+// Mutation testing (ADR-0082), not part of `check`: nightly on the validators, parsers and security
+// helpers below, per pull request on the changed classes. PIT runs the tests covering each mutated
+// line, chosen from every backend package (`targetTests`), so code tested from another package is
+// not reported uncovered.
 val nightlyMutationScope =
     setOf(
         "homer.app.config.*",
@@ -251,7 +252,9 @@ val nightlyMutationScope =
 pitest {
     pitestVersion = libs.versions.pitest
     junit5PluginVersion = libs.versions.pitestJunit5
-    targetClasses = nightlyMutationScope
+    // -PpitestTargetClasses=<glob>,… replaces the list: the pull-request job mutates only the
+    // classes it changes (tools/quality/pit-changed.mjs).
+    targetClasses = providers.gradleProperty("pitestTargetClasses").map { it.split(",").toSet() }.orElse(nightlyMutationScope)
     excludedClasses = setOf("*\$\$serializer")
     targetTests = setOf("homer.app.*")
     outputFormats = setOf("XML", "HTML")

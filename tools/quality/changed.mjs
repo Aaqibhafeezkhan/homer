@@ -12,8 +12,8 @@
  * project and report everything they find, since main has no findings: a change can make an export
  * unused or a query scan in a file it does not touch. Such findings are marked outside the change.
  * The `build` row also reports what fails CI outside the gate: compile errors, failed tests, ktlint,
- * ESLint errors and tsc errors (left out under --only). mutation-console (warn mode, minutes per run)
- * runs only when --only names it.
+ * ESLint errors and tsc errors (left out under --only). mutation-console and mutation-backend (warn
+ * mode, minutes per run) run only when --only names them.
  *
  * Exit codes as the gate's: 0 no findings; 3 findings only in warn-mode checks; 1 findings in a
  * required check, a failed build or test, or a tool error.
@@ -41,13 +41,15 @@ const TESTED_MODULES = new Set(['app', 'agentdebug', 'homer-runner']);
 const KOTLIN_FILE = /^app\/([\w-]+)\/src\/(main|test)\/kotlin\/(?:(.+)\/)?([^/]+)\.kt$/;
 // Kotlin sources only: a build-script change compiles nothing the diff mode measures (docs/quality-checks.md).
 const BACKEND = /^app\/(?!buildSrc\/).+\.kt$/;
+// PIT mutates :app only (pit-changed.mjs).
+const APP_MAIN = /^app\/app\/src\/main\/kotlin\/.+\.kt$/;
 const CONSOLE = /^console\/.+\.(?:[cm]?js|tsx?|json)$/;
 const DTO_SOURCES = /^(?:app\/app\/src\/main\/kotlin\/.+\.kt|console\/types\/homer\.ts)$/;
 const DTO_TEST = 'homer.app.models.DtoContractTest';
 const BACKEND_CHECKS = ['kotlin-warnings', 'architecture-backend', 'detekt', 'query-plans', 'query-repeats'];
 const CONSOLE_CHECKS = { 'eslint-warnings': 'quality:eslint', 'architecture-console': 'quality:architecture', 'unused-console': 'quality:unused', 'size-console': 'quality:size' };
 // Checks that judge only the changed lines; every other check reports all it finds.
-const LINE_SCOPED = new Set(['crap', 'diff-coverage', 'mutation-console']);
+const LINE_SCOPED = new Set(['crap', 'diff-coverage', 'mutation-console', 'mutation-backend']);
 
 export function parseArgs(argv) {
   const options = { base: undefined, only: undefined };
@@ -71,6 +73,7 @@ export function selectChecks(files, checks, only) {
     ...(backend || front ? ['crap', 'diff-coverage', 'duplication'] : []),
     ...(files.some((f) => DTO_SOURCES.test(f)) ? ['dto-contract'] : []),
     ...(front ? ['mutation-console'] : []),
+    ...(files.some((f) => APP_MAIN.test(f)) ? ['mutation-backend'] : []),
   ]);
   return new Set(
     checks
@@ -403,6 +406,15 @@ function consoleChecks(ctx) {
   }
 }
 
+/** PIT on the changed backend lines (pit-changed.mjs), in its own process: it runs Gradle itself. */
+function backendMutation({ root, base, report }) {
+  const log = path.join(OUT, 'pit-changed.log');
+  progress(`pit-changed.mjs (log: ${log})`);
+  const status = run(process.execPath, [path.join(import.meta.dirname, 'pit-changed.mjs')], { cwd: root, env: { MUTATE_BASE: base, MUTATE_WORKTREE: '1' }, log });
+  if (status !== 0) report('mutation-backend', [], `pit-changed.mjs failed; see ${log}`);
+  else report('mutation-backend', readCodeQuality(path.join(root, 'app', 'app', 'build', 'reports', 'pitest', 'gl-code-quality-mutation-backend.json')));
+}
+
 function dtoContract(ctx) {
   const { root, report } = ctx;
   const backendFile = path.join(root, 'app', 'app', 'build', 'reports', 'dto-contract', 'backend-dtos.json');
@@ -459,6 +471,7 @@ export function main(argv) {
   if (backendChecks || (coverage && files.some((f) => BACKEND.test(f)))) unmeasured = step(() => backend(ctx)) ?? [];
   if (files.some((f) => CONSOLE.test(f))) step(() => consoleChecks(ctx));
   if (selected.has('dto-contract')) step(() => dtoContract(ctx));
+  if (selected.has('mutation-backend')) step(() => backendMutation(ctx));
   if (selected.has('duplication')) {
     step(() => {
       duplication([path.join(OUT, 'duplication')]);
