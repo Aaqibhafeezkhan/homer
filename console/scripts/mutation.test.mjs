@@ -232,14 +232,25 @@ describe('accepted exceptions', () => {
     expect(writeMutationReport(full(), { changed: true, ranges: ['lib/a.ts:1-3'] }, { exceptionsFile, reportsDir: dir })).toContain('2 finding(s)');
     expect(fs.readFileSync(path.join(dir, 'mutation-console', 'mutation-console-accepted.txt'), 'utf8')).toBe('');
   });
-});
 
-describe('main', () => {
   it('fails on a malformed exceptions file before running Stryker', () => {
     const exceptionsFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-')), 'console.json');
     fs.writeFileSync(exceptionsFile, '{"lib/a.ts#M#a→b#x": ""}');
     const run = vi.fn();
     expect(() => main({ exceptionsFile, run })).toThrow(/non-empty reason: lib\/a\.ts#M#a→b#x/);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('runs Stryker over the console and reports it through the given exceptions file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
+    const exceptionsFile = path.join(dir, 'console.json');
+    fs.writeFileSync(exceptionsFile, JSON.stringify({ [KEY]: 'why' }));
+    const run = vi.fn(() => {
+      fs.mkdirSync(path.join(dir, 'mutation-console'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'mutation-console', 'mutation.json'), JSON.stringify(full()));
+    });
+    main({ exceptionsFile, run, reportsDir: dir });
+    expect(run).toHaveBeenCalledWith('stryker', ['run', '--ignoreStatic'], { capture: false });
+    expect(fs.readFileSync(path.join(dir, 'mutation-console', 'mutation-console-accepted.txt'), 'utf8')).toBe(`${KEY}  — why\n`);
   });
 });
