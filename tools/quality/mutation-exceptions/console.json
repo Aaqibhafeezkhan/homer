@@ -1,1 +1,12 @@
-{}
+{
+  "lib/api/client.ts#BlockStatement#{ return undefined; }→{}": "Equivalent: the empty catch block falls through to an implicit undefined, which is what the original returns.",
+  "lib/api/client.ts#ConditionalExpression#activeMode() === 'bearer'→true": "Equivalent: getAuthToken already returns null outside bearer mode, so the mode check in the condition is redundant.",
+  "lib/api/client.ts#ConditionalExpression#id !== undefined→true": "Equivalent: Number.isFinite(undefined) is false, so the undefined check is redundant.",
+  "lib/api/client.ts#ConditionalExpression#tags.length > 0→true": "Equivalent: iterating an empty tag list appends nothing, so the length check does not change the result.",
+  "lib/api/client.ts#ConditionalExpression#typeof window === 'undefined'→false": "Equivalent: getInstanceToken in lib/instances/store.ts repeats the same window guard, so without it a server-side call still returns null.",
+  "lib/api/client.ts#EqualityOperator#tags.length > 0→tags.length >= 0": "Equivalent: iterating an empty tag list appends nothing, so the length check does not change the result.",
+  "lib/api/client.ts#OptionalChaining#filters?.parentProcessId→filters.parentProcessId": "Equivalent: this line is reached only after isPositiveId proved filters is defined.",
+  "lib/api/client.ts#OptionalChaining#filters?.rootProcessId→filters.rootProcessId": "Equivalent: this line is reached only after isPositiveId proved filters is defined.",
+  "lib/api/client.ts#StringLiteral#''→\"Stryker was here!\"": "Unreachable: getProcesses always appends order, limit and offset, so the query string is never empty.",
+  "lib/api/client.ts#StringLiteral#'undefined'→\"\"": "Equivalent: getInstanceToken in lib/instances/store.ts repeats the same window guard, so without it a server-side call still returns null."
+}
