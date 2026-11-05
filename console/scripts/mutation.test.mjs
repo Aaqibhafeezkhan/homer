@@ -205,6 +205,26 @@ describe('accepted exceptions', () => {
     expect(fs.existsSync(EXCEPTIONS_FILE)).toBe(true);
   });
 
+  it('reports a stale and a miscounted exception as findings on the exceptions file in a full run only', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
+    const exceptionsFile = path.join(dir, 'console.json');
+    // A console key ends in `<inline>` only when its source line does, which is the one form a count is allowed on.
+    const inlineSource = 'a = 1; // <inline>\n';
+    const inlineMutant = survivor(at(1, 5, 1, 6), '2');
+    const inlineKey = mutantKey('lib/b.ts', inlineMutant, inlineSource);
+    expect(inlineKey.endsWith('<inline>')).toBe(true);
+    const run = () => report({ 'lib/b.ts': { source: inlineSource, mutants: [inlineMutant] } });
+    fs.writeFileSync(exceptionsFile, JSON.stringify({ 'lib/gone.ts#M#a→b#line': 'r', [inlineKey]: { reason: 'why', count: 2 } }));
+    const fullText = writeMutationReport(run(), { changed: false, ranges: [] }, { exceptionsFile, reportsDir: dir });
+    expect(fullText).toContain('2 finding(s)');
+    expect(fullText).toContain('tools/quality/mutation-exceptions/console.json:1  stale accepted exception: lib/gone.ts#M#a→b#line');
+    expect(fullText).toContain(`tools/quality/mutation-exceptions/console.json:1  accepted exception matched 1 mutants, expected 2: ${inlineKey}`);
+    const changedText = writeMutationReport(run(), { changed: true, ranges: ['lib/b.ts:1-1'] }, { exceptionsFile, reportsDir: dir });
+    expect(changedText).toContain('0 finding(s)');
+    expect(changedText).not.toContain('stale accepted exception');
+    expect(changedText).not.toContain('accepted exception matched');
+  });
+
   it('judges no stale exception in a changed-lines run', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutation-console-'));
     const exceptionsFile = path.join(dir, 'console.json');
