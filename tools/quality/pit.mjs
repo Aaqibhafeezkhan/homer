@@ -1,12 +1,11 @@
 /**
- * Backend mutation testing (PIT pilot, ADR-0082): turns PIT's `mutations.xml` into the shared
- * report files of check `mutation-backend`, one finding per survived or uncovered mutant.
+ * Backend mutation testing (check `mutation-backend`, ADR-0082): turns PIT's `mutations.xml` into the
+ * shared report files, one finding per survived or uncovered mutant. The report of both backend runs:
+ * a pull request's changed lines (tools/quality/pit-changed.mjs) and the weekly full run, sharded per
+ * package (tools/quality/pit-full.mjs).
  * Mutants that only remove a call the Kotlin compiler adds are ignored: outside the score, no finding.
  * Accepted exceptions (mutation-exceptions.mjs) leave the score and the findings, and are listed apart.
  * Usage (repository root): node tools/quality/pit.mjs [mutations.xml] [out dir]
- *
- * Not a quality-gate check yet: the weekly full run (tools/quality/pit-full.mjs) only shows the report
- * in its job summary (tools/quality/step-summary.mjs).
  */
 import fs from 'node:fs';
 import path from 'node:path';
