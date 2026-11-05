@@ -108,11 +108,18 @@ export function sourceReader(root = SOURCE_ROOT) {
     const file = regularFile(path.join(root, relative)) ?? (index ??= build()).get(relative);
     return file ? fs.readFileSync(file, 'utf8') : null;
   };
-  return (pit) => {
+  const reader = (pit) => {
     const relative = pit.startsWith(`${root}/`) ? pit.slice(root.length + 1) : pit;
     if (!cache.has(relative)) cache.set(relative, read(relative));
     return cache.get(relative);
   };
+  // The source's lines, split once per file: `mutationKey` asks for every mutant.
+  const lineCache = new Map();
+  reader.lines = (pit) => {
+    if (!lineCache.has(pit)) lineCache.set(pit, reader(pit)?.split('\n') ?? null);
+    return lineCache.get(pit);
+  };
+  return reader;
 }
 
 /**
@@ -122,7 +129,7 @@ export function sourceReader(root = SOURCE_ROOT) {
  * unreadable. No line number, so the key is the same when the mutant moves with its line.
  */
 export function mutationKey(m, read) {
-  const lines = read(m.path)?.split('\n');
+  const lines = read.lines ? read.lines(m.path) : read(m.path)?.split('\n');
   const text = lines && m.line <= lines.length - (lines.at(-1) === '' ? 1 : 0) ? oneLine(lines[m.line - 1]) : '<inline>';
   return `${m.path.startsWith(`${SOURCE_ROOT}/`) ? m.path.slice(SOURCE_ROOT.length + 1) : m.path}#${oneLine(m.method)}#${oneLine(m.description)}#${text}`;
 }
@@ -156,7 +163,8 @@ export function writeReport(outDir, title, all, { exceptions = {}, full = false,
   const mutations = all.filter((m) => !isCompilerCallMutant(m));
   const undetected = mutations.filter((m) => Object.hasOwn(FINDING_STATUSES, m.status));
   const { kept, accepted, stale, miscounted } = applyExceptions(undetected, (m) => m.key, exceptions, { full });
-  const scored = [...mutations.filter((m) => !undetected.includes(m)), ...kept];
+  const undetectedSet = new Set(undetected);
+  const scored = [...mutations.filter((m) => !undetectedSet.has(m)), ...kept];
   const stats = { ...pitStats(scored), ignored: all.length - mutations.length, accepted: accepted.length, ...extra };
   const score = stats.score === 'n/a' ? 'no mutants' : `score ${stats.score}%`;
   writeAccepted(outDir, CHECK, accepted);
