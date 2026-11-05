@@ -165,13 +165,16 @@ figure summing the currently filtered/paginated page — not every run
 matching the filter across other pages.
 
 The desktop columns are **Process ID**, **Agent Name**, **Commands**,
-**Status**, **Duration**, **Cost**, **Runner**, **Flow** (only in the roots
+**Status**, **Start time**, **Duration**, **Cost**, **Runner**, **Flow** (only in the roots
 view) and **Actions**. The **Commands** cell carries one square per command
 that executed — green for success, red for failure, a pulsing blue square for
 the one running now — six to a line, with any further squares wrapped onto the
 next line, so a run's progress reads at a glance without a second text line.
 Hovering a square names the command, its state and how long it took — the
 square of the command still running names no duration yet. The
+**Start time** column shows when the run began — its first status-history
+entry, the same instant the duration counts from — and a dash when the run has
+no usable history. The
 **Duration** column shows how long the run has been going: from its first
 status-history entry to the last one once it has ended, and to now while it
 still runs. Status is a single icon whose tooltip and accessible name give the

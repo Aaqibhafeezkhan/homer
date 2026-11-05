@@ -10,6 +10,7 @@
 
 ### Console
 
+- **Added: Start time column on the process list** — Each run shows when it started, before its duration.
 - **Changed: the process list's Commands column** — Each run shows its command squares only, six to a line, with the command and, once it has ended, its duration in each square's tooltip; the columns are reordered and the kill button is a red circle-with-cross icon.
 
 ## [1.39.0] - 2026-11-02

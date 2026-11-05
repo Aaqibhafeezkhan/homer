@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent } from '@testing-library/react';
 import { axe } from 'vitest-axe';
 import { ProcessTable } from './process-table';
+import { formatTimestamp } from '@/lib/utils/format';
 import type { ProcessInfo, ProcessExecution } from '@/types/homer';
 
 const useRouterMock = vi.hoisted(() => vi.fn(() => ({ push: vi.fn() })));
@@ -442,7 +443,8 @@ describe('ProcessTable', () => {
     it('shows a placeholder when history is empty', () => {
       render(<ProcessTable processes={[makeProcess({ history: [] })]} />);
 
-      expect(screen.getAllByText('—')).toHaveLength(2);
+      // Desktop Duration + desktop Start time + mobile Duration.
+      expect(screen.getAllByText('—')).toHaveLength(3);
     });
 
     it('shows a placeholder for a malformed history timestamp instead of crashing', () => {
@@ -455,7 +457,58 @@ describe('ProcessTable', () => {
 
       render(<ProcessTable processes={[process]} />);
 
-      expect(screen.getAllByText('—')).toHaveLength(2);
+      expect(screen.getAllByText('—')).toHaveLength(3);
+    });
+  });
+
+  describe('start time column', () => {
+    /** The desktop Start time cell of the first data row. */
+    function startTimeCell(): HTMLElement {
+      const index = screen
+        .getAllByRole('columnheader')
+        .findIndex((cell) => cell.textContent === 'Start time');
+      return within(screen.getAllByRole('row')[1]).getAllByRole('cell')[index];
+    }
+
+    it('shows the run start from its first history entry, before the Duration', () => {
+      const process = makeProcess({
+        history: [
+          { timestamp: 1_700_000_000, status: 'CREATED' },
+          { timestamp: 1_700_003_600, status: 'FINISHED' },
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      expect(startTimeCell()).toHaveTextContent(formatTimestamp(1_700_000_000));
+      // The mobile card keeps Duration only, so the start appears once.
+      expect(screen.getAllByText(formatTimestamp(1_700_000_000))).toHaveLength(1);
+      // The Duration cell still measures first entry to last, unchanged.
+      expect(screen.getAllByText('1h 0m 0s')).toHaveLength(2);
+    });
+
+    it('shows the placeholder, not NaN or a 1970 date, when history is empty', () => {
+      render(<ProcessTable processes={[makeProcess({ history: [] })]} />);
+
+      const cell = startTimeCell();
+      expect(cell).toHaveTextContent('—');
+      expect(cell).not.toHaveTextContent('NaN');
+      expect(cell).not.toHaveTextContent(/19(69|70)/);
+    });
+
+    it('shows the placeholder for a non-finite first timestamp without throwing', () => {
+      const process = makeProcess({
+        history: [
+          { timestamp: NaN, status: 'CREATED' },
+          { timestamp: 1_700_000_500, status: 'FINISHED' },
+        ],
+      });
+
+      render(<ProcessTable processes={[process]} />);
+
+      const cell = startTimeCell();
+      expect(cell).toHaveTextContent('—');
+      expect(cell).not.toHaveTextContent('NaN');
     });
   });
 
@@ -499,6 +552,7 @@ describe('ProcessTable', () => {
         'Agent Name',
         'Commands',
         'Status',
+        'Start time',
         'Duration',
         'Cost',
         'Runner',
@@ -517,6 +571,7 @@ describe('ProcessTable', () => {
         'Agent Name',
         'Commands',
         'Status',
+        'Start time',
         'Duration',
         'Cost',
         'Runner',
