@@ -192,6 +192,7 @@ function changedSince(base) {
 }
 
 function main() {
+  loadExceptions(EXCEPTIONS_FILE); // a bad entry fails before the Stryker run, not after it
   const changed = process.argv.includes('--changed');
   let ranges = [];
   if (changed) {
