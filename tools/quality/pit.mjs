@@ -5,8 +5,8 @@
  * Accepted exceptions (mutation-exceptions.mjs) leave the score and the findings, and are listed apart.
  * Usage (repository root): node tools/quality/pit.mjs [mutations.xml] [out dir]
  *
- * Not a quality-gate check yet: the nightly job only shows the report in its job summary
- * (tools/quality/step-summary.mjs).
+ * Not a quality-gate check yet: the weekly full run (tools/quality/pit-full.mjs) only shows the report
+ * in its job summary (tools/quality/step-summary.mjs).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -84,10 +84,12 @@ const regularFile = (file) => {
 /**
  * A reader of the backend sources by PIT path: the file at that path, else (a directory that does not
  * match the package) the source declaring that package under that file name. Regular files only,
- * never through a link; null for a source it cannot find.
+ * never through a link; null for a source it cannot find. Each path is read once: a full run keys
+ * thousands of mutants.
  */
 export function sourceReader(root = SOURCE_ROOT) {
   let index = null;
+  const cache = new Map();
   const build = () => {
     const found = new Map();
     const walk = (dir) => {
@@ -103,11 +105,14 @@ export function sourceReader(root = SOURCE_ROOT) {
     if (fs.existsSync(root)) walk(root);
     return found;
   };
+  const read = (relative) => {
+    const file = regularFile(path.join(root, relative)) ?? (index ??= build()).get(relative);
+    return file ? fs.readFileSync(file, 'utf8') : null;
+  };
   return (pit) => {
     const relative = pit.startsWith(`${root}/`) ? pit.slice(root.length + 1) : pit;
-    const direct = regularFile(path.join(root, relative));
-    const file = direct ?? (index ??= build()).get(relative);
-    return file ? fs.readFileSync(file, 'utf8') : null;
+    if (!cache.has(relative)) cache.set(relative, read(relative));
+    return cache.get(relative);
   };
 }
 
@@ -145,14 +150,15 @@ export function pitStats(mutations) {
 /**
  * Writes the check's report files for `all` mutants: compiler-call mutants left out, then the undetected
  * mutants `exceptions` accept (out of the score and the findings, listed in `<check>-accepted.txt`).
- * A `full` run also reports the exceptions that match no mutant; returns the report text.
+ * A `full` run also reports the exceptions that match no mutant; `extra` adds summary values. Returns
+ * the report text.
  */
-export function writeReport(outDir, title, all, { exceptions = {}, full = false } = {}) {
+export function writeReport(outDir, title, all, { exceptions = {}, full = false, extra = {} } = {}) {
   const mutations = all.filter((m) => !isCompilerCallMutant(m));
   const undetected = mutations.filter((m) => Object.hasOwn(FINDING_STATUSES, m.status));
   const { kept, accepted, stale } = applyExceptions(undetected, (m) => m.key, exceptions, { full });
   const scored = [...mutations.filter((m) => !undetected.includes(m)), ...kept];
-  const stats = { ...pitStats(scored), ignored: all.length - mutations.length, accepted: accepted.length };
+  const stats = { ...pitStats(scored), ignored: all.length - mutations.length, accepted: accepted.length, ...extra };
   const score = stats.score === 'n/a' ? 'no mutants' : `score ${stats.score}%`;
   writeAccepted(outDir, CHECK, accepted);
   return writeCheck(outDir, CHECK, `${title} (${score})`, [...pitFindings(kept), ...staleFindings(stale, BACKEND_EXCEPTIONS)], stats);

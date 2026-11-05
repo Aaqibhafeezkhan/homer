@@ -216,45 +216,16 @@ tasks.register<JavaExec>("queryPlanReport") {
     args(captured.get().asFile.absolutePath, report.get().asFile.absolutePath)
 }
 
-// Mutation testing (ADR-0082), not part of `check`: nightly on the validators, parsers and security
-// helpers below, per pull request on the changed classes. PIT runs the tests covering each mutated
-// line, chosen from every backend package (`targetTests`), so code tested from another package is
-// not reported uncovered.
-val nightlyMutationScope =
-    setOf(
-        "homer.app.config.*",
-        "homer.app.infra.AgentDefinitionValidator*",
-        "homer.app.infra.AgentInputChecks*",
-        "homer.app.infra.BoundedRegex*",
-        "homer.app.infra.CronSupport*",
-        "homer.app.infra.HmacVerifier*",
-        "homer.app.infra.InputSchemaValidator*",
-        "homer.app.infra.LlmOutputJson*",
-        "homer.app.infra.OutputLineFilter*",
-        "homer.app.infra.ParamValidator*",
-        "homer.app.infra.PathSafety*",
-        "homer.app.infra.PurgeSchedule*",
-        "homer.app.infra.RedosPatternDetector*",
-        "homer.app.infra.ReservedEnvNames*",
-        "homer.app.infra.ReservedHeaders*",
-        "homer.app.infra.ResultToEnvMapper*",
-        "homer.app.infra.SecretRedactor*",
-        "homer.app.infra.TokenComparison*",
-        "homer.app.infra.WhenEvaluator*",
-        "homer.app.models.PurgeAfterParser*",
-        "homer.app.models.RunnerTagValidation*",
-        "homer.app.models.AgentGroupValidation*",
-        "homer.app.executors.ArtifactNameResolver*",
-        "homer.app.runners.TarExtraction*",
-        "homer.app.auth.CsrfProtection*",
-    )
-
+// Mutation testing (ADR-0082), not part of `check`: weekly on all of :app, sharded per package
+// (tools/quality/pit-full.mjs), per pull request on the changed classes. PIT runs the tests covering
+// each mutated line, chosen from every backend package (`targetTests`), so code tested from another
+// package is not reported uncovered.
 pitest {
     pitestVersion = libs.versions.pitest
     junit5PluginVersion = libs.versions.pitestJunit5
-    // -PpitestTargetClasses=<glob>,… replaces the list: the pull-request job mutates only the
-    // classes it changes (tools/quality/pit-changed.mjs).
-    targetClasses = providers.gradleProperty("pitestTargetClasses").map { it.split(",").toSet() }.orElse(nightlyMutationScope)
+    // -PpitestTargetClasses=<glob>,… narrows the scope: a shard of the weekly run, or the classes a
+    // pull request changes (tools/quality/pit-changed.mjs).
+    targetClasses = providers.gradleProperty("pitestTargetClasses").map { it.split(",").toSet() }.orElse(setOf("homer.app.*"))
     excludedClasses = setOf("*\$\$serializer")
     targetTests = setOf("homer.app.*")
     outputFormats = setOf("XML", "HTML")

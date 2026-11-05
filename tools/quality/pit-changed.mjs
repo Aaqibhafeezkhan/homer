@@ -145,8 +145,8 @@ export function withinChanged(mutations, lines) {
   });
 }
 
-// A branch decides what a source path holds: read regular files only, never through a link.
-const readSource = (file) => {
+/** A branch decides what a source path holds: read regular files only, never through a link; null otherwise. */
+export const readSource = (file) => {
   const stat = fs.lstatSync(file, { throwIfNoEntry: false });
   return stat?.isFile() ? fs.readFileSync(file, 'utf8') : null;
 };

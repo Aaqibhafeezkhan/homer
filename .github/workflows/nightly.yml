@@ -1,15 +1,21 @@
-# Nightly, or by hand with workflow_dispatch: dependency-check and the backend mutation pilot. The
-# schedule skips them in a private copy of the repository, whose Actions minutes go to per-commit
-# CI. The full console mutation run is manual only: workflow_dispatch with full-console-mutation.
-# Each mutation job writes its score and undetected (survived or uncovered) mutants to the run's
-# job summary (tools/quality/step-summary.mjs).
+# Daily: dependency-check. Weekly (Sunday): the full mutation runs, every backend mutant sharded per
+# package, one job per package to stay under the 6-hour job limit (tools/quality/pit-full.mjs), and
+# every console mutant. By hand with workflow_dispatch: dependency-check, plus each full mutation
+# run whose input is set. The schedules skip everything in a private copy of the repository, whose
+# Actions minutes go to per-commit CI. Each mutation report writes its score and undetected (survived
+# or uncovered) mutants to the run's job summary (tools/quality/step-summary.mjs).
 name: Nightly
 
 on:
   schedule:
     - cron: '17 2 * * *'
+    - cron: '41 1 * * 0'
   workflow_dispatch:
     inputs:
+      full-backend-mutation:
+        description: Also run every backend mutant (hours of runner time)
+        type: boolean
+        default: false
       full-console-mutation:
         description: Also run every console mutant (hours of runner time)
         type: boolean
@@ -21,7 +27,7 @@ permissions:
 jobs:
   # Fails on a CVE at or above the configured CVSS threshold (app/app/build.gradle.kts).
   dependency-check:
-    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+    if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '17 2 * * *' && !github.event.repository.private)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -59,13 +65,36 @@ jobs:
             app/homer-runner/build/reports/dependency-check/dependency-check-report.html
           retention-days: 7
 
-  # PIT pilot on the backend validators, parsers and security helpers (ADR-0082): report-only, so a
-  # failure warns.
-  backend-mutation:
-    if: github.event_name == 'workflow_dispatch' || !github.event.repository.private
+  # The backend shards: one per package directory, the matrix of backend-mutation.
+  backend-mutation-shards:
+    if: >-
+      (github.event.schedule == '41 1 * * 0' && !github.event.repository.private)
+      || (github.event_name == 'workflow_dispatch' && inputs.full-backend-mutation)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
+    outputs:
+      shards: ${{ steps.shards.outputs.shards }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - id: shards
+        run: |
+          shards=$(node tools/quality/pit-full.mjs shards)
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+
+  # PIT on one package of :app (ADR-0082): report-only, so a failure warns, and a failed or timed-out
+  # shard leaves the merged report partial.
+  backend-mutation:
+    needs: backend-mutation-shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.backend-mutation-shards.outputs.shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -73,17 +102,44 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - run: cd app && ./gradlew :app:pitest
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: always()
         with:
           node-version: '24'
+      - env:
+          SHARD: ${{ matrix.shard }}
+        run: node tools/quality/pit-full.mjs run "$SHARD"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-mutation-${{ matrix.shard }}
+          path: reports/quality/mutation-backend-shards/${{ matrix.shard }}.xml
+          retention-days: 7
+
+  # One report of every shard; partial (no stale exceptions judged) when a shard has no report.
+  backend-mutation-report:
+    needs: [backend-mutation-shards, backend-mutation]
+    if: always() && needs.backend-mutation-shards.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: backend-mutation-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+      - name: Merge the shards
+        env:
+          SHARDS: ${{ needs.backend-mutation-shards.outputs.shards }}
+        run: |
+          mapfile -t shards < <(jq -r '.[]' <<<"$SHARDS")
+          node tools/quality/pit-full.mjs merge "$RUNNER_TEMP/shards" "${shards[@]}"
       - name: Job summary
         if: always()
-        run: |
-          dir=app/app/build/reports/pitest
-          if [ -f "$dir/mutations.xml" ]; then node tools/quality/pit.mjs "$dir/mutations.xml" "$dir"; fi
-          node tools/quality/step-summary.mjs "$dir" mutation-backend 'Backend mutation testing (PIT)' >> "$GITHUB_STEP_SUMMARY"
+        run: node tools/quality/step-summary.mjs app/app/build/reports/pitest mutation-backend 'Backend mutation testing (PIT, all of :app)' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -92,9 +148,11 @@ jobs:
           retention-days: 7
 
   # Every console mutant: ~7,500 of them, hours of runner time on a cold incremental cache, so
-  # manual only until it is sharded (ADR-0082).
+  # weekly (ADR-0082).
   console-mutation-full:
-    if: github.event_name == 'workflow_dispatch' && inputs.full-console-mutation
+    if: >-
+      (github.event.schedule == '41 1 * * 0' && !github.event.repository.private)
+      || (github.event_name == 'workflow_dispatch' && inputs.full-console-mutation)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     continue-on-error: true

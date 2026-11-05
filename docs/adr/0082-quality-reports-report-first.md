@@ -245,3 +245,13 @@ original text with its replacement), so an edit above a mutant does not invalida
 descriptions are generic, so the backend key includes the line's text: an entry covers only that exact
 line's mutants of that kind, and editing the line makes the entry stale, which forces a re-review. The exceptions live in one reviewed place for both
 languages instead of Stryker's in-code disable comments, which PIT has no counterpart for.
+
+*Amended (2026-11-05):* both full mutation runs are weekly (Nightly workflow, Sunday schedule, or
+by hand through its inputs), and the narrow nightly backend scope is dropped: PIT mutates every
+class of `:app`. A whole-backend run takes longer than GitHub's 6-hour job limit, so it is sharded
+per package (`tools/quality/pit-full.mjs`): one job per directory that holds Kotlin sources, each
+writing its PIT XML, and one job merging them into the single `mutation-backend` report. A shard
+that fails or times out leaves the report `partial`, which names the missing shards and judges no
+stale exception. A shard that outgrows the limit on its own is split further or, failing that, run
+on homer-factory instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
+checking its entries are gone with it.

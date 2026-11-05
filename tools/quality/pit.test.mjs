@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import fc from 'fast-check';
 import { withinChanged } from './pit-changed.mjs';
 import { decodeXml, isCompilerCallMutant, main, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
@@ -117,23 +117,6 @@ test('only a removed call into the Kotlin runtime is ever a compiler-call mutant
   fc.assert(fc.property(fc.string(), (description) => !isCompilerCallMutant({ description }) || description.startsWith('removed call to kotlin/')));
 });
 
-test('every class pattern of the PIT scope names a backend source file', () => {
-  const root = path.join(import.meta.dirname, '..', '..');
-  const build = fs.readFileSync(path.join(root, 'app/app/build.gradle.kts'), 'utf8');
-  const scope = /val nightlyMutationScope =\s*setOf\(([\s\S]*?)\n\s*\)/.exec(build)?.[1];
-  assert.ok(scope, 'no nightlyMutationScope in app/app/build.gradle.kts');
-  const entries = [...scope.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(entries.length > 0, 'nightlyMutationScope is empty');
-  // Only a package (`a.b.*`) or a class prefix (`a.b.C*`) can be checked against the sources.
-  assert.deepEqual(entries.filter((e) => !/^homer\.app\.(?:[a-z]\w*\.)*(?:[A-Z]\w*)?\*$/.test(e)), []);
-  const patterns = entries.map((e) => e.slice(0, -1));
-  const stale = patterns.filter((p) => {
-    const at = path.join(root, 'app/app/src/main/kotlin', ...p.replace(/\.$/, '').split('.'));
-    return p.endsWith('.') ? !fs.existsSync(at) : !fs.existsSync(`${at}.kt`);
-  });
-  assert.deepEqual(stale, []);
-});
-
 test('main writes the mutation-backend report files and fails on a missing report', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-'));
   const xml = path.join(dir, 'mutations.xml');
@@ -191,4 +174,26 @@ test('a stale exception is a finding in a full run only', () => {
   const exceptions = { 'gone.kt#m#d': 'reason' };
   assert.match(writeReport(dir, 'T', all, { exceptions, full: true }), /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}stale accepted exception: gone\.kt#m#d/);
   assert.match(writeReport(dir, 'T', all, { exceptions, full: false }), /0 finding\(s\)/);
+});
+
+test('the source reader reads a file once, however many mutants it keys', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-cache-'));
+  fs.mkdirSync(path.join(root, 'homer/app/config'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'homer/app/config/A.kt'), 'package homer.app.config\n\nif (x) {\n');
+  const inRoot = sourceReader(root);
+  const read = (pit) => inRoot(pit.replace('app/app/src/main/kotlin', root));
+  const readFileSync = mock.method(fs, 'readFileSync');
+  try {
+    const keyed = withKeys(parsed(...Array.from({ length: 50 }, () => mutation('SURVIVED', { line: 3 }))), read);
+    assert.ok(keyed.every((m) => m.key.endsWith('#if (x) {')));
+    assert.equal(readFileSync.mock.calls.filter(({ arguments: [file] }) => String(file).endsWith('A.kt')).length, 1);
+  } finally {
+    readFileSync.mock.restore();
+  }
+});
+
+test('extra summary values follow the counts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-extra-'));
+  writeReport(dir, 'T', withKeys(parsed(mutation('KILLED')), lineOf('a')), { extra: { partial: 'homer.app.x' } });
+  assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /accepted=0\npartial=homer\.app\.x\n$/);
 });
