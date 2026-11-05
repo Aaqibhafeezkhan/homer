@@ -161,7 +161,7 @@ when you fix it.
 
 #### Process List Display
 - [ ] Verify table shows all processes
-- [ ] Verify columns: Process ID, Agent Name, Commands, Status, Duration, Cost, Runner, Actions (plus Flow in the Root runs view)
+- [ ] Verify columns: Process ID, Agent Name, Commands, Status, Start time, Duration, Cost, Runner, Actions (plus Flow in the Root runs view)
 - [ ] Verify process IDs are displayed correctly
 - [ ] Verify agent names are shown
 - [ ] Verify status icons have correct colors:
