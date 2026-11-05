@@ -8,6 +8,7 @@ import io.kotest.property.arbitrary.pattern
 import io.kotest.property.checkAll
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import kotlin.test.assertContains
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -114,4 +115,163 @@ class RedosPatternDetectorTest {
                 assertNotNull(RedosPatternDetector.vulnerabilityReason(pattern), "expected $pattern to be flagged")
             }
         }
+
+    private fun reason(pattern: String): String? = RedosPatternDetector.vulnerabilityReason(pattern)
+
+    @Test
+    fun `the reason names the nested quantifier or the overlapping branches and the pattern`() {
+        val nested = assertNotNull(reason("(a+)+"))
+        assertContains(nested, "nested unbounded quantifier")
+        assertContains(nested, "\"(a+)+\"")
+        val overlap = assertNotNull(reason("(a|ab)*"))
+        assertContains(overlap, "overlapping branches (\"a\" | \"ab\")")
+        assertContains(overlap, "\"(a|ab)*\"")
+        assertContains(assertNotNull(reason("(a|)+")), "(\"a\" | \"\")")
+        assertContains(assertNotNull(reason("(|a)+")), "(\"\" | \"a\")")
+    }
+
+    @Test
+    fun `an unbounded body carried up through a plain group is flagged when the outer group is quantified`() {
+        listOf("((a+))+", "(((a+)))*", "((a*))+", "(?:(?:a+))+", "(x(a+)y)+").forEach {
+            assertContains(assertNotNull(reason(it)), "nested unbounded quantifier", message = it)
+        }
+        assertNull(reason("((a+))"))
+        assertNull(reason("((a+))?"))
+        assertNull(reason("((a+))x"))
+    }
+
+    @Test
+    fun `an unquantified group is safe even at the very end of the pattern`() {
+        listOf("(a+)", "(a|ab)", "x(a+)", "((a+))", "(a|)", "(a+)?", "(a|ab)?").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `an unmatched closing parenthesis is ignored`() {
+        listOf("a)", ")", "a)+", "))+", "a+)+").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+        assertContains(assertNotNull(reason("a)(b+)+")), "nested unbounded quantifier")
+    }
+
+    @Test
+    fun `an escaped metacharacter is a literal and never opens a group or a quantifier`() {
+        listOf("\\(a+\\)+", "\\(a|ab\\)*", "(\\)+)", "(a\\*)+", "(a\\+)+", "(\\|a|\\|b)*", "a\\\\(b)+").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+        assertNotNull(reason("(a\\\\+)+")) // an escaped backslash leaves the '+' live
+    }
+
+    @Test
+    fun `a character class hides its metacharacters from the scan`() {
+        listOf(
+            "([*])+",
+            "([+])+",
+            "([a*b])+",
+            "([)])+",
+            "([(])+",
+            "([|a])+",
+            "([a|ab])+",
+            "([^*])+",
+            "([^)])+",
+        ).forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `a character class ends at its closing bracket so what follows is still scanned`() {
+        listOf("[a](c+)+", "[ab](c+)+", "[^a](c+)+", "[a](x|xy)*", "[*](c+)+", "[+](c+)+").forEach {
+            assertNotNull(reason(it), "expected $it to be flagged")
+        }
+    }
+
+    @Test
+    fun `a leading closing bracket is a literal class member`() {
+        listOf("([]*])+", "([^]*])+", "([]a*])+", "([^]a*])+", "([]])+").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+        listOf("[]](c+)+", "[^]](c+)+", "[]a](c+)+", "[^]a](c+)+").forEach {
+            assertNotNull(reason(it), "expected $it to be flagged")
+        }
+    }
+
+    @Test
+    fun `an escaped character inside a class never closes it`() {
+        listOf("([\\]*])+", "([a\\-z]+)", "([\\]a]+)", "([a\\-z*])+", "([\\\\*])+", "([\\[*])+").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+        assertNotNull(reason("([\\]a]+)+"))
+        assertNotNull(reason("[a\\-z](c+)+"))
+        assertNotNull(reason("[\\]](c+)+"))
+        assertNotNull(reason("[\\\\](c+)+")) // an escaped backslash does not escape the closing bracket
+    }
+
+    @Test
+    fun `an unterminated character class swallows the rest of the pattern`() {
+        listOf("[(a+)+", "[a(a+)+", "[^(a+)+", "[]", "[", "[\\").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `an interval after a group is unbounded only when it has no upper limit`() {
+        listOf("(a+){2,}", "(a+){0,}", "(a+){10,}", "(a|ab){1,}").forEach {
+            assertNotNull(reason(it), "expected $it to be flagged")
+        }
+        listOf("(a+){2}", "(a+){2,5}", "(a+){0,1}", "(a|ab){3}", "(a|ab){1,3}", "(a+){x}", "(a+){,5}", "(a+){2,x}", "(a+){2,5").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `an unbounded interval inside a group counts as an unbounded body`() {
+        listOf("(a{2,})+", "(a{0,})*", "(?:a{1,})+").forEach {
+            assertNotNull(reason(it), "expected $it to be flagged")
+        }
+        listOf("(a{2})+", "(a{2,5})+", "(a{,5})+", "(a{2,5)+", "(a{x})+").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `an interval is skipped whole so its digits are never read as pattern text`() {
+        // "{2,5}" must be one token: the alternation branches stay "ab" and "cd".
+        assertNull(reason("(ab{2,5}|cd)+"))
+        assertNull(reason("(a{12}|b{3,45})+"))
+        assertNotNull(reason("(a{2,5}|a{2,5}b)+"))
+    }
+
+    @Test
+    fun `alternation branches overlap when one is a prefix of the other in either order and not otherwise`() {
+        listOf("(ab|a)*", "(a|ab)*", "(a|b|ab)*", "(b|a|ab)*", "(x|y|)*", "(|x|y)*", "(a|b|a)*").forEach {
+            assertNotNull(reason(it), "expected $it to be flagged")
+        }
+        listOf("(a|b)*", "(ab|ba)*", "(abc|abd)*", "(a|b|c)+", "(xa|ya|za)*", "(a|b|c|d)*").forEach {
+            assertNull(reason(it), "expected $it to pass")
+        }
+    }
+
+    @Test
+    fun `the overlap reason reports the first overlapping pair of three branches`() {
+        assertContains(assertNotNull(reason("(a|b|ab)*")), "(\"a\" | \"ab\")")
+        assertContains(assertNotNull(reason("(ab|b|a)*")), "(\"ab\" | \"a\")")
+    }
+
+    @Test
+    fun `an alternation is analysed per group so a sibling group's branches do not mix`() {
+        assertNull(reason("(a|b)(ab|c)*"))
+        assertNull(reason("(a)(ab)*"))
+        assertNotNull(reason("(a)(a|ab)*"))
+    }
+
+    @Test
+    fun `an unterminated or unknown group prefix still yields a body that is scanned`() {
+        assertNotNull(reason("(?<n>a+)+"))
+        assertNotNull(reason("(?'n'a+)+"))
+        assertNull(reason("(?<n"))
+        assertNull(reason("(?'n"))
+        assertNull(reason("(?<>a)+"))
+    }
 }
