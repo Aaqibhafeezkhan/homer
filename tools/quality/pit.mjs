@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { mutationScore, runMain, writeCheck } from './lib.mjs';
-import { BACKEND_EXCEPTIONS, applyExceptions, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
+import { BACKEND_EXCEPTIONS, applyExceptions, countFindings, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 export const CHECK = 'mutation-backend';
 export const REPORT_DIR = 'app/app/build/reports/pitest';
@@ -150,18 +150,18 @@ export function pitStats(mutations) {
 /**
  * Writes the check's report files for `all` mutants: compiler-call mutants left out, then the undetected
  * mutants `exceptions` accept (out of the score and the findings, listed in `<check>-accepted.txt`).
- * A `full` run also reports the exceptions that match no mutant; `extra` adds summary values. Returns
- * the report text.
+ * A `full` run also reports the exceptions that match no mutant, and those whose `count` differs from
+ * the mutants they match; `extra` adds summary values. Returns the report text.
  */
 export function writeReport(outDir, title, all, { exceptions = {}, full = false, extra = {} } = {}) {
   const mutations = all.filter((m) => !isCompilerCallMutant(m));
   const undetected = mutations.filter((m) => Object.hasOwn(FINDING_STATUSES, m.status));
-  const { kept, accepted, stale } = applyExceptions(undetected, (m) => m.key, exceptions, { full });
+  const { kept, accepted, stale, miscounted } = applyExceptions(undetected, (m) => m.key, exceptions, { full });
   const scored = [...mutations.filter((m) => !undetected.includes(m)), ...kept];
   const stats = { ...pitStats(scored), ignored: all.length - mutations.length, accepted: accepted.length, ...extra };
   const score = stats.score === 'n/a' ? 'no mutants' : `score ${stats.score}%`;
   writeAccepted(outDir, CHECK, accepted);
-  return writeCheck(outDir, CHECK, `${title} (${score})`, [...pitFindings(kept), ...staleFindings(stale, BACKEND_EXCEPTIONS)], stats);
+  return writeCheck(outDir, CHECK, `${title} (${score})`, [...pitFindings(kept), ...staleFindings(stale, BACKEND_EXCEPTIONS), ...countFindings(miscounted, BACKEND_EXCEPTIONS)], stats);
 }
 
 /** The `<mutation>` elements of PIT's XML report `xmlFile`, with their exception keys. */

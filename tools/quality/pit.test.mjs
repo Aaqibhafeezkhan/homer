@@ -176,6 +176,20 @@ test('a stale exception is a finding in a full run only', () => {
   assert.match(writeReport(dir, 'T', all, { exceptions, full: false }), /0 finding\(s\)/);
 });
 
+test('an <inline> exception matching another number of mutants than its count is a finding in a full run only', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-inline-'));
+  const all = withKeys(parsed(mutation('SURVIVED', { line: 9 }), mutation('SURVIVED', { line: 9 }), mutation('KILLED')), lineOf('a'));
+  const key = 'homer/app/config/A.kt#run#negated conditional#<inline>';
+  const summary = () => fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8');
+  assert.match(writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 2 } }, full: true }), /\(score 100\.0%\): 0 finding\(s\)/);
+  assert.match(summary(), /accepted=2\n/);
+  const miscounted = writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 1 } }, full: true });
+  assert.match(miscounted, /\(score 100\.0%\): 1 finding\(s\)\n/);
+  assert.match(miscounted, /tools\/quality\/mutation-exceptions\/backend\.json:1 {2}accepted exception matched 2 mutants, expected 1: homer\/app\/config\/A\.kt#run#negated conditional#<inline>/);
+  assert.match(summary(), /accepted=2\n/);
+  assert.match(writeReport(dir, 'T', all, { exceptions: { [key]: { reason: 'why', count: 1 } }, full: false }), /0 finding\(s\)/);
+});
+
 test('the source reader reads a file once, however many mutants it keys', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-cache-'));
   fs.mkdirSync(path.join(root, 'homer/app/config'), { recursive: true });

@@ -150,6 +150,14 @@ describe('accepted exceptions', () => {
     expect(mutantFindings(scored)).toHaveLength(1);
   });
 
+  it('reports an entry with a count that matches another number of mutants in a full run only, still accepting them', () => {
+    const exceptions = { [KEY]: { reason: 'why', count: 2 } };
+    const fullRun = acceptExceptions(full(), exceptions, { full: true });
+    expect(fullRun.miscounted).toEqual([{ key: KEY, matched: 1, expected: 2 }]);
+    expect(fullRun.accepted.map((a) => a.reason)).toEqual(['why']);
+    expect(acceptExceptions(full(), exceptions, { full: false }).miscounted).toEqual([]);
+  });
+
   it('reports a stale key in a full run only, and does not accept a killed mutant', () => {
     expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: true }).stale).toEqual(['lib/gone.ts#M#a→b']);
     expect(acceptExceptions(full(), { 'lib/gone.ts#M#a→b': 'r' }, { full: false }).stale).toEqual([]);

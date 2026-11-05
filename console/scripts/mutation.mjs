@@ -19,7 +19,7 @@ import { pathToFileURL } from 'node:url';
 
 import { changedLines, gitDiff, worktreeChanges } from '../../tools/quality/git-diff.mjs';
 import { mutationScore } from '../../tools/quality/lib.mjs';
-import { CONSOLE_EXCEPTIONS, applyExceptions, loadExceptions, staleFindings, writeAccepted } from '../../tools/quality/mutation-exceptions.mjs';
+import { CONSOLE_EXCEPTIONS, applyExceptions, countFindings, loadExceptions, staleFindings, writeAccepted } from '../../tools/quality/mutation-exceptions.mjs';
 import { isScoredPath } from './crap.mjs';
 import { CONSOLE_DIR, REPORTS_DIR, printReport, repoPath, runTool, writeReports } from './quality-report.mjs';
 
@@ -109,15 +109,16 @@ export function mutantKey(file, mutant, source, consoleDir = CONSOLE_DIR) {
 
 /**
  * Applies the exceptions to the undetected (survived or uncovered) mutants of `report`: returns the
- * report without the accepted ones, them as `accepted`, and the stale keys (only for a `full` run).
+ * report without the accepted ones, them as `accepted`, and (only for a `full` run) the stale keys and
+ * the miscounted entries (`applyExceptions`).
  */
 export function acceptExceptions(report, exceptions, { full }, consoleDir = CONSOLE_DIR) {
   const undetected = mutants(report).filter(({ mutant }) => mutant.status in FINDING_STATUSES);
   const keyOf = ({ file, mutant }) => mutantKey(file, mutant, report.files[file].source, consoleDir);
-  const { accepted, stale } = applyExceptions(undetected, keyOf, exceptions, { full });
+  const { accepted, stale, miscounted } = applyExceptions(undetected, keyOf, exceptions, { full });
   const dropped = new Set(accepted.map(({ mutant }) => mutant.mutant));
   const files = Object.fromEntries(Object.entries(report.files).map(([file, data]) => [file, { ...data, mutants: data.mutants.filter((m) => !dropped.has(m)) }]));
-  return { report: { ...report, files }, accepted, stale };
+  return { report: { ...report, files }, accepted, stale, miscounted };
 }
 
 function shortReplacement(replacement) {
@@ -179,12 +180,12 @@ function main() {
   const fullReport = JSON.parse(fs.readFileSync(STRYKER_REPORT, 'utf8'));
   const strykerReport = changed ? withinRanges(fullReport, ranges) : fullReport;
   const exceptions = loadExceptions(path.join(CONSOLE_DIR, '..', CONSOLE_EXCEPTIONS));
-  const { report: scored, accepted, stale } = acceptExceptions(strykerReport, exceptions, { full: !changed });
+  const { report: scored, accepted, stale, miscounted } = acceptExceptions(strykerReport, exceptions, { full: !changed });
   const stats = mutationStats(scored);
   writeAccepted(path.join(REPORTS_DIR, CHECK), CHECK, accepted);
   const report = writeReports(CHECK, {
     title: TITLE,
-    findings: [...mutantFindings(scored), ...staleFindings(stale, CONSOLE_EXCEPTIONS)],
+    findings: [...mutantFindings(scored), ...staleFindings(stale, CONSOLE_EXCEPTIONS), ...countFindings(miscounted, CONSOLE_EXCEPTIONS)],
     detail: `(score ${stats.score}%, ${changed ? `${ranges.length} changed range(s)` : 'full run'})`,
     extra: { ...stats, accepted: accepted.length },
   });
