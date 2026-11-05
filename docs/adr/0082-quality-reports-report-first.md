@@ -246,7 +246,7 @@ a mutant does not invalidate its entry. Both keys include the line's text, since
 description nor Stryker's original text and replacement tells two mutants of a method apart: an entry
 covers only that exact line's mutants of that kind, and editing the line makes the entry stale, which
 forces a re-review. An `<inline>` key has no line to tell them apart: it matches every mutant of its
-description that the Kotlin compiler inlined into the method, so its entry is
+description that the Kotlin compiler inlined into the method (or whose source is unreadable), so its entry is
 `{ "reason": "…", "count": N }`, and a full run reports an entry matching any other number of mutants
 as a finding (still accepting them, so the score stays stable); a new inlined survivor there is never
 accepted silently. The exceptions live in one reviewed place for both languages instead of Stryker's
