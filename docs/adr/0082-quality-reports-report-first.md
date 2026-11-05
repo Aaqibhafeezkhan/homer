@@ -240,7 +240,7 @@ reason in `<check>-accepted.txt`. This is not a baseline: there is no list of kn
 unaccepted survivor stays visible, and an entry matching no mutant is a finding of its own in a full
 run (a pull request's changed-lines run never judges that); an entry is stale when it matches no
 survived or uncovered mutant. Keys carry no line number (backend: source path, mutated method,
-description and the mutant's line text, `<inline>` when the line is past the file's end; console:
+description and the mutant's line text, `<inline>` when the line is past the file's end or the source is unreadable; console:
 file, mutator, the original text with its replacement and the mutated line's text), so an edit above
 a mutant does not invalidate its entry. Both keys include the line's text, since neither PIT's
 description nor Stryker's original text and replacement tells two mutants of a method apart: an entry
