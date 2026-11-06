@@ -4,7 +4,9 @@
  * the mutants on those lines, as the console's `mutation:changed` does. The change is
  * `MUTATE_BASE..HEAD`, or with `MUTATE_WORKTREE=1` the working tree's (the diff mode,
  * tools/quality/changed.mjs). Only `:app` is mutated; no changed code line there: a skipped report,
- * no Gradle run.
+ * no Gradle run. The PIT run has a time budget, `MUTATE_BUDGET_SEC` (default 14 minutes, inside the
+ * CI job's 20): a run over it is stopped and reported skipped, and the weekly full run covers those
+ * classes, instead of the job being cancelled with no report.
  * Usage (repository root, JAVA_HOME on a JDK 25): MUTATE_BASE=<rev> node tools/quality/pit-changed.mjs
  */
 import { spawnSync } from 'node:child_process';
@@ -20,6 +22,17 @@ export { pitPath };
 
 const TITLE = 'Backend mutation testing of the change';
 const SOURCE = new RegExp(`^${SOURCE_ROOT}/.+\\.kt$`);
+export const DEFAULT_BUDGET_SEC = 14 * 60;
+
+/** The PIT run's budget in seconds: `MUTATE_BUDGET_SEC`, a positive whole number, else the default. */
+export function budgetSeconds(value) {
+  if (value === undefined || value === '') return DEFAULT_BUDGET_SEC;
+  if (!/^[1-9]\d{0,5}$/.test(value)) throw new Error(`MUTATE_BUDGET_SEC must be a positive whole number of seconds, not '${value}'`);
+  return Number(value);
+}
+
+/** A budget as the skip reason names it: whole minutes when it is one, else seconds. */
+export const budgetText = (seconds) => (seconds % 60 === 0 ? `${seconds / 60}-minute` : `${seconds}-second`);
 
 /**
  * PIT target-class globs for a Kotlin source: its file class (`<File>Kt`, top-level functions) and
@@ -155,17 +168,27 @@ function changedSince(base) {
   return process.env.MUTATE_WORKTREE === '1' ? worktreeChanges(base, [SOURCE_ROOT]) : changedLines(gitDiff(base, [SOURCE_ROOT]));
 }
 
+const skip = (reason) => writeCheck(REPORT_DIR, CHECK, `${TITLE} (skipped: ${reason})`, [], { skipped: reason });
+
 export function main() {
   const exceptions = loadExceptions(BACKEND_EXCEPTIONS); // a bad entry fails before the PIT run, not after it
+  const budget = budgetSeconds(process.env.MUTATE_BUDGET_SEC);
   const base = process.env.MUTATE_BASE;
   const { globs, lines } = changedSources(base ? changedSince(base) : new Map(), readSource);
-  if (globs.length === 0) {
-    const reason = base ? 'no changed :app code lines' : 'no MUTATE_BASE';
-    return writeCheck(REPORT_DIR, CHECK, `${TITLE} (skipped: ${reason})`, [], { skipped: reason });
-  }
+  if (globs.length === 0) return skip(base ? 'no changed :app code lines' : 'no MUTATE_BASE');
   const xml = path.join(REPORT_DIR, 'mutations.xml');
   fs.rmSync(xml, { force: true });
-  const gradle = spawnSync(path.join('app', 'gradlew'), ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], { stdio: 'inherit' });
+  const gradlew = path.join('app', 'gradlew');
+  const gradle = spawnSync(gradlew, ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], {
+    stdio: 'inherit',
+    timeout: budget * 1000,
+  });
+  if (gradle.error?.code === 'ETIMEDOUT') {
+    // The timeout ends only the client: the daemon would go on running PIT and its minions.
+    spawnSync(gradlew, ['-p', 'app', '--stop'], { stdio: 'inherit', timeout: 60_000 });
+    console.error(`:app:pitest ran over its ${budget} s budget (MUTATE_BUDGET_SEC); the weekly full run covers these classes`);
+    return skip(`over the ${budgetText(budget)} budget`);
+  }
   if (gradle.status !== 0) throw new Error(`:app:pitest exited ${gradle.status ?? gradle.error?.message}`);
   return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines), { exceptions, full: false });
 }

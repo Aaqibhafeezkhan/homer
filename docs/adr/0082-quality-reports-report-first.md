@@ -261,3 +261,13 @@ that fails or times out leaves the report `partial`, which names the missing sha
 stale exception. A shard that outgrows the limit on its own is split further or, failing that, run
 on a self-hosted runner instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
 checking its entries are gone with it.
+
+*Amended (2026-11-06):* the pull request's backend run has a time budget of its own,
+`MUTATE_BUDGET_SEC` (default 14 minutes, inside the job's 20-minute bound). A change to classes that
+most tests run through (the run starters on PR #124) did not finish within the job's bound: the coverage
+pass alone took four minutes, and the mutants that keep a run from starting time out one by one, so
+GitHub cancelled the job, left no report and held `quality-gate`, which needs it, for the whole 20
+minutes. A run over the budget is now stopped (Gradle's daemon with it) and the check reports itself
+skipped with the budget as the reason; the weekly full run covers those classes. Raising the job's
+bound would only hold `quality-gate` longer, and narrowing the tests to the ones the change touches
+would report every mutant other tests kill as uncovered.
