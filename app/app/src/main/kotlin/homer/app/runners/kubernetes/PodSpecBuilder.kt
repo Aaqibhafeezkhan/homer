@@ -103,6 +103,7 @@ class PodSpecBuilder(
             }
         return V1PodSpec()
             .restartPolicy("Never")
+            .activeDeadlineSeconds(config.maxRunSeconds)
             .containers(listOf(buildMainContainer(workspaceMounts, containerSc)))
             .initContainers(initContainers)
             .volumes(listOf(workspaceVolume()) + config.volumes.map(::toVolume))

@@ -283,6 +283,33 @@ class PodSpecBuilderTest {
         }
     }
 
+    @Test
+    fun `default config pod spec is unchanged (C1)`() {
+        val pod =
+            PodSpecBuilder(
+                "k8s-dev",
+                config.copy(annotations = mapOf("vault.hashicorp.com/role" to "homer-runner")),
+                instanceId = "inst-xyz",
+            ).build(params(), "homer-1-abcdef")
+        val actual =
+            io.kubernetes.client.openapi.JSON
+                .serialize(pod)
+        val golden = javaClass.getResource("/kubernetes/default-pod.json")!!.readText().trim()
+        assertEquals(golden, actual)
+    }
+
+    @Test
+    fun `maxRunSeconds sets the pod activeDeadlineSeconds`() {
+        val pod = PodSpecBuilder("k8s-dev", config.copy(maxRunSeconds = 10800)).build(params(), "homer-1-abcdef")
+        assertEquals(10800L, pod.spec!!.activeDeadlineSeconds)
+    }
+
+    @Test
+    fun `no maxRunSeconds leaves activeDeadlineSeconds unset`() {
+        val pod = PodSpecBuilder("k8s-dev", config).build(params(), "homer-1-abcdef")
+        assertNull(pod.spec!!.activeDeadlineSeconds)
+    }
+
     private fun params(
         workspace: homer.app.infra.WorkspaceConfig = TestFixtures.mockWorkspaceConfig(),
         env: Map<String, String> = emptyMap(),
