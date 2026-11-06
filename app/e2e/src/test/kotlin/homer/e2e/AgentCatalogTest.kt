@@ -59,6 +59,7 @@ class AgentCatalogTest : E2eTestBase() {
                     "timeout-cmd",
                     "parent",
                     "orphan-parent",
+                    "maintenance-parent",
                     "continuer",
                     "continued",
                     "json-emitter",

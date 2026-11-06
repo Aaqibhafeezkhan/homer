@@ -81,9 +81,9 @@ class RunAgentExecutorTest {
         // does, so tests that assert on the forwarded params exercise the
         // resolution path.
         coEvery {
-            agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } coAnswers {
-            arg<suspend () -> Map<String, String>>(9).invoke()
+            arg<suspend () -> Map<String, String>>(10).invoke()
             42
         }
         authorizer =
@@ -158,14 +158,14 @@ class RunAgentExecutorTest {
 
             assertEquals(255, result.exitCode)
             assertEquals("agent 'missing_agent' not found", executionContext.stdErr.readText())
-            coVerify(exactly = 0) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
     fun `HomerException from start - returns exit code 255 and writes message to stderr`() =
         runTest {
             coEvery {
-                agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+                agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
             } throws InvocationCycleDetectedException("target_agent", listOf("root", "target_agent"))
 
             val result = executor.execute(Command.RunAgent(agentName = "target_agent"), executionContext, TestFixtures.mockSpan())
@@ -183,7 +183,21 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), listOf("root", "child"), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify {
+                agentRunStarter.start(
+                    any(),
+                    listOf("root", "child"),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                )
+            }
         }
 
     @Test
@@ -191,7 +205,7 @@ class RunAgentExecutorTest {
         runTest {
             executor.execute(Command.RunAgent(agentName = "target_agent"), executionContext, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), emptyList(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify { agentRunStarter.start(any(), emptyList(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -204,14 +218,14 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(17), any(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(17), any(), any(), any()) }
         }
 
     @Test
     fun `no parent link when the context carries no process id`() =
         runTest {
             executor.execute(Command.RunAgent(agentName = "target_agent"), executionContext, TestFixtures.mockSpan())
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), isNull(), any(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), isNull(), any(), any(), any()) }
         }
 
     @Test
@@ -234,7 +248,7 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), eq(3), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), eq(3), any(), any()) }
         }
 
     @Test
@@ -259,7 +273,7 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), isNull(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), isNull(), any(), any()) }
         }
 
     @Test
@@ -272,7 +286,7 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), eq(7), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), eq(7), any(), any()) }
         }
 
     @Test
@@ -285,7 +299,7 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), isNull(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), eq(7), isNull(), any(), any()) }
         }
 
     @Test
@@ -301,7 +315,7 @@ class RunAgentExecutorTest {
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
             coVerify {
-                agentRunStarter.start(any(), any(), any(), any(), listOf("root-key", "order-42"), any(), any(), any(), any(), any())
+                agentRunStarter.start(any(), any(), any(), any(), listOf("root-key", "order-42"), any(), any(), any(), any(), any(), any())
             }
         }
 
@@ -312,7 +326,7 @@ class RunAgentExecutorTest {
 
             executor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), eq("ci"), any(), any(), any(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), eq("ci"), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -320,7 +334,7 @@ class RunAgentExecutorTest {
         runTest {
             executor.execute(Command.RunAgent(agentName = "target_agent"), executionContext, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), isNull(), any(), any(), any(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), any(), any(), any(), isNull(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -328,7 +342,7 @@ class RunAgentExecutorTest {
         runTest {
             executor.execute(Command.RunAgent(agentName = "target_agent"), executionContext, TestFixtures.mockSpan())
 
-            coVerify { agentRunStarter.start(any(), any(), "agent", any(), any(), any(), any(), any(), any(), any()) }
+            coVerify { agentRunStarter.start(any(), any(), "agent", any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -441,7 +455,7 @@ class RunAgentExecutorTest {
         // The param is dropped like a non-match, and the child run is dispatched anyway.
         assertEquals(0, result.exitCode)
         assertNull(resolvedParams.captured["evil"])
-        coVerify { agentRunStarter.start(any(), any(), "agent", any(), any(), any(), any(), any(), any(), any()) }
+        coVerify { agentRunStarter.start(any(), any(), "agent", any(), any(), any(), any(), any(), any(), any(), any()) }
         val logged = warnings()
         assertTrue(logged.any { it.contains("EVIL_A") }, "expected a WARN naming the env var, got $logged")
         assertTrue(logged.none { it.contains(subject) }, "the WARN must not carry the env value: $logged")
@@ -627,7 +641,7 @@ class RunAgentExecutorTest {
             val result = deniedExecutor.execute(Command.RunAgent(agentName = "target_agent"), context, TestFixtures.mockSpan())
 
             assertEquals(255, result.exitCode)
-            coVerify(exactly = 0) { starter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { starter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
             assertEquals("agent 'target_agent' not found", context.stdErr.readText())
         }
 
@@ -640,7 +654,7 @@ class RunAgentExecutorTest {
                 }
             val starter = mockk<AgentRunStarter>()
             coEvery {
-                starter.start(any(), any(), "agent", any(), any(), "alice", any(), any(), any(), any())
+                starter.start(any(), any(), "agent", any(), any(), "alice", any(), any(), any(), any(), any())
             } returns 42
             val allowedExecutor = newExecutor(allowedAuthorizer, agentRunStarter = { starter })
             val context = executionContext.copy(owner = "alice", agentName = "a")

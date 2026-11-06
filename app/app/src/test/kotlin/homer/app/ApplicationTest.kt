@@ -1161,7 +1161,7 @@ class ApplicationTest {
             // Each fire INSERTs the segment's row with the parent and root the fire path
             // derived, exactly as ProcessExecutor would.
             coEvery {
-                runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any())
+                runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any())
             } coAnswers {
                 pm
                     .obtainProcessId("continuer", parentProcessId = arg<Int?>(7), rootProcessId = arg<Int?>(8))
@@ -1630,6 +1630,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1679,6 +1680,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 2,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1737,6 +1739,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1806,6 +1809,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1848,6 +1852,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1890,6 +1895,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1947,6 +1953,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -1992,6 +1999,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -2043,6 +2051,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -2186,6 +2195,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -2256,6 +2266,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -2323,6 +2334,7 @@ class ApplicationTest {
                                     maxInvocationDepth = 5,
                                     cooldownGate = mockk(relaxed = true),
                                     maintenanceGate = mockk(relaxed = true),
+                                    processReads = mockk(relaxed = true),
                                 ),
                         )
                     }
@@ -2955,6 +2967,7 @@ class ApplicationTest {
                                 maxInvocationDepth = 5,
                                 cooldownGate = mockk(relaxed = true),
                                 maintenanceGate = mockk(relaxed = true),
+                                processReads = mockk(relaxed = true),
                             ),
                     )
                 }

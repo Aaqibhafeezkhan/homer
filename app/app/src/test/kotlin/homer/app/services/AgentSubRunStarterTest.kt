@@ -61,7 +61,7 @@ class AgentSubRunStarterTest {
     fun `starts through the run starter resolved at call time`() =
         runTest {
             coEvery {
-                agentRunStarter.start(target, listOf("caller"), "agent", any(), listOf("lock"), "alice", any(), 7, 3, any())
+                agentRunStarter.start(target, listOf("caller"), "agent", any(), listOf("lock"), "alice", any(), 7, 3, any(), any())
             } returns 42
             assertEquals(0, providerCalls)
 
@@ -69,6 +69,22 @@ class AgentSubRunStarterTest {
 
             assertEquals(42, processId)
             assertEquals(1, providerCalls)
-            coVerify(exactly = 1) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 1) { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `a hop marks its parent as server-derived so a live parent admits it`() =
+        runTest {
+            // The hop's parent is the executing run, never a caller-supplied id: the start may
+            // bypass the maintenance gate while that run is still WORKING. See ADR-0092.
+            coEvery {
+                agentRunStarter.start(target, listOf("caller"), "agent", any(), listOf("lock"), "alice", any(), 7, 3, true, any())
+            } returns 42
+
+            assertEquals(42, subRuns.start(target, listOf("caller"), "agent", listOf("lock"), "alice", 7, 3) { emptyMap() })
+
+            coVerify(exactly = 1) {
+                agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), serverDerivedParent = true, any())
+            }
         }
 }

@@ -25,7 +25,6 @@ import { CONSOLE_DIR, REPORTS_DIR, printReport, repoPath, runTool, writeReports 
 
 const CHECK = 'mutation-console';
 const TITLE = 'Mutation testing';
-const STRYKER_REPORT = path.join(REPORTS_DIR, CHECK, 'mutation.json');
 const FINDING_STATUSES = { Survived: 'survived', NoCoverage: 'no coverage' };
 const REPLACEMENT_CHARS = 60;
 
@@ -191,7 +190,9 @@ function changedSince(base) {
   return process.env.MUTATE_WORKTREE === '1' ? worktreeChanges(base, ['.'], CONSOLE_DIR) : changedLines(gitDiff(base, ['.'], CONSOLE_DIR));
 }
 
-function main() {
+/** The check: Stryker over the console (`--changed`: the lines changed since MUTATE_BASE), then its report. `run` (for `runTool`) and `reportsDir` are test seams. */
+export function main({ exceptionsFile = EXCEPTIONS_FILE, run = runTool, reportsDir = REPORTS_DIR } = {}) {
+  loadExceptions(exceptionsFile); // a bad entry fails before the Stryker run, not after it
   const changed = process.argv.includes('--changed');
   let ranges = [];
   if (changed) {
@@ -199,17 +200,18 @@ function main() {
     ranges = changedRanges(changedSince(base), (file) => fs.existsSync(path.join(CONSOLE_DIR, file)));
     if (ranges.length === 0) {
       const reason = base ? 'no changed source lines' : 'no MUTATE_BASE';
-      const report = writeReports(CHECK, { title: TITLE, findings: [], detail: `(skipped: ${reason})`, extra: { skipped: reason } });
-      printReport(CHECK, report);
+      const report = writeReports(CHECK, { title: TITLE, findings: [], detail: `(skipped: ${reason})`, extra: { skipped: reason } }, reportsDir);
+      printReport(CHECK, report, undefined, reportsDir);
       return;
     }
   }
-  fs.rmSync(STRYKER_REPORT, { force: true });
-  runTool('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
-  if (!fs.existsSync(STRYKER_REPORT)) throw new Error(`${STRYKER_REPORT} not found — Stryker wrote no JSON report.`);
-  const fullReport = JSON.parse(fs.readFileSync(STRYKER_REPORT, 'utf8'));
-  const report = writeMutationReport(fullReport, { changed, ranges });
-  printReport(CHECK, report);
+  const strykerReport = path.join(reportsDir, CHECK, 'mutation.json'); // where stryker.config writes it
+  fs.rmSync(strykerReport, { force: true });
+  run('stryker', ['run', '--ignoreStatic', ...(changed ? ['--mutate', ranges.join(',')] : [])], { capture: false });
+  if (!fs.existsSync(strykerReport)) throw new Error(`${strykerReport} not found — Stryker wrote no JSON report.`);
+  const fullReport = JSON.parse(fs.readFileSync(strykerReport, 'utf8'));
+  const report = writeMutationReport(fullReport, { changed, ranges }, { exceptionsFile, reportsDir });
+  printReport(CHECK, report, undefined, reportsDir);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

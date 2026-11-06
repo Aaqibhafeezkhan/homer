@@ -1563,6 +1563,31 @@ class AgentsServiceTest {
         }
     }
 
+    @Test
+    fun `input-steered Claude list option logs a warning but loads`() {
+        val service =
+            loadAgentYaml(
+                """
+                name: claude-list-steered
+                commands:
+                  - !<claude>
+                    prompt: !<prompt> { prompt: "hi" }
+                    options: { addDir: ["/srv/fixed", "{{DIR}}"] }
+                inputs:
+                  - paramName: dir
+                    envName: DIR
+                """.trimIndent(),
+            )
+        assertNotNull(service.agents["claude-list-steered"])
+        verify {
+            logger.warn(
+                match<String> { it.contains("caller-supplied inputs steer run identity") },
+                "claude-list-steered",
+                match<String> { it.contains("addDir") && it.contains("DIR") },
+            )
+        }
+    }
+
     // ========== Input-bound LLM executable (cmd) Tests ==========
 
     @Test

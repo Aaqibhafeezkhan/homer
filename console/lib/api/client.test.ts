@@ -12,6 +12,7 @@ vi.mock('@/lib/config/app-config', () => ({
 }));
 
 import { CSRF_HEADER, homerApi, HomerApiError } from './client';
+import { appConfig } from '@/lib/config/app-config';
 import {
   resetInstancesStoreForTests,
   setActiveInstance,
@@ -387,8 +388,7 @@ describe('HomerApiClient — agent files API', () => {
     mockJson({ label: 'Deploy', module: 'deploy.graph', threadId: 't-1' });
     await homerApi.getProcessLangGraph(42);
     const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain('/api/v1/processes/42/langgraph');
-    expect(url).not.toContain('?');
+    expect(url).toMatch(/\/api\/v1\/processes\/42\/langgraph$/);
     expect(opts.method).toBeUndefined();
   });
 
@@ -669,5 +669,264 @@ describe('HomerApiClient — auth headers and error mapping', () => {
     await expect(homerApi.downloadArtifact(1, 'out.txt')).rejects.toMatchObject({
       message: 'Unknown error occurred',
     });
+  });
+});
+
+describe('HomerApiClient — endpoints', () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = () => globalThis.fetch as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers(),
+      clone() { return this; },
+      json: async () => ({}),
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const endpoints: Array<[string, () => Promise<unknown>, string, string | undefined]> = [
+    ['getProcess', () => homerApi.getProcess(7), '/api/v1/status/7', undefined],
+    ['getAgents', () => homerApi.getAgents(), '/api/v1/agents', undefined],
+    ['getAgentLangGraph', () => homerApi.getAgentLangGraph('a b'), '/api/v1/agents/a%20b/langgraph', undefined],
+    ['reloadAgents', () => homerApi.reloadAgents(), '/api/v1/agents/reload', 'POST'],
+    ['retryProcess', () => homerApi.retryProcess(7), '/api/v1/processes/7/retry', 'POST'],
+    ['cancelContinuation', () => homerApi.cancelContinuation(5), '/api/v1/continuations/5', 'DELETE'],
+    ['getHeartbeat', () => homerApi.getHeartbeat(), '/api/v1/heartbeat', undefined],
+    ['getHealth', () => homerApi.getHealth(), '/api/v1/health', undefined],
+    ['getMonthlyCosts', () => homerApi.getMonthlyCosts(), '/api/v1/costs/monthly', undefined],
+    ['getMonthlyCosts(month)', () => homerApi.getMonthlyCosts('2026-10'), '/api/v1/costs/monthly?month=2026-10', undefined],
+    ['getTotalCosts', () => homerApi.getTotalCosts(), '/api/v1/costs/totals', undefined],
+    ['getCostsByTag', () => homerApi.getCostsByTag('team/x'), '/api/v1/costs/by-tag/team%2Fx', undefined],
+    ['getRunners', () => homerApi.getRunners(), '/api/v1/runners', undefined],
+    ['getRunnerQueue', () => homerApi.getRunnerQueue(), '/api/v1/runners/queue', undefined],
+    ['listArtifacts', () => homerApi.listArtifacts(9), '/api/v1/artifacts/list?processId=9', undefined],
+    ['getAgentSchema', () => homerApi.getAgentSchema(), '/api/v1/schemas/agent', undefined],
+    ['getProcessLangGraph', () => homerApi.getProcessLangGraph(3), '/api/v1/processes/3/langgraph', undefined],
+  ];
+
+  it.each(endpoints)('%s targets the exact endpoint and method', async (_, call, path, method) => {
+    await call();
+    const [url, opts] = fetchMock().mock.calls[0];
+    expect(new URL(url, 'http://x').pathname + new URL(url, 'http://x').search).toBe(path);
+    expect(opts.method).toBe(method);
+  });
+
+  it('getProcesses forwards the agentName filter', async () => {
+    await homerApi.getProcesses({ agentName: 'echo' });
+    const url = new URL(fetchMock().mock.calls[0][0], 'http://x');
+    expect(url.searchParams.get('agentName')).toBe('echo');
+  });
+
+  it('getProcesses omits agentName when it is empty', async () => {
+    await homerApi.getProcesses({ agentName: '' });
+    const url = new URL(fetchMock().mock.calls[0][0], 'http://x');
+    expect(url.searchParams.has('agentName')).toBe(false);
+  });
+
+  it('names its errors HomerApiError', async () => {
+    fetchMock().mockRejectedValue(new TypeError('down'));
+    const err = await homerApi.getHealth().catch((e) => e);
+    expect(err.name).toBe('HomerApiError');
+  });
+
+  it('clears the timeout once the response arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      await homerApi.getHealth();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the timeout when the fetch fails', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock().mockRejectedValue(new TypeError('down'));
+      await homerApi.getHealth().catch(() => undefined);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('HomerApiClient — session expiry and token gating', () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = () => globalThis.fetch as ReturnType<typeof vi.fn>;
+  const sentHeaders = () => fetchMock().mock.calls[0][1].headers as Record<string, string>;
+
+  function respond(status: number): void {
+    fetchMock().mockResolvedValue({
+      ok: status < 400,
+      status,
+      statusText: 'Status',
+      headers: new Headers(),
+      clone() { return this; },
+      json: async () => ({}),
+      text: async () => '',
+      blob: async () => new Blob([]),
+    });
+  }
+
+  beforeEach(() => {
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    vi.mocked(notifyAuthExpired).mockClear();
+    globalThis.fetch = vi.fn();
+    respond(200);
+  });
+
+  afterEach(() => {
+    appConfig.auth.enabled = true;
+    globalThis.fetch = originalFetch;
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  function useBearer(token?: string): void {
+    upsertInstance({ id: 'b', label: 'B', baseUrl: 'http://b.test', mode: 'bearer' });
+    setActiveInstance('b');
+    if (token !== undefined) setActiveToken(token);
+  }
+
+  const failing: Array<[string, () => Promise<unknown>]> = [
+    ['request', () => homerApi.getCosts()],
+    ['requestBlob', () => homerApi.downloadArtifact(1, 'o.txt')],
+    ['fetchArtifactContent', () => homerApi.fetchArtifactContent(1, 'o.txt')],
+  ];
+
+  it.each(failing)('%s: a non-401 failure does not fire the auth-expired bus', async (_, call) => {
+    respond(500);
+    await expect(call()).rejects.toBeInstanceOf(HomerApiError);
+    expect(notifyAuthExpired).not.toHaveBeenCalled();
+  });
+
+  it.each(failing)('%s: a 401 does not fire the bus when auth is disabled', async (_, call) => {
+    appConfig.auth.enabled = false;
+    respond(401);
+    await expect(call()).rejects.toBeInstanceOf(HomerApiError);
+    expect(notifyAuthExpired).not.toHaveBeenCalled();
+  });
+
+  it.each(failing)('%s: a 401 fires the bus when auth is enabled', async (_, call) => {
+    respond(401);
+    await expect(call()).rejects.toBeInstanceOf(HomerApiError);
+    expect(notifyAuthExpired).toHaveBeenCalledWith('http-401');
+  });
+
+  it('fetchArtifactContent rejects a failed response with its status', async () => {
+    respond(404);
+    await expect(homerApi.fetchArtifactContent(1, 'o.txt')).rejects.toMatchObject({
+      message: 'Failed to fetch artifact: Status',
+      status: 404,
+      statusText: 'Status',
+    });
+  });
+
+  it('sends no Authorization header when auth is disabled, even with a bearer token', async () => {
+    useBearer('tok');
+    appConfig.auth.enabled = false;
+    await homerApi.getCosts();
+    expect(sentHeaders()['Authorization']).toBeUndefined();
+  });
+
+  it('sends no Authorization header in bearer mode without a token', async () => {
+    useBearer();
+    await homerApi.getCosts();
+    expect(sentHeaders()['Authorization']).toBeUndefined();
+  });
+
+  it('getAuthToken returns the token only in bearer mode', () => {
+    useBearer('tok');
+    expect(homerApi.getAuthToken()).toBe('tok');
+    upsertInstance({ id: 'c', label: 'C', baseUrl: 'http://c.test', mode: 'cookie' });
+    setActiveInstance('c');
+    setActiveToken('stale');
+    expect(homerApi.getAuthToken()).toBeNull();
+  });
+});
+
+describe('HomerApiClient — artifacts', () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = () => globalThis.fetch as ReturnType<typeof vi.fn>;
+
+  function respondWith(headers: Record<string, string>): void {
+    fetchMock().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers(headers),
+      clone() { return this; },
+      text: async () => 'content',
+      blob: async () => new Blob(['content']),
+    });
+  }
+
+  beforeEach(() => {
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetInstancesStoreForTests();
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  const reads: Array<[string, () => Promise<{ isComplete: boolean; processStatus: string; filename: string }>]> = [
+    ['downloadArtifact', () => homerApi.downloadArtifact(7, 'dir/out file.txt')],
+    ['fetchArtifactContent', () => homerApi.fetchArtifactContent(7, 'dir/out file.txt')],
+  ];
+
+  it.each(reads)('%s requests the artifact by process id and path', async (_, call) => {
+    respondWith({});
+    await call();
+    const url = new URL(fetchMock().mock.calls[0][0], 'http://x');
+    expect(url.pathname).toBe('/api/v1/artifacts');
+    expect(url.searchParams.get('processId')).toBe('7');
+    expect(url.searchParams.get('path')).toBe('dir/out file.txt');
+  });
+
+  it.each(reads)('%s reports a complete file and the process status from the headers', async (_, call) => {
+    respondWith({ 'X-File-Complete': 'true', 'X-Process-Status': 'FINISHED' });
+    expect(await call()).toMatchObject({
+      isComplete: true,
+      processStatus: 'FINISHED',
+      filename: 'out file.txt',
+    });
+  });
+
+  it.each(reads)('%s treats missing headers as incomplete with an UNKNOWN status', async (_, call) => {
+    respondWith({});
+    expect(await call()).toMatchObject({ isComplete: false, processStatus: 'UNKNOWN' });
+  });
+
+  it.each(reads)('%s treats any value other than "true" as incomplete', async (_, call) => {
+    respondWith({ 'X-File-Complete': 'false' });
+    expect((await call()).isComplete).toBe(false);
+  });
+
+  it('downloadArtifact returns the blob and fetchArtifactContent the text', async () => {
+    respondWith({});
+    const { blob } = await homerApi.downloadArtifact(7, 'a.txt');
+    expect(await blob.text()).toBe('content');
+    const { content } = await homerApi.fetchArtifactContent(7, 'a.txt');
+    expect(content).toBe('content');
   });
 });

@@ -1,5 +1,6 @@
 package homer.e2e
 
+import homer.e2e.support.Awaits
 import homer.e2e.support.E2e
 import homer.e2e.support.E2eTestBase
 import homer.e2e.support.ErrorBody
@@ -121,6 +122,42 @@ class MaintenanceTest : E2eTestBase() {
                     "a start the window shed must create no process row",
                 )
                 delay(250)
+            }
+        }
+
+    @Test
+    fun `a run that starts another run finishes through the window instead of parking`() =
+        runBlocking {
+            // `maintenance-parent` sleeps, then hops to `echo`. The window is turned on while it
+            // is still WORKING, so the hop is a start of already-admitted work: it must not park,
+            // the parent must reach FINISHED, and nothing may be left in the queue. See ADR-0092.
+            val parentId = HomerApi.startRun("maintenance-parent")
+            Awaits.awaitStatus(parentId, setOf("WORKING"))
+
+            try {
+                setMode(true)
+
+                val finished = Awaits.awaitTerminal(parentId, timeoutMs = 20_000)
+                assertEquals(
+                    "FINISHED",
+                    finished.status,
+                    "a run whose hop parked would fail on the wait bound instead of finishing",
+                )
+                assertEquals(
+                    0,
+                    maintenance().queued,
+                    "a start that is part of admitted work must never be queued",
+                )
+
+                val children =
+                    HomerApi.decode<ProcessList>(
+                        E2e.client.get("/api/v1/status/all") { parameter("parentProcessId", parentId) },
+                    )
+                val child = children.processes.firstOrNull { it.agentName == "echo" }
+                assertTrue(child != null, "the parent's hop must still start its child run")
+                assertEquals("FINISHED", Awaits.awaitTerminal(child.id).status)
+            } finally {
+                setMode(false)
             }
         }
 }

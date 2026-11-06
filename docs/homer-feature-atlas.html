@@ -834,11 +834,14 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
           <p>An admin holds the server still for a restart: cron fires are skipped, and every other start — HTTP, MCP,
             a <code>!&lt;agent&gt;</code> hop, a dispatch, a continuation — parks in a bounded queue and starts, in
             arrival order within one release drain, when the mode goes off (rapid re-toggles overlap drains, so the
-            order across drains is not guaranteed). Runs already <code>WORKING</code> finish untouched, and a schedule
-            missed during the window is not replayed. A start past the queue's size is shed with <code>429</code>, one
-            past its wait with <code>503</code>; neither creates a run. The flag survives a restart. The console reads
-            it from <code>GET /api/v1/health</code> and shows a red alert bar across every dashboard page, so a run
-            that seems to do nothing has an explanation on screen.</p>
+            order across drains is not guaranteed). Runs already <code>WORKING</code> finish untouched, and so do the
+            runs they start: a hop, a dispatch or a continuation fire whose own run is still <code>WORKING</code> is
+            admitted at once instead of parking, so a run that starts another run still finishes through the window —
+            while a start with no parent, or one whose origin has already ended, parks as usual. A schedule missed
+            during the window is not replayed. A start past the queue's size is shed with <code>429</code>, one past
+            its wait with <code>503</code>; neither creates a run. The flag survives a restart. The console reads it
+            from <code>GET /api/v1/health</code> and shows a red alert bar across every dashboard page, so a run that
+            seems to do nothing has an explanation on screen.</p>
           <pre><code>curl -X POST "$HOMER/api/v1/maintenance" -d '{"enabled": true}'
 # {"enabled":true,"since":1761…,"queued":0}   GET reads it back, admin only</code></pre>
         </article>

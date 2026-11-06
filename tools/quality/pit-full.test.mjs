@@ -184,3 +184,12 @@ test('merge takes no shard list: the shards are those of the checkout', () => {
 test('an unknown command prints the usage', () => {
   assert.throws(() => main(['all']), /usage: node tools\/quality\/pit-full\.mjs/);
 });
+
+test('a malformed exceptions file fails every command before PIT runs', () => {
+  const bad = { 'tools/quality/mutation-exceptions/backend.json': '{"a.kt#m#d#x": ""}' };
+  for (const command of [['shards'], ['run', 'homer.app'], ['merge', 'shards']]) {
+    const { output, args } = inRepo({ ...SOURCES, ...bad }, () => main(command));
+    assert.match(output.message, /non-empty reason: a\.kt#m#d#x/, command.join(' '));
+    assert.equal(args, null);
+  }
+});

@@ -65,6 +65,42 @@ class WhenEvaluatorTest {
         }
 
     @Test
+    fun `all names the false expression by its one-based position`() =
+        runTest {
+            val shell = mockk<ShellExecutor>()
+            val exitCodes = listOf(0, 1)
+            var calls = 0
+            coEvery {
+                shell.cmd(any(), any(), any(), any(), any(), any())
+            } answers {
+                result(exitCodes[calls++], arg(1), arg(2))
+            }
+
+            val r = WhenEvaluator(shell, artifacts).evaluate(When(When.Operator.ALL, listOf("e1", "e2")), emptyMap(), 0)
+
+            assertEquals(WhenEvaluator.Result.Skip("when.all expression #2 false: e2"), r)
+        }
+
+    @Test
+    fun `eval error keeps only the last 200 characters of a long stderr`() =
+        runTest {
+            val shell = mockk<ShellExecutor>()
+            val stderr = "a".repeat(50) + "b".repeat(200)
+            coEvery {
+                shell.cmd(any(), any(), any(), any(), any(), any())
+            } answers {
+                val err = arg<Path>(2)
+                err.writeText(stderr)
+                result(2, arg(1), err)
+            }
+
+            val r = WhenEvaluator(shell, artifacts).evaluate(When(When.Operator.ALL, listOf("e1")), emptyMap(), 0)
+
+            assertTrue(r is WhenEvaluator.Result.EvalError)
+            assertEquals("b".repeat(200), r.stderrSummary)
+        }
+
+    @Test
     fun `any short-circuits on first true`() =
         runTest {
             val shell = mockk<ShellExecutor>()

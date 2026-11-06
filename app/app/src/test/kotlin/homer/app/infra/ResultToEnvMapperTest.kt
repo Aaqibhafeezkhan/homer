@@ -370,6 +370,27 @@ class ResultToEnvMapperTest {
     }
 
     @Test
+    fun `mapToEnv should skip blank lines of NDJSON stdout`() {
+        // A trailing newline and a blank line between events: neither is an event to parse.
+        Files.writeString(stdOutFile, claudeNdjsonStdout.replaceFirst("\n", "\n\n") + "\n")
+        Files.writeString(stdErrFile, "")
+        val result = TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOutFile, stdErr = stdErrFile)
+
+        val params =
+            listOf(
+                ResultEnvParam(
+                    src = SrcType.STD_OUT,
+                    envName = "CLAUDE_RESULT",
+                    transformer = ResultTransformer.JsonPath(path = "$[2].result"),
+                ),
+            )
+
+        val env = ResultToEnvMapper(result).mapToEnv(params)
+
+        assertEquals("done", env["CLAUDE_RESULT"])
+    }
+
+    @Test
     fun `mapToEnv should skip JsonPath with no match against Claude NDJSON stdout`() {
         Files.writeString(stdOutFile, claudeNdjsonStdout)
         Files.writeString(stdErrFile, "")

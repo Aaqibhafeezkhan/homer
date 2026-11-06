@@ -67,7 +67,23 @@ class ContinuationFireServiceTest {
         every { agents.agents } returns mapOf("h" to agent)
         coEvery { repo.claim(5) } returns true
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } coAnswers
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                // The origin link is server-derived: a fire whose origin is still WORKING is
+                // admitted by the maintenance gate. See ADR-0092.
+                serverDerivedParent = true,
+                capture(resolve),
+            )
+        } coAnswers
             {
                 resolve.captured.invoke()
                 99
@@ -92,13 +108,40 @@ class ContinuationFireServiceTest {
         }
 
     @Test
+    fun `a fire's parent link is the origin run, with the flag the maintenance gate reads`() =
+        runTest {
+            resolvedParams()
+
+            fires.fire(pending(), ProcessStatus.FINISHED)
+
+            // The bypass is decided on the origin's own row, never on the watched process the
+            // continuation stores: the fire carries the origin id (7) as its parent, with the
+            // server-derived flag set, so an origin that is no longer `WORKING` parks as before.
+            coVerify {
+                runStarter.start(
+                    any(),
+                    any(),
+                    eq("continuation"),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    parentProcessId = 7,
+                    rootProcessId = any(),
+                    serverDerivedParent = true,
+                    resolveInputs = any(),
+                )
+            }
+        }
+
+    @Test
     fun `a lost claim starts nothing`() =
         runTest {
             coEvery { repo.claim(5) } returns false
 
             fires.fire(pending(), ProcessStatus.FINISHED)
 
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -110,7 +153,7 @@ class ContinuationFireServiceTest {
             fires.fire(pending(), ProcessStatus.FINISHED)
 
             coVerify { repo.markFailed(5, "Target agent 'h' not found", 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -118,7 +161,7 @@ class ContinuationFireServiceTest {
         runTest {
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.claim(5) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 CostCapExceededException("global", 1.0, 2.0)
 
             fires.fire(pending(), ProcessStatus.FINISHED)

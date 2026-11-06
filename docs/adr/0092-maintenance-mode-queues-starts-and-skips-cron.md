@@ -52,6 +52,8 @@ window is open.
   queue.**
 - **D. Refuse every start immediately with `503` — no queue at all.**
 - **E. Queue cron fires like any other start, so nothing is lost.**
+- **F. Park an admitted start in the same bounded queue and release it ahead of
+  the others — a priority lane in the drain.**
 
 ## Decision Outcome
 
@@ -69,6 +71,28 @@ convergence point already exists.
   the starter, so each takes the same gate at the same point — after its
   authorization and body validation, before its pre-flight and input resolution,
   inside its own root span.
+- **The admitted start.** A start that is part of work the window already let in
+  is not new work, so it does not park: `AgentRunStarter.start` takes a
+  `serverDerivedParent` flag, and only a path that derived the parent itself —
+  a `!<agent>` hop (`AgentSubRunStarter`), a dispatch (`DispatchService`), a
+  continuation fire (`ContinuationFireService`) — sets it. When it is set and
+  that parent row still reads `WORKING`, the start is admitted at once. Every
+  other start parks exactly as before: a parentless one (HTTP, MCP, the console,
+  **including** an external start that *names* a parent in
+  `X-Homer-Parent-Process-Id`), a cron fire, a retry, a resume, a debug run, and
+  any start whose derived origin has already ended. The flag is never inferred
+  from the parent row alone — a caller-supplied parent is not a bypass, however
+  live it is — and a false flag short-circuits before the liveness read, so
+  naming a parent the caller cannot see neither admits the start nor probes that
+  row (root §12 rule 3). Without this, the window parks a run's own sub-run and
+  the run that started it can never finish, which is the opposite of what the
+  gate exists to drain. An admitted start is not unchecked: it runs the same
+  cycle, depth, cost-cap and cooldown preflight as any other, and takes no
+  release slot — a fan-out of admitted hops is bounded by the chain depth and
+  cycle guards, the cost caps, the cooldown and the per-agent `maxParallelRuns`
+  slot gate, none of which the maintenance queue ever provided. Its root span
+  carries `maintenance.bypassed` (a boolean, never an input value), so an
+  operator can see why a start during the window did not wait.
 - **The queue.** Bounded in total (`maxQueuedStarts`, 500) and per principal
   (`maxQueuedStartsPerPrincipal`, 50), so one caller cannot fill the queue for
   everyone; the wait is bounded (`queueWaitSec`, 600). A surplus start is shed
@@ -103,8 +127,10 @@ convergence point already exists.
   path, so a caller cannot tell a denied handler from a missing route (root §12
   rule 3). `GET /api/v1/health` carries the flag from the service's in-memory
   state, so the console's banner costs no database read per poll.
-- **Running work.** Nothing in this path reads or writes a process row: a run
-  already `WORKING` is untouched, and a run in the claim queue is not recalled.
+- **Running work.** Nothing in this path writes a process row. The one read is
+  the parent-liveness check behind the admitted start above, and it only decides
+  whether that start queues: a run already `WORKING` is untouched, its own
+  sub-runs are not parked, and a run in the claim queue is not recalled.
 
 **Why not the others:**
 
@@ -119,6 +145,16 @@ convergence point already exists.
   planned window into a batch of failed requests to retry by hand.
 - **E** replays the whole window at its end. The missed ticks are exactly the
   burst the window exists to prevent.
+- **F** keeps the parent blocked anyway. A run waiting at a `!<agent>` hop or a
+  dispatch waits on its child's completion, so a child released ahead of the
+  queue still has to run to the end before the parent can finish — the "wait
+  until nothing is `WORKING`" the operator opens the window for never ends while
+  a fan-out is mid-flight. The admitted start then also competes for the queue's
+  bounds, so it can be shed with `429` or let its wait expire with `503` —
+  failing work a live run is actively blocked on, a worse refusal than parking a
+  start nothing admitted waits on — and the release slots it holds slow the
+  backlog behind it. The total bypass leaves the parent unblocked and costs the
+  queue nothing.
 
 ### Confirmation
 
@@ -127,6 +163,18 @@ Each constraint has a test that asserts the denial path (root §12 rule 8):
 - a start while the mode is on parks, and runs only after it goes off — for
   retry, resume and debug too, the three start paths that do not go through
   `AgentRunStarter`;
+- a start whose **server-derived** parent is still `WORKING` is admitted at
+  once: it takes no queue slot, is reported on its root span as
+  `maintenance.bypassed`, and an end-to-end run that starts another run reaches
+  `FINISHED` through the window with nothing left queued;
+- the bypass is denied everywhere else: a parent that has ended parks (for
+  `FINISHED`, `FAILED`, `KILLED` and an absent row alike), a start with no
+  parent parks even when the flag is set, and a caller-supplied parent header
+  naming a live `WORKING` run still parks — with no liveness read at all, as is
+  a parent the caller cannot see, which stays the same `422` an absent one gets;
+- an admitted start still runs the cycle, depth, cost-cap and cooldown checks,
+  and a hop, a dispatch and a continuation fire each mark their origin as
+  server-derived;
 - a cost-capped or cooldown-blocked start is refused **at dequeue**: the preflight
   is verified to have run zero times while parked;
 - a shed start creates no process row, and neither shed nor expiry puts an input

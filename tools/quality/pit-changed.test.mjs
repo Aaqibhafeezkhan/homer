@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
 import { execFileSync } from 'node:child_process';
-import { changedSources, classGlobs, codeLineNumbers, codeLines, pitPath, withinChanged } from './pit-changed.mjs';
+import { DEFAULT_BUDGET_SEC, budgetSeconds, budgetText, changedSources, classGlobs, codeLineNumbers, codeLines, pitPath, withinChanged } from './pit-changed.mjs';
 
 const SRC = 'app/app/src/main/kotlin';
 const source = (pkg, body) => `package ${pkg}\n\nimport x.Y\n\n${body}\n`;
@@ -147,9 +147,11 @@ test('only mutants on changed lines remain, with their repository path', () => {
 /**
  * Runs `main` in a temporary repository whose last commit adds `A.kt` with `text`, against a
  * stand-in for Gradle that records its arguments, writes `mutations` as PIT's report and exits
- * `exit`. Returns main's output (or the error it threw) and the recorded arguments, if any.
+ * `exit`, or first hangs for `hang` seconds (and `exceptions` as the backend exceptions file, when
+ * given; `budget` as MUTATE_BUDGET_SEC). The stand-in answers `--stop` at once, exiting `stopExit`.
+ * Returns main's output (or the error it threw), what it wrote to stderr and the recorded arguments, if any.
  */
-async function runMain(text, { mutations = [], exit = 0 } = {}) {
+async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budget, stopExit = 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-changed-'));
   const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
@@ -160,13 +162,24 @@ async function runMain(text, { mutations = [], exit = 0 } = {}) {
   const xml = mutations.map((line) => `<mutation status='SURVIVED'><sourceFile>A.kt</sourceFile><mutatedClass>homer.app.A</mutatedClass><mutatedMethod>f</mutatedMethod><lineNumber>${line}</lineNumber><description>d</description></mutation>`);
   fs.mkdirSync(path.join(dir, 'app'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'app/report.xml'), `<mutations>${xml.join('')}</mutations>`);
-  fs.writeFileSync(path.join(dir, 'app/gradlew'), `#!/bin/sh\nprintf "%s\\n" "$@" > app/args.txt\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\nexit ${exit}\n`, { mode: 0o755 });
+  if (exceptions !== undefined) {
+    fs.mkdirSync(path.join(dir, 'tools/quality/mutation-exceptions'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'tools/quality/mutation-exceptions/backend.json'), exceptions);
+  }
+  const end = hang ? `exec sleep ${hang}` : `exit ${exit}`;
+  const gradlew = `#!/bin/sh\nprintf "%s\\n" "$@" >> app/args.txt\n[ "$3" = --stop ] && exit ${stopExit}\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\n${end}\n`;
+  fs.writeFileSync(path.join(dir, 'app/gradlew'), gradlew, { mode: 0o755 });
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const cwd = process.cwd();
-  const saved = process.env.MUTATE_BASE;
+  const saved = { MUTATE_BASE: process.env.MUTATE_BASE, MUTATE_BUDGET_SEC: process.env.MUTATE_BUDGET_SEC };
   process.env.MUTATE_BASE = base;
+  if (budget === undefined) delete process.env.MUTATE_BUDGET_SEC;
+  else process.env.MUTATE_BUDGET_SEC = budget;
   process.chdir(dir);
+  const stderr = [];
+  const error = console.error;
+  console.error = (...line) => stderr.push(line.join(' '));
   try {
     const { main } = await import('./pit-changed.mjs');
     let output;
@@ -176,11 +189,20 @@ async function runMain(text, { mutations = [], exit = 0 } = {}) {
       output = error;
     }
     const argsFile = path.join(dir, 'app/args.txt');
-    return { output, args: fs.existsSync(argsFile) ? fs.readFileSync(argsFile, 'utf8').trim().split('\n') : null };
+    const summary = path.join(dir, 'app/app/build/reports/pitest/mutation-backend-summary.txt');
+    return {
+      output,
+      stderr: stderr.join('\n'),
+      args: fs.existsSync(argsFile) ? fs.readFileSync(argsFile, 'utf8').trim().split('\n') : null,
+      summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : null,
+    };
   } finally {
+    console.error = error;
     process.chdir(cwd);
-    if (saved === undefined) delete process.env.MUTATE_BASE;
-    else process.env.MUTATE_BASE = saved;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 }
 
@@ -200,6 +222,53 @@ test('main skips a comment-only change without running Gradle', async () => {
 test('main fails when Gradle fails, rather than reporting', async () => {
   const { output } = await runMain(source('homer.app', 'class A'), { exit: 1 });
   assert.match(output.message, /:app:pitest exited 1/);
+});
+
+test('a PIT run over its budget is stopped and reported skipped, not failed', async () => {
+  const started = Date.now();
+  const { output, args, summary, stderr } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { mutations: [6], hang: 30, budget: '1' });
+  assert.ok(Date.now() - started < 20_000, 'the budget, not the stand-in, ended the run');
+  assert.equal(output, 'Backend mutation testing of the change (skipped: over the 1-second budget): 0 finding(s)\n');
+  assert.equal(summary, 'findings=0\nskipped=over the 1-second budget\n');
+  assert.deepEqual(args.slice(-3), ['-p', 'app', '--stop']);
+  assert.doesNotMatch(stderr, /--stop failed/);
+});
+
+test('a failed daemon stop after the budget is logged, and the run still reports skipped', async () => {
+  const { output, stderr } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { hang: 30, budget: '1', stopExit: 1 });
+  assert.match(stderr, /gradlew --stop failed \(exit 1\): the Gradle daemon may still be running PIT/);
+  assert.equal(output, 'Backend mutation testing of the change (skipped: over the 1-second budget): 0 finding(s)\n');
+});
+
+test('a PIT run inside its budget reports as before', async () => {
+  const { output, args } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { mutations: [6], budget: '600' });
+  assert.match(output, /^Backend mutation testing of the change \(score 0\.0%\): 1 finding\(s\)/);
+  assert.ok(!args.includes('--stop'));
+});
+
+test('the budget defaults to 14 minutes and takes only a positive whole number of seconds', async () => {
+  assert.equal(budgetSeconds(undefined), DEFAULT_BUDGET_SEC);
+  assert.equal(budgetSeconds(''), 14 * 60);
+  assert.equal(budgetSeconds('90'), 90);
+  for (const bad of ['0', '-5', '1.5', '10m', ' 60', '1e3']) assert.throws(() => budgetSeconds(bad), /positive whole number/, bad);
+  assert.equal(budgetText(14 * 60), '14-minute');
+  assert.equal(budgetText(90), '90-second');
+  const { output, args } = await runMain(source('homer.app', 'class A'), { budget: '10m' });
+  assert.match(output.message, /MUTATE_BUDGET_SEC/);
+  assert.equal(args, null);
+});
+
+test('the budget leaves the CI job room for its report steps', () => {
+  const ci = fs.readFileSync(path.join(import.meta.dirname, '..', '..', '.github/workflows/ci.yml'), 'utf8');
+  const job = /\n  homer-app-mutation:\n([\s\S]*?)\n  \S/.exec(ci)?.[1] ?? '';
+  const minutes = Number(/timeout-minutes: (\d+)/.exec(job)?.[1]);
+  assert.ok(DEFAULT_BUDGET_SEC / 60 + 5 <= minutes, `budget ${DEFAULT_BUDGET_SEC / 60} min vs job ${minutes} min`);
+});
+
+test('main fails on a malformed exceptions file before running Gradle', async () => {
+  const { output, args } = await runMain(source('homer.app', 'class A'), { exceptions: '{"a.kt#m#d#x": ""}' });
+  assert.match(output.message, /non-empty reason: a\.kt#m#d#x/);
+  assert.equal(args, null);
 });
 
 test('the Gradle property main passes is the one the build script reads', () => {

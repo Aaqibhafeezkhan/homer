@@ -89,6 +89,7 @@ export function merge(dir) {
 }
 
 export function main([command, ...args]) {
+  loadExceptions(BACKEND_EXCEPTIONS); // a bad entry fails the shards job in seconds, before any shard runs
   if (command === 'shards' && args.length === 0) return `${JSON.stringify(shards())}\n`;
   if (command === 'run' && args.length === 1) return runShard(args[0]);
   if (command === 'merge' && args.length === 1) return merge(args[0]);

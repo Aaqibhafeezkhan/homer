@@ -240,13 +240,13 @@ reason in `<check>-accepted.txt`. This is not a baseline: there is no list of kn
 unaccepted survivor stays visible, and an entry matching no mutant is a finding of its own in a full
 run (a pull request's changed-lines run never judges that); an entry is stale when it matches no
 survived or uncovered mutant. Keys carry no line number (backend: source path, mutated method,
-description and the mutant's line text, `<inline>` when the line is past the file's end; console:
+description and the mutant's line text, `<inline>` when the line is past the file's end or the source is unreadable; console:
 file, mutator, the original text with its replacement and the mutated line's text), so an edit above
 a mutant does not invalidate its entry. Both keys include the line's text, since neither PIT's
 description nor Stryker's original text and replacement tells two mutants of a method apart: an entry
 covers only that exact line's mutants of that kind, and editing the line makes the entry stale, which
 forces a re-review. An `<inline>` key has no line to tell them apart: it matches every mutant of its
-description that the Kotlin compiler inlined into the method, so its entry is
+description that the Kotlin compiler inlined into the method (or whose source is unreadable), so its entry is
 `{ "reason": "…", "count": N }`, and a full run reports an entry matching any other number of mutants
 as a finding (still accepting them, so the score stays stable); a new inlined survivor there is never
 accepted silently. The exceptions live in one reviewed place for both languages instead of Stryker's
@@ -261,3 +261,16 @@ that fails or times out leaves the report `partial`, which names the missing sha
 stale exception. A shard that outgrows the limit on its own is split further or, failing that, run
 on a self-hosted runner instead of a GitHub job. The scope list in `app/app/build.gradle.kts` and the test
 checking its entries are gone with it.
+
+*Amended (2026-11-06):* the pull request's backend run has a time budget of its own,
+`MUTATE_BUDGET_SEC` (default 14 minutes, inside the job's 20-minute bound). A change to classes that
+most tests run through (the run starters on PR #124) did not finish within the job's bound: the coverage
+pass alone took four minutes, and the mutants that keep a run from starting time out one by one, so
+GitHub cancelled the job, left no report and held `quality-gate`, which needs it, for the whole 20
+minutes. A run over the budget is now stopped (Gradle's daemon with it) and the check reports itself
+skipped with the budget as the reason; the weekly full run covers those classes. It reports nothing
+of what PIT judged before the budget, and no `partial` list as the weekly merge does: PIT writes
+`mutations.xml` through a buffer and closes its root element only when the run ends, so a stopped run
+leaves at most a cut-off file that cannot say which classes it finished. Raising the job's
+bound would only hold `quality-gate` longer, and narrowing the tests to the ones the change touches
+would report every mutant other tests kill as uncovered.
