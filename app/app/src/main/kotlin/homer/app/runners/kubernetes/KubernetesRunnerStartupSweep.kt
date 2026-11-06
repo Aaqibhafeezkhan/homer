@@ -4,10 +4,10 @@ import homer.app.runners.ConfiguredRunners
 import org.slf4j.LoggerFactory
 
 /**
- * On Homer boot, scan every configured Kubernetes runner for pods
- * labeled `app.kubernetes.io/managed-by=homer` and delete any whose
- * `homer.app/process-id` does not correspond to an active process
- * ([ActiveRunIds], in production `ProcessManager`).
+ * On Homer boot, scan every configured Kubernetes runner for pods (and,
+ * in Job mode, Jobs) labeled `app.kubernetes.io/managed-by=homer` and
+ * delete any whose `homer.app/process-id` does not correspond to an active
+ * process ([ActiveRunIds], in production `ProcessManager`).
  *
  * Rationale (plan §7): after an unclean restart, Homer's in-memory
  * process map is empty but orphan pods may still exist on the
@@ -27,6 +27,7 @@ class KubernetesRunnerStartupSweep(
         var scanned = 0
         val deleted = mutableListOf<SweepStatus.DeletedPod>()
         val errors = mutableListOf<String>()
+        var deletedJobs: List<SweepStatus.DeletedJob>? = null
 
         for (alias in runners.aliases()) {
             val runner = runners.get(alias) as? KubernetesRunner ?: continue
@@ -35,6 +36,7 @@ class KubernetesRunnerStartupSweep(
                 scanned += result.scanned
                 deleted += result.deleted
                 errors += result.errors
+                result.deletedJobs?.let { deletedJobs = deletedJobs.orEmpty() + it }
                 log.info(
                     "sweep: namespace={} scanned={} deleted={} errors={}",
                     runner.namespace,
@@ -55,6 +57,7 @@ class KubernetesRunnerStartupSweep(
                 scanned = scanned,
                 deleted = deleted.toList(),
                 errors = errors.toList(),
+                deletedJobs = deletedJobs,
             ),
         )
     }

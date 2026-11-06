@@ -422,12 +422,23 @@ export interface SweepDeletedPod {
   runnerAlias?: string | null;
 }
 
+// Orphan Job deleted during a Job-mode startup sweep
+export interface SweepDeletedJob {
+  namespace: string;
+  name: string;
+  processId?: number | null;
+  // Null for a non-admin viewer, as on `SweepDeletedPod`. See ADR-0077.
+  runnerAlias?: string | null;
+}
+
 // Startup sweep status
 export interface SweepStatus {
   ranAt: number;
   scanned: number;
   deleted: SweepDeletedPod[];
   errors: string[];
+  // Null when no Job-mode kubernetes runner was swept.
+  deletedJobs?: SweepDeletedJob[] | null;
 }
 
 // Health Response

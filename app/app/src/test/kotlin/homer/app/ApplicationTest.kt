@@ -263,6 +263,22 @@ class ApplicationTest {
             )
         }
 
+    @Test
+    fun `with only Pod-mode runners the health response has deletedJobs null`() =
+        testApplication {
+            val sweep = SweepStatus()
+            sweep.set(SweepStatus.Snapshot(ranAt = 1_700_000_000L, scanned = 0, deleted = emptyList(), errors = emptyList()))
+            mountApiV1Routes {
+                every { config } returns configWithK8sRunner()
+                every { sweepStatus } returns sweep
+            }
+
+            val body = client.get("/api/v1/health").bodyAsText()
+
+            assertTrue(body.contains("\"deletedJobs\": null"), body)
+            assertNull(assertNotNull(apiJson.decodeFromString<HealthResponse>(body).sweep).deletedJobs)
+        }
+
     // ========== GET/POST /maintenance Tests ==========
 
     /** The service's read model for a mode turned on at [since] with [queued] parked starts. */

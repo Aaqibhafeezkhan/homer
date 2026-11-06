@@ -390,21 +390,16 @@ class KubernetesRunner(
      */
     val namespace: String get() = config.namespace
 
-    /**
-     * List every Homer-managed pod belonging to THIS instance in this runner's
-     * namespace and delete any whose `homer.app/process-id` label is not in the
-     * `activeProcessIds` set. When [instanceId] is set the list selector is scoped
-     * to `homer.app/instance=<id>` so a boot never deletes another Homer instance's
-     * pods in a shared namespace; when unset (blank) it falls back to the historic
-     * namespace-wide selector. Returns a summary for telemetry / health reporting.
-     * Never throws; individual failures are reported via `SweepResult.errors`.
-     */
-    fun sweepOrphans(activeProcessIds: Set<Int>): SweepResult = OrphanPodSweep(api, config.namespace, instanceId).sweep(activeProcessIds)
+    /** Deletes this instance's orphan pods, and in Job mode its orphan Jobs: see [sweepWorkloadOrphans]. Never throws. */
+    fun sweepOrphans(activeProcessIds: Set<Int>): SweepResult =
+        sweepWorkloadOrphans(api, batchApi.takeIf { config.workload == KubernetesWorkload.Job }, namespace, instanceId, activeProcessIds)
 
     data class SweepResult(
         val scanned: Int,
         val deleted: List<SweepStatus.DeletedPod>,
         val errors: List<String>,
+        /** Null in Pod mode; in Job mode the orphan Jobs deleted, possibly none. */
+        val deletedJobs: List<SweepStatus.DeletedJob>? = null,
     )
 
     private fun generatePodName(processId: Int): String {

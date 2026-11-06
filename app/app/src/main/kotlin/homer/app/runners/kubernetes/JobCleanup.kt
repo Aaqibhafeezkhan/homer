@@ -16,14 +16,23 @@ object JobCleanup {
         jobName: String,
     ) {
         try {
-            // Untyped: the server can answer the Job itself, which the client's V1Status model rejects.
-            val call = batchApi.deleteNamespacedJob(jobName, namespace).propagationPolicy("Background").buildCall(null)
-            batchApi.apiClient.execute<Any>(call)
+            deleteOrThrow(batchApi, namespace, jobName)
         } catch (e: ApiException) {
             if (e.code != HTTP_NOT_FOUND) {
                 log.warn("Failed to delete Job {}/{} (code={}): {}", namespace, jobName, e.code, e.responseBody)
             }
         }
+    }
+
+    /** [delete] that leaves every [ApiException], 404 included, to the caller: the startup sweep reports them. */
+    fun deleteOrThrow(
+        batchApi: BatchV1Api,
+        namespace: String,
+        jobName: String,
+    ) {
+        // Untyped: the server can answer the Job itself, which the client's V1Status model rejects.
+        val call = batchApi.deleteNamespacedJob(jobName, namespace).propagationPolicy("Background").buildCall(null)
+        batchApi.apiClient.execute<Any>(call)
     }
 
     /** Labels [jobName] kept, so the startup sweep skips it; its kept pod's deadline ends it. */

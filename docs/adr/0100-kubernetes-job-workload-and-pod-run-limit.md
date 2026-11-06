@@ -85,9 +85,11 @@ Chosen: **the limit on the pod**, **a Job opt-in**, and **the pod found by the J
 - Homer's own ServiceAccount is widened by the `batch` `jobs` rule only in a namespace a Job-mode
   runner uses; the rule covers Jobs, not pods it could not already create.
 - Leaked Jobs are bounded by four mechanisms, none of them alone:
-  - Homer deletes the Job on every Job-mode startup failure and at session close, unless
+  - Homer deletes the Job on every startup failure of a Job it created and at session close, unless
     `keepPodOnFailure` keeps its pod: the Job then ends with the kept pod's deadline.
-  - The boot-time startup sweep deletes this instance's orphan Jobs.
+  - The boot-time startup sweep deletes this instance's orphan Jobs that are not labelled kept,
+    including one whose pod was never created. Its pod half skips Job-owned pods, which go with
+    their Job.
   - `maxRunSeconds`, when set, ends a running pod, and with it the Job, even while Homer is down.
   - `ttlSecondsAfterFinished` removes a *finished* Job and its pod while Homer is down. Its clock
     starts only when the Job finishes, so it bounds nothing for a Job whose pod is still running or

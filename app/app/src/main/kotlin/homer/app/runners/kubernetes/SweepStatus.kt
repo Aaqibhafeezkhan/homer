@@ -3,12 +3,19 @@ package homer.app.runners.kubernetes
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Result of the startup orphan-pod sweep. One `Snapshot` is produced
+ * Result of the startup orphan-pod (and, in Job mode, orphan-Job) sweep. One `Snapshot` is produced
  * per boot and made visible via this singleton for health endpoints
  * and future admin UI surfaces.
  */
 class SweepStatus {
     data class DeletedPod(
+        val namespace: String,
+        val name: String,
+        val processId: Int?,
+        val runnerAlias: String?,
+    )
+
+    data class DeletedJob(
         val namespace: String,
         val name: String,
         val processId: Int?,
@@ -21,6 +28,8 @@ class SweepStatus {
         val scanned: Int,
         val deleted: List<DeletedPod>,
         val errors: List<String>,
+        /** Null when no Job-mode runner was swept (ADR-0100). */
+        val deletedJobs: List<DeletedJob>? = null,
     )
 
     private val last = AtomicReference<Snapshot?>(null)

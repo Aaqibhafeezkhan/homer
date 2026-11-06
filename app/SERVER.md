@@ -2779,6 +2779,9 @@ default `Pod` mode; only the object that owns the pod changes.
   smaller, counted from pod start) — and the cluster then removes the Job
   **and the kept pod** `jobTtlSecondsAfterFinished` later, whatever
   `keepPodTtlSeconds` says.
+- **Startup sweep.** On boot Homer deletes this instance's orphan Jobs
+  and leaves their pods to the Job delete — see
+  [Startup sweep](#startup-sweep).
 - **RBAC.** Job mode needs the `batch` `jobs` rule in
   [RBAC](#rbac). Pod mode makes no `batch` API call, so an existing Role
   without it keeps working.
@@ -3107,11 +3110,20 @@ On boot, for each configured kubernetes runner, Homer lists pods
 labelled `app.kubernetes.io/managed-by=homer` **and** carrying this
 instance's `homer.app/instance=<id>` label, and deletes any whose
 `homer.app/process-id` label does not match an active process. The
-sweep result (scanned / deleted / errors) is reported under
-`/api/v1/health`. Pods kept via `keepPodOnFailure` carry a
+sweep result (scanned / deleted / errors, and `deletedJobs`) is reported
+under `/api/v1/health`. Pods kept via `keepPodOnFailure` carry a
 `homer.app/kept` label and are skipped by the sweep regardless of
 process activity; their `keepPodTtlSeconds` still bounds their
-lifetime.
+lifetime (in Job mode, see [Kept pods](#job-workload)).
+
+A [`workload: Job`](#job-workload) runner also lists its Jobs with the
+same selector and deletes, with `propagationPolicy: Background`, every
+Job that is neither an active process's nor labelled kept, including a
+Job whose pod was never created (one still waiting for quota when Homer
+stopped). Its pod sweep skips pods a Job owns: the Job sweep handles
+them. The deleted Jobs are reported as `deletedJobs`, which is `null`
+when no Job-mode runner was swept. A Pod-mode runner makes no `batch`
+API call in the sweep.
 
 `<id>` is a stable per-instance identifier generated on first boot and
 persisted in Homer's SQLite database (distinct from the per-boot

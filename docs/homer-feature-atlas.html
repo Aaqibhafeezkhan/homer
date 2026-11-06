@@ -2399,13 +2399,17 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
         <article class="f">
           <h3>Kubernetes runner <span class="where">server config</span></h3>
           <p>One ephemeral pod per run with a pod-local <code>emptyDir</code> workspace; content moves as gzip'd tar over
-            the exec channel. The image must ship <code>tar</code> and <code>gzip</code>.</p>
+            the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
+            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
+            the pod in a one-pod Job that waits out namespace quota and is removed by its TTL.</p>
           <pre><code>runners:
   k8s: !&lt;kubernetes&gt;
     namespace: homer
     image: registry.example.com/homer-runtime:1.22.0
     resources: { limits: { cpu: "2", memory: 2Gi } }
-    homerApiUrl: http://homer.homer.svc.cluster.local:8080</code></pre>
+    homerApiUrl: http://homer.homer.svc.cluster.local:8080
+    workload: Job        # default Pod
+    maxRunSeconds: 7200</code></pre>
         </article>
 
         <article class="f">

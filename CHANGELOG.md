@@ -5,6 +5,7 @@
 ### Homer
 
 - **Added: `maxRunSeconds` for the kubernetes runner** — A hard per-run limit enforced by Kubernetes on the pod; a run it stops fails with the reason in the new `runner.termination` field.
+- **Added: `workload: Job` for the kubernetes runner** — Runs each session's pod in a one-pod Kubernetes Job that waits out namespace quota and is removed by its TTL even when Homer is down. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 
 ## [1.40.0] - 2026-11-05
 
