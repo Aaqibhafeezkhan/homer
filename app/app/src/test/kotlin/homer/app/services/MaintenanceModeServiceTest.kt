@@ -446,4 +446,74 @@ class MaintenanceModeServiceTest {
             parked.join()
             assertNull(svc.snapshot().since)
         }
+
+    // --- the admitted start (ADR-0092) ---
+
+    @Test
+    fun `gated runs an admitted start at once without queueing or taking a slot`() =
+        runBlocking {
+            // One release slot: if the admitted start took one, the parked one behind it could
+            // never be released, and the test would time out.
+            newService(MaintenanceConfig(releaseConcurrency = 1))
+            svc.setEnabled(true)
+            val ran = CompletableDeferred<Unit>()
+
+            withTimeout(5_000) {
+                svc.gated("alice", admitted = true) { ran.complete(Unit) }
+            }
+
+            assertTrue(ran.isCompleted)
+            assertEquals(0, svc.queueDepth())
+            assertEquals(0, svc.snapshot().queued)
+        }
+
+    @Test
+    fun `gated still parks a start the window did not admit`() =
+        runBlocking {
+            newService()
+            svc.setEnabled(true)
+            var ran = false
+
+            val parked = async { svc.gated("alice") { ran = true } }
+            yield()
+            assertFalse(ran)
+            assertEquals(1, svc.queueDepth())
+
+            svc.setEnabled(false)
+            withTimeout(5_000) { parked.await() }
+            assertTrue(ran)
+            assertEquals(0, svc.queueDepth())
+        }
+
+    @Test
+    fun `gated sheds an unadmitted start with the same bound as awaitRelease`() =
+        runBlocking {
+            newService(MaintenanceConfig(maxQueuedStartsPerPrincipal = 1))
+            svc.setEnabled(true)
+
+            val parked = launch { svc.gated("alice") { } }
+            yield()
+
+            assertFailsWith<MaintenanceQueueFullException> { svc.gated("alice") { } }
+
+            svc.setEnabled(false)
+            parked.join()
+        }
+
+    @Test
+    fun `gated gives its slot back when the admitted start fails`() =
+        runBlocking {
+            newService(MaintenanceConfig(releaseConcurrency = 1))
+            svc.setEnabled(true)
+
+            assertFailsWith<IllegalStateException> {
+                svc.gated("alice", admitted = true) { throw IllegalStateException("boom") }
+            }
+
+            // The slot was never taken, so a parked start still gets one.
+            val parked = async { svc.gated("alice") { } }
+            yield()
+            svc.setEnabled(false)
+            withTimeout(5_000) { parked.await() }
+        }
 }

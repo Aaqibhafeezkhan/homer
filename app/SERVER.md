@@ -474,6 +474,15 @@ While it is on:
   admission gate above the claim queue. A start that waits longer than
   `maintenance.queueWaitSec` answers `503`; one that arrives at a full queue
   answers `429`. Neither is replayed.
+- **A start that is part of a run still executing is not parked.** A `!<agent>`
+  hop, a dispatch, or a continuation fire whose origin run is still `WORKING` is
+  admitted at once: it is work the window already let in, and parking it would
+  leave the run that started it unable to finish. The decision comes from the
+  origin run's own row, never from a caller-supplied
+  `X-Homer-Parent-Process-Id` header — a start with no parent (HTTP, MCP, the
+  console) and a start whose origin has already ended park like any other. An
+  admitted start still runs the invocation-chain depth and cycle checks, the cost
+  caps and the cooldown.
 - **A run already `WORKING` keeps running.** This is an admission gate, not a
   kill switch, and it does not touch `/api/v1/readyz`.
 

@@ -338,7 +338,8 @@ class ContinuationServiceTest {
             // The sub finished in the gap between start and insert; the live hook already ran.
             coEvery { processManager.getProcessStatus(42) } returns ProcessStatus.FINISHED
             coEvery { repo.claim(11) } returns true
-            coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                99
 
             val id = service().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, null)
 
@@ -360,7 +361,7 @@ class ContinuationServiceTest {
             service().create(7, 42, "h", emptyMap(), "HMR_LG_RESUME", null, null)
 
             coVerify(exactly = 0) { repo.claim(any()) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     // --- onProcessTerminal ---
@@ -383,6 +384,7 @@ class ContinuationServiceTest {
                 any(),
                 any(),
                 any(),
+                any(),
             )
         } returns
             99
@@ -395,7 +397,7 @@ class ContinuationServiceTest {
 
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
 
-            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), eq(7), any(), any()) }
+            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), eq(7), any(), any(), any()) }
         }
 
     @Test
@@ -430,6 +432,7 @@ class ContinuationServiceTest {
                     any(),
                     parentProcessId = eq(7),
                     rootProcessId = eq(3),
+                    any(),
                     any(),
                 )
             }
@@ -471,6 +474,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = null,
                     any(),
+                    any(),
                 )
             }
         }
@@ -498,6 +502,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = eq(7),
                     any(),
+                    any(),
                 )
             }
         }
@@ -524,6 +529,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = null,
                     any(),
+                    any(),
                 )
             }
         }
@@ -543,7 +549,7 @@ class ContinuationServiceTest {
             val started = mutableListOf<Pair<Int?, Int?>>()
             var nextProcessId = 100
             coEvery {
-                runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any())
+                runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any())
             } coAnswers {
                 val parent = arg<Int?>(7)
                 val root = arg<Int?>(8)
@@ -587,6 +593,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     any(),
+                    any(),
                     capture(resolve),
                 )
             } returns
@@ -623,7 +630,7 @@ class ContinuationServiceTest {
 
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
 
-            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), eq("ci"), any(), any(), any(), any()) }
+            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), eq("ci"), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -636,6 +643,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     eq("continuation"),
+                    any(),
                     any(),
                     any(),
                     any(),
@@ -666,6 +674,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     eq("continuation"),
+                    any(),
                     any(),
                     any(),
                     any(),
@@ -712,6 +721,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     any(),
+                    any(),
                     capture(resolve),
                 )
             } returns
@@ -742,7 +752,7 @@ class ContinuationServiceTest {
             coEvery { repo.findByWatchedProcessId(42) } returns listOf(pending())
             coEvery { repo.claim(5) } returns false
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -758,7 +768,21 @@ class ContinuationServiceTest {
             listOf(ExecutionInfo("cmd", 0, 1, 0, Path.of("cmd_0.out"), Path.of("cmd_0.err"), null))
         coEvery { processManager.getProcessInfo(42) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } returns
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
             99
 
         service().onProcessTerminal(42, ProcessStatus.FINISHED)
@@ -792,7 +816,21 @@ class ContinuationServiceTest {
         coEvery { processManager.getProcessInfo(42) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
         coEvery { resultTokenService.mint(42, "cmd_0.out", transformer, size.toLong(), "h") } returns "tok-xyz"
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } returns
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
             99
 
         service().onProcessTerminal(42, ProcessStatus.FINISHED)
@@ -836,7 +874,21 @@ class ContinuationServiceTest {
             listOf(ExecutionInfo("cmd", 0, 1, -1, Path.of("cmd_1.out"), Path.of("cmd_1.err"), null))
         coEvery { processManager.getProcessInfo(42) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } returns
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
             99
 
         service().onProcessTerminal(42, ProcessStatus.FAILED)
@@ -865,7 +917,7 @@ class ContinuationServiceTest {
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.findByWatchedProcessId(42) } returns listOf(pending())
             coEvery { repo.claim(5) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 ValidationException("input 'X' is required")
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
             coVerify { repo.markFailed(5, any(), 1000L) }
@@ -882,7 +934,7 @@ class ContinuationServiceTest {
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.findByWatchedProcessId(42) } returns listOf(pending())
             coEvery { repo.claim(5) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 CostCapExceededException("global", 1.0, 2.0)
 
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
@@ -900,7 +952,7 @@ class ContinuationServiceTest {
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.findByWatchedProcessId(42) } returns listOf(pending().copy(fireAttempts = 3))
             coEvery { repo.claim(5) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 ProcessManagerAtCapacityException(10)
 
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
@@ -917,7 +969,7 @@ class ContinuationServiceTest {
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.findByWatchedProcessId(42) } returns listOf(pending().copy(fireAttempts = 7))
             coEvery { repo.claim(5) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 CostCapExceededException("global", 1.0, 2.0)
 
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
@@ -937,7 +989,7 @@ class ContinuationServiceTest {
             coEvery { repo.findDueRetries(1000L) } returns listOf(pending().copy(fireAttempts = 1))
             coEvery { repo.claim(5) } returns true
             coEvery { processManager.getProcessStatus(42) } returns ProcessStatus.FINISHED
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
 
             service().sweepRetries()
 
@@ -969,7 +1021,7 @@ class ContinuationServiceTest {
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
 
             coVerify { repo.markFailed(5, match { it.contains("no longer an allowed dispatch target") }, 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -980,7 +1032,7 @@ class ContinuationServiceTest {
             coEvery { repo.claim(5) } returns true
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
             coVerify { repo.markFailed(5, match { it.contains("h") }, 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -992,7 +1044,7 @@ class ContinuationServiceTest {
             service().onProcessTerminal(42, ProcessStatus.FINISHED)
 
             coVerify { repo.markFailed(5, match { it.contains("not authorized") }, 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -1188,7 +1240,8 @@ class ContinuationServiceTest {
             coEvery { processManager.getProcessStatus(10) } returns ProcessStatus.FINISHED
             coEvery { processManager.getProcessStatus(11) } returns ProcessStatus.FINISHED
             coEvery { repo.claim(12) } returns true
-            coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                99
 
             service().createJoin(7, watches, "h", emptyMap(), "HMR_LG_RESUME", null)
 
@@ -1216,7 +1269,7 @@ class ContinuationServiceTest {
         every { agents.agents } returns mapOf("h" to agent)
         coEvery { repo.findJoinsByWatchedProcessId(any()) } returns listOf(continuation)
         coEvery { repo.claim(continuation.id) } returns true
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any()) } returns 99
+        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
     }
 
     @Test
@@ -1247,7 +1300,7 @@ class ContinuationServiceTest {
 
             service().onProcessTerminal(10, ProcessStatus.FINISHED)
 
-            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), eq("ci"), any(), any(), any(), any()) }
+            coVerify { runStarter.start(any(), any(), eq("continuation"), any(), any(), eq("ci"), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -1284,6 +1337,7 @@ class ContinuationServiceTest {
                     any(),
                     parentProcessId = eq(7),
                     rootProcessId = eq(3),
+                    any(),
                     any(),
                 )
             }
@@ -1325,6 +1379,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = null,
                     any(),
+                    any(),
                 )
             }
         }
@@ -1354,6 +1409,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = eq(7),
                     any(),
+                    any(),
                 )
             }
         }
@@ -1382,6 +1438,7 @@ class ContinuationServiceTest {
                     parentProcessId = eq(7),
                     rootProcessId = null,
                     any(),
+                    any(),
                 )
             }
         }
@@ -1399,7 +1456,7 @@ class ContinuationServiceTest {
 
             service().onProcessTerminal(10, ProcessStatus.FINISHED)
 
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -1413,7 +1470,7 @@ class ContinuationServiceTest {
             service().onProcessTerminal(10, ProcessStatus.FINISHED)
 
             coVerify { repo.markFailed(5, match { it.contains("not authorized") }, 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -1430,7 +1487,7 @@ class ContinuationServiceTest {
             service().onProcessTerminal(10, ProcessStatus.FINISHED)
 
             coVerify { repo.markFailed(5, match { it.contains("no longer an allowed dispatch target") }, 1000L) }
-            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -1459,7 +1516,21 @@ class ContinuationServiceTest {
             listOf(ExecutionInfo("c", 0, 1, 0, Path.of("b.out"), Path.of("b.err"), null))
         coEvery { processManager.getProcessInfo(any()) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } returns
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
             99
         val captured = slot<Map<String, String>>()
         every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
@@ -1494,7 +1565,21 @@ class ContinuationServiceTest {
         coEvery { processManager.getProcessInfo(10) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
         coEvery { resultTokenService.mint(10, "big.out", tf, size.toLong(), "h") } returns "tok-xyz"
         val resolve = slot<suspend () -> Map<String, String>>()
-        coEvery { runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), capture(resolve)) } returns
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
             99
         val captured = slot<Map<String, String>>()
         every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
@@ -1529,6 +1614,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     any(),
+                    any(),
                     capture(resolve),
                 )
             } returns
@@ -1557,7 +1643,7 @@ class ContinuationServiceTest {
             coEvery { processManager.getProcessStatus(11) } returns ProcessStatus.WORKING
             coEvery { processManager.getProcessStatus(20) } returns ProcessStatus.FINISHED
             coEvery { repo.claim(2) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
 
             service().refirePendingTerminal()
 
@@ -1622,7 +1708,7 @@ class ContinuationServiceTest {
             coEvery { processManager.getProcessStatus(20) } returns ProcessStatus.FINISHED
             coEvery { repo.claim(1) } returns true
             coEvery { repo.claim(2) } returns true
-            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
 
             service().refirePendingTerminal()
 
@@ -1641,6 +1727,7 @@ class ContinuationServiceTest {
                     any(),
                     any(),
                     eq("continuation"),
+                    any(),
                     any(),
                     any(),
                     any(),

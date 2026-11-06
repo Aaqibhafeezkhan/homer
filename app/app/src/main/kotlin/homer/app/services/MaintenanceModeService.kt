@@ -40,6 +40,9 @@ internal fun interface MaintenanceSlot {
  * A queued start is only *parked* here: the caller runs its own preflight (cycle, depth,
  * cost cap, cooldown) and input resolution after [awaitRelease] returns, so a released
  * start is validated against the state in force at dequeue, not at enqueue.
+ *
+ * A start that is part of already-admitted work — a `!<agent>` hop or a dispatch made by a run
+ * that is still `WORKING` — does not park: it is admitted, not new. See [gated] and ADR-0092.
  */
 internal class MaintenanceModeService(
     private val repository: ServerMetaRepository,
@@ -250,12 +253,19 @@ internal class MaintenanceModeService(
  * [start], so a released start is validated against the state in force at dequeue — and the slot
  * is held until [start]'s run exists. `AgentRunStarter.start` and the direct-build start paths in
  * `routes/RunHandlers.kt` both go through this, so the discipline cannot drift between them.
- * See ADR-0092.
+ *
+ * [admitted] marks a start that is part of work the window already admitted: a `!<agent>` hop or a
+ * dispatch made by a run that is still `WORKING`. Such a start never queues — its parent is inside
+ * the window the mode exists to drain, and parking it would block that parent until the mode goes
+ * off (or fail it with a wait timeout). The flag is decided from the parent's own row, never from
+ * a caller-supplied parent id. See ADR-0092.
  */
 internal suspend fun <T> MaintenanceModeService.gated(
     owner: String?,
+    admitted: Boolean = false,
     start: suspend () -> T,
 ): T {
+    if (admitted) return start()
     val slot = awaitRelease(owner)
     try {
         return start()

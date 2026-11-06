@@ -365,6 +365,9 @@ val appModule =
                 maxInvocationDepth = get<AppConfig>().server.maxAgentInvocationDepth,
                 cooldownGate = get(),
                 maintenanceGate = get(),
+                // The parent-liveness read behind the maintenance bypass: a start whose
+                // server-derived parent is still `WORKING` is admitted. ADR-0092.
+                processReads = get<ProcessManager>(),
             )
         }
 

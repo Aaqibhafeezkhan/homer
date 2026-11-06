@@ -9,6 +9,8 @@ import homer.app.infra.langfuseTraceTags
 import homer.app.infra.startAgentRootSpan
 import homer.app.models.Agent
 import homer.app.models.Command
+import homer.app.models.ProcessStatus
+import homer.app.services.persistence.ProcessRecordReads
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.StatusCode
@@ -31,8 +33,12 @@ internal class AgentRunStarter(
     private val cooldownGate: CooldownGate,
     // The maintenance-mode admission gate. It sits above the claim queue, so every runner
     // backend and every start source (HTTP, MCP, dispatch, continuation, `!agent`) queues
-    // identically while the mode is on. See ADR-0092.
+    // identically while the mode is on — except a start from a run that is still `WORKING`,
+    // which is admitted. See ADR-0092.
     private val maintenanceGate: MaintenanceModeService,
+    // Read for the parent row's status: a start whose server-derived parent is still `WORKING`
+    // is part of admitted work and does not park at the gate. See ADR-0092.
+    private val processReads: ProcessRecordReads,
 ) {
     /**
      * Starts an agent run and returns the new process id.
@@ -63,19 +69,23 @@ internal class AgentRunStarter(
         // the same already-validated parent. Stored with the row and exported as
         // HMR_ROOT_PROCESS_ID. Null for a run with no parent. ADR-0058.
         rootProcessId: Int? = null,
+        // True only for a path whose [parentProcessId] the server derived from a run it knows
+        // is live (a `!<agent>` hop, a dispatch): it may admit this start without queueing when
+        // that parent row still reads `WORKING`. A caller-supplied or inherited parent link
+        // (HTTP parent header, retry, resume) leaves this false, so it never bypasses. ADR-0092.
+        serverDerivedParent: Boolean = false,
         resolveInputs: suspend () -> Map<String, String>,
     ): Int {
         val span = telemetryService.tracer.startAgentRootSpan(agent, "agent_request")
 
         try {
             val context = Context.current().with(span)
-            // Parks this start while maintenance mode is on, before any preflight: a start
-            // released later must re-run the cycle/depth/cost/cooldown checks and resolve its
-            // inputs against the state in force at dequeue, not at enqueue. The gate holds its
-            // release slot until the run exists — or the start fails — and frees it even when
-            // this caller is cancelled. See ADR-0092.
+            val admitted = admittedByLiveParent(serverDerivedParent, parentProcessId)
+            // Parks this start while maintenance mode is on, before any preflight: a released
+            // start must re-run the checks and resolve its inputs at dequeue, not at enqueue.
+            // See ADR-0092.
             val processId =
-                maintenanceGate.gated(owner) {
+                maintenanceGate.gated(owner, admitted) {
                     checkPreflight(agent, invocationChain)
                     val newChain = invocationChain + agent.name
                     val queryParamsEnv = resolveInputs()
@@ -101,7 +111,16 @@ internal class AgentRunStarter(
 
                     val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
                     span.setAllAttributes(
-                        runAttributes(result.processId, agent, source, parentProcessId, rootProcessId, traceTags, extraAttributes),
+                        runAttributes(
+                            result.processId,
+                            agent,
+                            source,
+                            parentProcessId,
+                            rootProcessId,
+                            admitted,
+                            traceTags,
+                            extraAttributes,
+                        ),
                     )
                     result.processId
                 }
@@ -116,6 +135,25 @@ internal class AgentRunStarter(
             span.end()
         }
     }
+
+    /**
+     * Whether this start is part of work the maintenance window already admitted: [serverDerivedParent]
+     * is set (the caller derived the link from a run it knows is live — a `!<agent>` hop, a dispatch, a
+     * continuation fire) **and** that run's own row still reads `WORKING`. A parent that is absent or
+     * already terminal parks as before.
+     *
+     * [information_disclosure / CWE-200] The status is read from the row, never taken from the caller's
+     * link, and a false flag short-circuits **before** the read: a caller-supplied parent admits nothing
+     * and probes nothing, so naming a parent cannot turn this into an existence check on a row the caller
+     * cannot see (root §12 rule 3). See ADR-0092.
+     */
+    private suspend fun admittedByLiveParent(
+        serverDerivedParent: Boolean,
+        parentProcessId: Int?,
+    ): Boolean =
+        serverDerivedParent &&
+            parentProcessId != null &&
+            processReads.getProcessStatus(parentProcessId) == ProcessStatus.WORKING
 
     /**
      * The request-boundary refusals, in order: invocation cycle, depth, cost cap,
@@ -153,6 +191,7 @@ internal class AgentRunStarter(
         source: String,
         parentProcessId: Int?,
         rootProcessId: Int?,
+        admitted: Boolean,
         traceTags: List<String>,
         extraAttributes: Attributes,
     ): Attributes =
@@ -164,6 +203,9 @@ internal class AgentRunStarter(
             .put("request.source", source)
             .apply { parentProcessId?.let { put("parent.process.id", it.toLong()) } }
             .apply { rootProcessId?.let { put("root.process.id", it.toLong()) } }
+            // Why this start did not wait at the maintenance gate: a boolean only, never a
+            // parent's inputs. False for every start that parked or ran with the mode off.
+            .put("maintenance.bypassed", admitted)
             // Langfuse names a trace after its root span, which is the constant
             // "agent_request" — so every run of every agent lands under one name and its
             // trace API (name/tags/userId/sessionId only) cannot separate them. These two

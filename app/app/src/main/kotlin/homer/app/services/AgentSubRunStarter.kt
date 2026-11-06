@@ -52,6 +52,9 @@ internal class AgentSubRunStarter(
             owner = owner,
             parentProcessId = parentProcessId,
             rootProcessId = rootProcessId,
+            // The hop's parent is the executing run, which this adapter never takes from the
+            // caller — so the start may be admitted while that run is still `WORKING`. ADR-0092.
+            serverDerivedParent = true,
             resolveInputs = resolveInputs,
         )
 }
