@@ -147,9 +147,9 @@ test('only mutants on changed lines remain, with their repository path', () => {
 /**
  * Runs `main` in a temporary repository whose last commit adds `A.kt` with `text`, against a
  * stand-in for Gradle that records its arguments, writes `mutations` as PIT's report and exits
- * `exit`. Returns main's output (or the error it threw) and the recorded arguments, if any.
+ * `exit` (and `exceptions` as the backend exceptions file, when given). Returns main's output (or the error it threw) and the recorded arguments, if any.
  */
-async function runMain(text, { mutations = [], exit = 0 } = {}) {
+async function runMain(text, { mutations = [], exit = 0, exceptions } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-changed-'));
   const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
@@ -160,6 +160,10 @@ async function runMain(text, { mutations = [], exit = 0 } = {}) {
   const xml = mutations.map((line) => `<mutation status='SURVIVED'><sourceFile>A.kt</sourceFile><mutatedClass>homer.app.A</mutatedClass><mutatedMethod>f</mutatedMethod><lineNumber>${line}</lineNumber><description>d</description></mutation>`);
   fs.mkdirSync(path.join(dir, 'app'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'app/report.xml'), `<mutations>${xml.join('')}</mutations>`);
+  if (exceptions !== undefined) {
+    fs.mkdirSync(path.join(dir, 'tools/quality/mutation-exceptions'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'tools/quality/mutation-exceptions/backend.json'), exceptions);
+  }
   fs.writeFileSync(path.join(dir, 'app/gradlew'), `#!/bin/sh\nprintf "%s\\n" "$@" > app/args.txt\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\nexit ${exit}\n`, { mode: 0o755 });
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
@@ -200,6 +204,12 @@ test('main skips a comment-only change without running Gradle', async () => {
 test('main fails when Gradle fails, rather than reporting', async () => {
   const { output } = await runMain(source('homer.app', 'class A'), { exit: 1 });
   assert.match(output.message, /:app:pitest exited 1/);
+});
+
+test('main fails on a malformed exceptions file before running Gradle', async () => {
+  const { output, args } = await runMain(source('homer.app', 'class A'), { exceptions: '{"a.kt#m#d#x": ""}' });
+  assert.match(output.message, /non-empty reason: a\.kt#m#d#x/);
+  assert.equal(args, null);
 });
 
 test('the Gradle property main passes is the one the build script reads', () => {

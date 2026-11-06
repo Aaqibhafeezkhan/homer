@@ -180,4 +180,112 @@ class PathSafetyTest {
         assertFalse(PathSafety.isHardLinked(Files.createSymbolicLink(root.resolve("link"), plain)))
         assertFalse(PathSafety.isHardLinked(root.resolve("missing")))
     }
+
+    @Test
+    fun `an existing candidate reached through an in-root symlink resolves to its real path`(
+        @TempDir root: Path,
+    ) {
+        val real = Files.createFile(Files.createDirectories(root.resolve("real")).resolve("file.txt"))
+        val link = Files.createSymbolicLink(root.resolve("link.txt"), Path.of("real/file.txt"))
+
+        assertEquals(real.toRealPath(), PathSafety.assertContained(root, link))
+    }
+
+    /** `l0 -> l1 -> ... -> l(count-1) -> end`, all dangling, all inside [root]; returns the links. */
+    private fun danglingChain(
+        root: Path,
+        count: Int,
+    ): List<Path> {
+        val links = (0 until count).map { root.resolve("l$it") }
+        links.forEachIndexed { i, link ->
+            val next = if (i == count - 1) "end" else "l${i + 1}"
+            Files.createSymbolicLink(link, Path.of(next))
+        }
+        return links
+    }
+
+    @Test
+    fun `a dangling chain at the hop limit is followed to its end and one past it is refused`(
+        @TempDir root: Path,
+    ) {
+        val atLimit = danglingChain(root.resolve("a").also { Files.createDirectories(it) }, 40)
+        PathSafety.assertDanglingLinkContained(root, atLimit.first())
+
+        val pastLimit = danglingChain(root.resolve("b").also { Files.createDirectories(it) }, 41)
+        assertFailsWith<SecurityException> { PathSafety.assertDanglingLinkContained(root, pastLimit.first()) }
+    }
+
+    @Test
+    fun `resolveDanglingLinkTarget follows a chain of 40 links to its destination and stops at the 41st`(
+        @TempDir root: Path,
+    ) {
+        val realRoot = root.toRealPath()
+        val atLimit = danglingChain(root.resolve("a").also { Files.createDirectories(it) }, 40)
+        assertEquals(realRoot.resolve("a/end"), PathSafety.resolveDanglingLinkTarget(atLimit.first()))
+
+        val pastLimit = danglingChain(root.resolve("b").also { Files.createDirectories(it) }, 41)
+        assertEquals(realRoot.resolve("b/l40"), PathSafety.resolveDanglingLinkTarget(pastLimit.first()))
+    }
+
+    @Test
+    fun `resolveDanglingLinkTarget terminates on a dangling loop`(
+        @TempDir root: Path,
+    ) {
+        Files.createSymbolicLink(root.resolve("a"), Path.of("b"))
+        Files.createSymbolicLink(root.resolve("b"), Path.of("a"))
+
+        val landed = PathSafety.resolveDanglingLinkTarget(root.resolve("a"))
+        assertTrue(landed in setOf(root.toRealPath().resolve("a"), root.toRealPath().resolve("b")), "landed at $landed")
+    }
+
+    @Test
+    fun `resolveDanglingLinkTarget resolves an intermediate symlink component and an existing path to real paths`(
+        @TempDir root: Path,
+    ) {
+        val realRoot = root.toRealPath()
+        Files.createDirectories(root.resolve("real"))
+        Files.createSymbolicLink(root.resolve("link"), Path.of("real"))
+        val existing = Files.createFile(root.resolve("real/exists.txt"))
+
+        assertEquals(realRoot.resolve("real/new.txt"), PathSafety.resolveDanglingLinkTarget(root.resolve("link/new.txt")))
+        assertEquals(realRoot.resolve("real/deep/er/new.txt"), PathSafety.resolveDanglingLinkTarget(root.resolve("link/deep/er/new.txt")))
+        assertEquals(existing.toRealPath(), PathSafety.resolveDanglingLinkTarget(root.resolve("link/exists.txt")))
+    }
+
+    @Test
+    fun `a dangling link that stays inside the root is allowed, including through dot-dot`(
+        @TempDir root: Path,
+    ) {
+        Files.createDirectories(root.resolve("sub"))
+        Files.createSymbolicLink(root.resolve("inside"), Path.of("not-yet.txt"))
+        Files.createSymbolicLink(root.resolve("sub/up"), Path.of("../not-yet-either.txt"))
+
+        PathSafety.assertDanglingLinkContained(root, root.resolve("inside"))
+        PathSafety.assertDanglingLinkContained(root, root.resolve("sub/up"))
+    }
+
+    @Test
+    fun `a dangling link that leaves the root is refused, even towards a sibling sharing the root's name prefix`(
+        @TempDir parent: Path,
+    ) {
+        val root = Files.createDirectories(parent.resolve("root"))
+        Files.createDirectories(parent.resolve("root-evil"))
+        Files.createSymbolicLink(root.resolve("up"), Path.of("../outside.txt"))
+        Files.createSymbolicLink(root.resolve("sibling"), Path.of("../root-evil/f"))
+        Files.createSymbolicLink(root.resolve("absolute"), parent.resolve("elsewhere.txt"))
+
+        listOf("up", "sibling", "absolute").forEach {
+            assertFailsWith<SecurityException>("$it must be refused") {
+                PathSafety.assertDanglingLinkContained(root, root.resolve(it))
+            }
+        }
+    }
+
+    @Test
+    fun `a candidate that is not a dangling link passes assertDanglingLinkContained`(
+        @TempDir root: Path,
+    ) {
+        PathSafety.assertDanglingLinkContained(root, root.resolve("missing.txt"))
+        PathSafety.assertDanglingLinkContained(root, Files.createFile(root.resolve("present.txt")))
+    }
 }

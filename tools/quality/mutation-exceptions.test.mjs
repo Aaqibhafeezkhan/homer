@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
-import { applyExceptions, countFindings, formatAccepted, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
+import { BACKEND_EXCEPTIONS, CONSOLE_EXCEPTIONS, applyExceptions, countFindings, formatAccepted, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 const write = (text) => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exceptions-')), 'e.json');
@@ -108,4 +108,19 @@ test('writeAccepted writes <check>-accepted.txt with one line per accepted mutan
   assert.equal(fs.readFileSync(path.join(dir, 'mutation-x-accepted.txt'), 'utf8'), 'a#b#c  — one\nd#e#f  — two lines\n');
   writeAccepted(dir, 'mutation-x', []);
   assert.equal(fs.readFileSync(path.join(dir, 'mutation-x-accepted.txt'), 'utf8'), '');
+});
+
+test('the checked-in exceptions files load, and each key names a source file that exists', () => {
+  const root = path.resolve(import.meta.dirname, '../..');
+  for (const [file, sourceRoot] of [
+    [BACKEND_EXCEPTIONS, 'app/app/src/main/kotlin'],
+    [CONSOLE_EXCEPTIONS, 'console'],
+  ]) {
+    const exceptions = loadExceptions(path.join(root, file));
+    for (const key of Object.keys(exceptions)) {
+      assert.ok(key.split('#').length >= 4, `${file}: key has fewer than 4 #-separated parts: ${key}`);
+      const source = key.slice(0, key.indexOf('#'));
+      assert.ok(fs.existsSync(path.join(root, sourceRoot, source)), `${file}: no such source file ${sourceRoot}/${source}: ${key}`);
+    }
+  }
 });

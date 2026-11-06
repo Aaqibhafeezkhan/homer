@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Test-only: requires maxParallelRuns, a field the Agent model defaults to 10, so it is present only when defaults are encoded.",
+  "type": "object",
+  "required": ["name", "commands", "maxParallelRuns"],
+  "properties": {
+    "maxParallelRuns": { "const": 10 }
+  }
+}

@@ -158,6 +158,14 @@ class LlmOutputJsonTest {
     }
 
     @Test
+    fun `translateStream counts every malformed line but previews only the first five`() {
+        val raw = (1..7).map { JsonObject(mapOf("n" to JsonPrimitive(it))) }
+        val s = translateStream(raw) { Translation.Malformed("bad") }
+        assertEquals(7L, s.malformed)
+        assertEquals((1..5).map { """{"n":$it}""" }, s.malformedPreview)
+    }
+
+    @Test
     fun `scan collects session id cost resultSeen usage and distinct model calls`() {
         val scan =
             scanLlmAccounting(

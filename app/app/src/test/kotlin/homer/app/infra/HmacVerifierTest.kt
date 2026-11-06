@@ -99,7 +99,7 @@ class HmacVerifierTest {
                 rawBody = """{"x":2}""".toByteArray(),
             )
 
-        assertTrue(result is HmacVerifier.Result.Rejected)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: no matching key"), result)
     }
 
     @Test
@@ -113,7 +113,7 @@ class HmacVerifierTest {
                 headers = { null },
                 rawBody = byteArrayOf(),
             )
-        assertTrue(result is HmacVerifier.Result.Rejected)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: no matching key"), result)
     }
 
     @Test
@@ -152,7 +152,7 @@ class HmacVerifierTest {
                 headers = { if (it == "X-Sig") sig else null },
                 rawBody = body,
             )
-        assertTrue(result is HmacVerifier.Result.Rejected)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: no matching key"), result)
     }
 
     @Test
@@ -214,7 +214,7 @@ class HmacVerifierTest {
                 headers = { mapOf("X-Sig" to sig, "X-Ts" to tsSec.toString())[it] },
                 rawBody = body,
             )
-        assertTrue(result is HmacVerifier.Result.Rejected)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: no matching key"), result)
     }
 
     @Test
@@ -245,7 +245,7 @@ class HmacVerifierTest {
                 headers = { if (it == "X-Sig") "zzzz-not-hex" else null },
                 rawBody = byteArrayOf(),
             )
-        assertTrue(result is HmacVerifier.Result.Rejected)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: no matching key"), result)
     }
 
     @Test
@@ -290,7 +290,7 @@ class HmacVerifierTest {
         val first = v.verify(keys = mapOf("k" to cfg), method = "POST", path = "/p", headers = { headers[it] }, rawBody = body)
         val second = v.verify(keys = mapOf("k" to cfg), method = "POST", path = "/p", headers = { headers[it] }, rawBody = body)
         assertTrue(first is HmacVerifier.Result.Authenticated, "first use should authenticate, got $first")
-        assertTrue(second is HmacVerifier.Result.Rejected, "replay should be rejected, got $second")
+        assertEquals(HmacVerifier.Result.Rejected("hmac: signature replayed within the freshness window"), second)
     }
 
     @Test
@@ -341,5 +341,159 @@ class HmacVerifierTest {
         val second = v.verify(keys = mapOf("k" to cfg), method = "POST", path = "/p", headers = { headers[it] }, rawBody = body)
         assertTrue(first is HmacVerifier.Result.Authenticated)
         assertTrue(second is HmacVerifier.Result.Authenticated, "no timestamp -> no dedup, got $second")
+    }
+
+    private val noMatch = "hmac: no matching key"
+
+    private fun timestampedConfig(tolerance: Long = 60) =
+        HmacKeyConfig(
+            secret = "k",
+            signatureHeader = "X-Sig",
+            timestampHeader = "X-Ts",
+            payloadTemplate = "{{timestamp}}.{{body}}",
+            replayToleranceSec = tolerance,
+        )
+
+    /** Verifies a request signed over [tsHeader] (the raw header text), with the verifier clock at [nowMillis]. */
+    private fun verifyTimestamped(
+        tsHeader: String,
+        nowMillis: Long,
+        cache: HmacReplayCache? = null,
+    ): HmacVerifier.Result {
+        val sig = hex(sign("k", "HmacSHA256", "$tsHeader.x".toByteArray()))
+        val headers = mapOf("X-Sig" to sig, "X-Ts" to tsHeader)
+        return HmacVerifier(clock = { nowMillis }, replayCache = cache)
+            .verify(
+                keys = mapOf("k" to timestampedConfig()),
+                method = "POST",
+                path = "/p",
+                headers = { headers[it] },
+                rawBody = "x".toByteArray(),
+            )
+    }
+
+    @Test
+    fun `a timestamp exactly at the tolerance is accepted and one second over is rejected`() {
+        val tsSec = 1_700_000_000L
+        assertTrue(verifyTimestamped(tsSec.toString(), tsSec * 1000 + 60_000) is HmacVerifier.Result.Authenticated)
+        val over = verifyTimestamped(tsSec.toString(), tsSec * 1000 + 61_000)
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), over)
+    }
+
+    @Test
+    fun `a timestamp from the future beyond the tolerance is rejected`() {
+        val tsSec = 1_700_000_000L
+        val result = verifyTimestamped(tsSec.toString(), tsSec * 1000 - 120_000)
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), result)
+        assertTrue(verifyTimestamped(tsSec.toString(), tsSec * 1000 - 60_000) is HmacVerifier.Result.Authenticated)
+    }
+
+    @Test
+    fun `a non-numeric timestamp header is rejected`() {
+        val result = verifyTimestamped("yesterday", 1_700_000_000_000L)
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), result)
+    }
+
+    @Test
+    fun `a non-numeric or missing timestamp is not read as the epoch even when the clock stands at zero`() {
+        val rejected = verifyTimestamped("yesterday", nowMillis = 0L)
+        assertEquals(noMatch, (rejected as HmacVerifier.Result.Rejected).reason)
+
+        val sig = hex(sign("k", "HmacSHA256", ".x".toByteArray()))
+        val missing =
+            HmacVerifier(clock = { 0L }).verify(
+                keys = mapOf("k" to timestampedConfig()),
+                method = "POST",
+                path = "/p",
+                headers = { if (it == "X-Sig") sig else null },
+                rawBody = "x".toByteArray(),
+            )
+        assertEquals(noMatch, (missing as HmacVerifier.Result.Rejected).reason)
+    }
+
+    @Test
+    fun `a missing timestamp header is rejected`() {
+        val sig = hex(sign("k", "HmacSHA256", ".x".toByteArray()))
+        val result =
+            HmacVerifier(clock = { 1_700_000_000_000L }).verify(
+                keys = mapOf("k" to timestampedConfig()),
+                method = "POST",
+                path = "/p",
+                headers = { if (it == "X-Sig") sig else null },
+                rawBody = "x".toByteArray(),
+            )
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), result)
+    }
+
+    @Test
+    fun `a timestamp in seconds and one in milliseconds both denote the same instant`() {
+        val nowMillis = 1_700_000_000_000L
+        assertTrue(verifyTimestamped("1700000000", nowMillis) is HmacVerifier.Result.Authenticated)
+        assertTrue(verifyTimestamped("1700000000000", nowMillis) is HmacVerifier.Result.Authenticated)
+    }
+
+    @Test
+    fun `the seconds-versus-milliseconds cutoff treats exactly 10^12 as seconds`() {
+        // 10^12 read as milliseconds would be a valid "now" for this clock; as seconds it is
+        // 10^15 ms, far in the future, so it must be rejected.
+        val cutoff = 1_000_000_000_000L
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), verifyTimestamped(cutoff.toString(), cutoff))
+        assertTrue(verifyTimestamped((cutoff + 1).toString(), cutoff + 1) is HmacVerifier.Result.Authenticated)
+    }
+
+    @Test
+    fun `a replay later than the tolerance but within twice it is still rejected`() {
+        val tsSec = 1_700_000_000L
+        val verifierNow = tsSec * 1000 + 1_000
+        var cacheNow = verifierNow
+        val cache = HmacReplayCache(clock = { cacheNow })
+        val first = verifyTimestamped(tsSec.toString(), verifierNow, cache)
+        assertTrue(first is HmacVerifier.Result.Authenticated, "first use should authenticate, got $first")
+
+        cacheNow = verifierNow + 90_000 // beyond the 60 s tolerance, inside 2 x tolerance
+        val replay = verifyTimestamped(tsSec.toString(), verifierNow, cache)
+        assertEquals(HmacVerifier.Result.Rejected("hmac: signature replayed within the freshness window"), replay)
+
+        cacheNow = verifierNow + 121_000 // past 2 x tolerance the marker has lapsed
+        assertTrue(verifyTimestamped(tsSec.toString(), verifierNow, cache) is HmacVerifier.Result.Authenticated)
+    }
+
+    @Test
+    fun `a signature with an odd number of hex digits is rejected even when its even prefix is the valid MAC`() {
+        val body = "b".toByteArray()
+        val sig = hex(sign("s", "HmacSHA256", body))
+        val cfg = HmacKeyConfig(secret = "s", signatureHeader = "X-Sig")
+        val result =
+            verifier().verify(
+                keys = mapOf("k" to cfg),
+                method = "POST",
+                path = "/p",
+                headers = { if (it == "X-Sig") sig + "0" else null },
+                rawBody = body,
+            )
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), result)
+    }
+
+    @Test
+    fun `a signature with a non-hex character is rejected even when it would decode to the valid MAC`() {
+        // Without the hex check, Character.digit('g', 16) == -1 turns the pair "0g" into 0xff,
+        // so a MAC containing an "ff" byte would verify with that byte spelled "0g".
+        val cfg = HmacKeyConfig(secret = "s", signatureHeader = "X-Sig")
+        val body =
+            generateSequence(0) {
+                it + 1
+            }.map { "body-$it".toByteArray() }.first { hex(sign("s", "HmacSHA256", it)).chunked(2).contains("ff") }
+        val pairs = hex(sign("s", "HmacSHA256", body)).chunked(2).toMutableList()
+        pairs[pairs.indexOf("ff")] = "0g"
+        val forged = pairs.joinToString("")
+        val result =
+            verifier().verify(
+                keys = mapOf("k" to cfg),
+                method = "POST",
+                path = "/p",
+                headers = { if (it == "X-Sig") forged else null },
+                rawBody = body,
+            )
+        assertEquals(HmacVerifier.Result.Rejected(noMatch), result)
     }
 }

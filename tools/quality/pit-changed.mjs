@@ -156,6 +156,7 @@ function changedSince(base) {
 }
 
 export function main() {
+  const exceptions = loadExceptions(BACKEND_EXCEPTIONS); // a bad entry fails before the PIT run, not after it
   const base = process.env.MUTATE_BASE;
   const { globs, lines } = changedSources(base ? changedSince(base) : new Map(), readSource);
   if (globs.length === 0) {
@@ -166,7 +167,7 @@ export function main() {
   fs.rmSync(xml, { force: true });
   const gradle = spawnSync(path.join('app', 'gradlew'), ['-p', 'app', '--console=plain', ':app:pitest', `-PpitestTargetClasses=${globs.join(',')}`], { stdio: 'inherit' });
   if (gradle.status !== 0) throw new Error(`:app:pitest exited ${gradle.status ?? gradle.error?.message}`);
-  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines), { exceptions: loadExceptions(BACKEND_EXCEPTIONS), full: false });
+  return writeReport(REPORT_DIR, TITLE, withinChanged(readMutations(xml), lines), { exceptions, full: false });
 }
 
 runMain(import.meta, () => main());

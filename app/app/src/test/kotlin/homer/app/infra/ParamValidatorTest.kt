@@ -2,6 +2,10 @@ package homer.app.infra
 
 import homer.app.models.Param
 import homer.app.models.ParamType
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.int
+import io.kotest.property.checkAll
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -325,5 +329,118 @@ class ParamValidatorTest {
             assertTrue("input 'p': boolean params accept only 'default'" in declErrors(bad), "$bad")
         }
         assertEquals(emptyList(), declErrors(Param(paramName = "p", type = ParamType.BOOL, required = false, default = "true")))
+    }
+
+    // Boundaries: exactly on the bound is accepted, one step past it is rejected.
+
+    @Test
+    fun `number accepts a value exactly on min and on max and rejects the next step past each`() {
+        val p = param(ParamType.NUM, name = "ratio", min = 0.5, max = 1.5)
+        assertValid("0.5", "0.5", p)
+        assertValid("1.5", "1.5", p)
+        assertInvalid("0.4999", p, "must be >= 0.5, got 0.4999")
+        assertInvalid("1.5001", p, "must be <= 1.5, got 1.5001")
+    }
+
+    @Test
+    fun `number with only one bound enforces just that bound`() {
+        val minOnly = param(ParamType.NUM, min = -2.0)
+        assertValid("-2", "-2", minOnly)
+        assertValid("1000000", "1000000", minOnly)
+        assertInvalid("-2.1", minOnly, "must be >= -2")
+        val maxOnly = param(ParamType.NUM, max = -2.0)
+        assertValid("-2", "-2", maxOnly)
+        assertValid("-1000000", "-1000000", maxOnly)
+        assertInvalid("-1.9", maxOnly, "must be <= -2")
+    }
+
+    @Test
+    fun `integer with only one bound enforces just that bound`() {
+        val minOnly = param(ParamType.INT, min = 5.0)
+        assertValid("5", "5", minOnly)
+        assertInvalid("4", minOnly, "must be >= 5")
+        val maxOnly = param(ParamType.INT, max = 5.0)
+        assertValid("5", "5", maxOnly)
+        assertInvalid("6", maxOnly, "must be <= 5")
+    }
+
+    @Test
+    fun `string accepts a length exactly on minLength and on maxLength and rejects one past each`() {
+        val p = param(ParamType.STR, minLength = 2, maxLength = 4)
+        assertValid("ab", "ab", p)
+        assertValid("abcd", "abcd", p)
+        assertInvalid("a", p, "must be at least 2 characters")
+        assertInvalid("abcde", p, "must be at most 4 characters")
+        assertInvalid("", param(ParamType.STR, minLength = 1), "must be at least 1 characters")
+        assertValid("", "", param(ParamType.STR, maxLength = 0))
+        assertInvalid("a", param(ParamType.STR, maxLength = 0), "must be at most 0 characters")
+    }
+
+    @Test
+    fun `an empty values list rejects every typed value`() {
+        assertInvalid("1", param(ParamType.INT, values = emptyList()), "must be one of []")
+        assertInvalid("1.5", param(ParamType.NUM, values = emptyList()), "must be one of []")
+        assertInvalid("x", param(ParamType.STR, values = emptyList()), "must be one of []")
+    }
+
+    @Test
+    fun `integer and number values reject a value that matches none of the numeric entries`() {
+        assertInvalid("3", param(ParamType.INT, values = listOf("1", "2")), "must be one of [1, 2]")
+        assertValid("1", "1", param(ParamType.INT, values = listOf("1", "2")))
+        assertInvalid("0.5", param(ParamType.NUM, values = listOf("1.5", "2.5")), "must be one of [1.5, 2.5]")
+        assertValid("2.5", "2.5", param(ParamType.NUM, values = listOf("1.5", "2.5")))
+    }
+
+    @Test
+    fun `any integer value is accepted exactly when it lies within min and max`() =
+        runTest {
+            checkAll(Arb.int(-1000..1000), Arb.int(0..50), Arb.int(-1100..1100)) { min, span, value ->
+                val max = min + span
+                val p = param(ParamType.INT, min = min.toDouble(), max = max.toDouble())
+                val accepted = validator.validate(value.toString(), p) is ParamValidation.Valid
+                assertEquals(value in min..max, accepted, "value $value, bounds $min..$max")
+            }
+        }
+
+    @Test
+    fun `number accepts the largest finite double and rejects a value that overflows to infinity`() {
+        assertValid("1.7976931348623157E308", "1.7976931348623157E308", param(ParamType.NUM))
+        assertValid("-1.7976931348623157E308", "-1.7976931348623157E308", param(ParamType.NUM))
+        assertInvalid("1e309", param(ParamType.NUM), "must be a number")
+        assertInvalid("-1e309", param(ParamType.NUM), "must be a number")
+    }
+
+    // validateDeclaration bounds: equal bounds are well-formed, inverted bounds are not.
+
+    @Test
+    fun `equal min and max is a well-formed declaration and an inverted one is rejected with both bounds named`() {
+        assertEquals(emptyList(), declErrors(param(ParamType.INT, min = 5.0, max = 5.0)))
+        assertEquals(emptyList(), declErrors(param(ParamType.NUM, min = 0.5, max = 0.5)))
+        assertEquals(listOf("input 'p': min (5.0) > max (4.0)"), declErrors(param(ParamType.INT, min = 5.0, max = 4.0)))
+    }
+
+    @Test
+    fun `equal minLength and maxLength and a zero length are well-formed and a negative length is rejected`() {
+        assertEquals(emptyList(), declErrors(param(ParamType.STR, minLength = 3, maxLength = 3)))
+        assertEquals(emptyList(), declErrors(param(ParamType.STR, minLength = 0)))
+        assertEquals(emptyList(), declErrors(param(ParamType.STR, maxLength = 0)))
+        assertEquals(
+            listOf("input 'p': minLength (4) > maxLength (3)"),
+            declErrors(param(ParamType.STR, minLength = 4, maxLength = 3)),
+        )
+        assertEquals(listOf("input 'p': minLength/maxLength must be >= 0"), declErrors(param(ParamType.STR, minLength = -1)))
+        assertEquals(listOf("input 'p': minLength/maxLength must be >= 0"), declErrors(param(ParamType.STR, maxLength = -1)))
+    }
+
+    @Test
+    fun `a constraint on a legacy type is rejected for each constraint field`() {
+        listOf(
+            param(ParamType.NUMBER, values = listOf("1")),
+            param(ParamType.ANY, min = 1.0),
+            param(ParamType.STRING, maxLength = 3),
+        ).forEach { p ->
+            assertEquals(1, declErrors(p).size, "$p")
+        }
+        assertEquals(emptyList(), declErrors(param(ParamType.ANY)))
     }
 }

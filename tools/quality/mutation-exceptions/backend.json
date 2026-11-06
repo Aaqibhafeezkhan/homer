@@ -1,1 +1,36 @@
-{}
+{
+  "homer/app/auth/CsrfProtection.kt#invokeSuspend#replaced return value with null for homer/app/auth/CsrfProtectionKt$CsrfProtection$1$1::invokeSuspend#}": "Return value of the AuthenticationChecked hook's suspend lambda: the hook returns Unit and Ktor discards it. The CSRF refusal is the throw in its body, pinned by CsrfProtectionTest.",
+  "homer/app/config/AgentSchemaValidator.kt#json$lambda$0#removed call to kotlinx/serialization/json/JsonBuilder::setPrettyPrint#prettyPrint = false": "prettyPrint = false is the Json default, so removing the call builds the same encoder; formatting does not reach the schema verdict either.",
+  "homer/app/config/AgentSchemaValidator.kt#json$lambda$0#replaced return value with null for homer/app/config/AgentSchemaValidator::json$lambda$0#}": "Return value of the Json { } builder lambda: it returns Unit and the builder discards it.",
+  "homer/app/config/LogLevelOverrides.kt#logLevelSystemProps#replaced return value with Collections.emptyMap for homer/app/config/LogLevelOverridesKt::logLevelSystemProps#val raw = env[ENV_LOG_LEVELS]?.takeIf { it.isNotBlank() } ?: return emptyMap()": "The mutated return is the early `return emptyMap()` for an unset or blank HOMER_LOG_LEVELS: Collections.emptyMap() is an equal empty map.",
+  "homer/app/infra/AgentDefinitionValidator.kt#checkRunnerFilter#negated conditional#<inline>": {
+    "reason": "Inlined Iterable.none (_Collections.kt, mapped past the file's end): the mutant negates its `this is Collection` check, which only skips the empty-collection shortcut; for the Collection<Set<String>> runnerTagSets() returns the loop returns the same result. The `isEmpty()` half of the shortcut is killed.",
+    "count": 1
+  },
+  "homer/app/infra/AgentInputChecks.kt#warnOnInputSteering$lambda$2$3$flag#replaced boolean return with false for homer/app/infra/AgentInputChecks::warnOnInputSteering$lambda$2$3$flag#) = add(\"claude command '${cmd.label}' option '$name' uses input '{{$it}}'\")": "Return value of the local flag() helper, the MutableList.add result: every call site discards it, so true or false changes nothing. The warning it adds is pinned by the AgentsServiceTest input-steering tests.",
+  "homer/app/infra/AgentInputChecks.kt#warnOnInputSteering$lambda$2$3$flag#replaced boolean return with true for homer/app/infra/AgentInputChecks::warnOnInputSteering$lambda$2$3$flag#) = add(\"claude command '${cmd.label}' option '$name' uses input '{{$it}}'\")": "Return value of the local flag() helper, the MutableList.add result: every call site discards it, so true or false changes nothing. The warning it adds is pinned by the AgentsServiceTest input-steering tests.",
+  "homer/app/infra/BoundedRegex.kt#findOrOmit$lambda$0#replaced return value with null for homer/app/infra/BoundedRegex::findOrOmit$lambda$0#onTimeout: () -> Unit = {},": "The default no-op onTimeout lambda: findOrOmit calls it as a statement and discards its Unit result.",
+  "homer/app/infra/ParamValidator.kt#runValuesCheck#negated conditional#<inline>": {
+    "reason": "Inlined Iterable.any (_Collections.kt, mapped past the file's end): the mutant negates its `this is Collection` check, which only skips the empty-collection shortcut; for the declared `values` List (INT and NUM branches) the loop returns the same result. The `isEmpty()` half of the shortcut is killed.",
+    "count": 2
+  },
+  "homer/app/infra/ParamValidator.kt#validateDeclaration#negated conditional#<inline>": {
+    "reason": "Inlined Iterable.any (_Collections.kt, mapped past the file's end): the mutant negates its `this is Collection` check, which only skips the empty-collection shortcut; for the constraint-field list (always a List) the loop returns the same result. The `isEmpty()` half of the shortcut is killed.",
+    "count": 1
+  },
+  "homer/app/infra/PathSafety.kt#resolveLongestExistingPrefix#replaced return value with null for homer/app/infra/PathSafety::resolveLongestExistingPrefix#if (existing == null) return path": "Unreachable: every caller passes an absolute path, so the ancestor walk always reaches the existing root `/` and `existing` is never null; no test can cover the line.",
+  "homer/app/infra/RedosPatternDetector.kt#afterClosing#changed conditional boundary#return if (end < 0) open + 1 else end + 1": "`end` is indexOf(close, open + 3) with open >= 0, so it is -1 or at least 3: `end < 0` and `end <= 0` agree on every value it can take.",
+  "homer/app/infra/RedosPatternDetector.kt#intervalAt#Replaced integer addition with subtraction#return Interval(length = close - open + 1, unbounded = body.endsWith(\",\")) // {n,} has no upper bound": "With `close - open - 1` the scan resumes two characters early, inside the interval: only its last digit or comma and the closing '}' are re-read, plain characters the scanner's default branch skips, so the verdict is the same.",
+  "homer/app/infra/RedosPatternDetector.kt#intervalAt#changed conditional boundary#if (close < 0) return null": "`close` is indexOf('}', open) where pattern[open] is '{', so it is -1 or greater than open >= 0, never 0: `close < 0` and `close <= 0` agree.",
+  "homer/app/infra/RedosPatternDetector.kt#overlappingBranch#changed conditional boundary#for (a in branches.indices) {": "The extra outer iteration (a == branches.size) runs an empty inner loop (`a + 1 until size`) and reads no branch, so the result is the same.",
+  "homer/app/infra/ReservedEnvNames.kt#isReserved#negated conditional#<inline>": {
+    "reason": "Inlined Iterable.any (_Collections.kt, mapped past the file's end): the mutant negates its `this is Collection` check, which only skips the empty-collection shortcut; for the non-empty prefix List the loop returns the same result. The `isEmpty()` half of the shortcut is killed.",
+    "count": 1
+  },
+  "homer/app/infra/ReservedHeaders.kt#isReserved#negated conditional#<inline>": {
+    "reason": "Inlined Iterable.any (_Collections.kt, mapped past the file's end): the mutant negates its `this is Collection` check, which only skips the empty-collection shortcut; for the non-empty prefix List the loop returns the same result. The `isEmpty()` half of the shortcut is killed.",
+    "count": 1
+  },
+  "homer/app/infra/ResultToEnvMapper.kt#mapToEnv$lambda$0$0$0#replaced return value with null for homer/app/infra/ResultToEnvMapper::mapToEnv$lambda$0$0$0#regexValue(param, transformer) { regexShed = true }": "Return value of the onTimeout lambda `{ regexShed = true }`: BoundedRegex calls it as a statement and discards its Unit result; the side effect is pinned by the shed test.",
+  "homer/app/infra/WhenEvaluator.kt#readErrSummary#changed conditional boundary#val tail = if (text.length <= ERR_TAIL_BYTES) text else text.takeLast(ERR_TAIL_BYTES)": "At text.length == ERR_TAIL_BYTES, text.takeLast(ERR_TAIL_BYTES) is the whole text, so `<` and `<=` give the same tail."
+}
