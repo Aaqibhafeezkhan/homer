@@ -268,6 +268,9 @@ most tests run through (the run starters on PR #124) did not finish within the j
 pass alone took four minutes, and the mutants that keep a run from starting time out one by one, so
 GitHub cancelled the job, left no report and held `quality-gate`, which needs it, for the whole 20
 minutes. A run over the budget is now stopped (Gradle's daemon with it) and the check reports itself
-skipped with the budget as the reason; the weekly full run covers those classes. Raising the job's
+skipped with the budget as the reason; the weekly full run covers those classes. It reports nothing
+of what PIT judged before the budget, and no `partial` list as the weekly merge does: PIT writes
+`mutations.xml` through a buffer and closes its root element only when the run ends, so a stopped run
+leaves at most a cut-off file that cannot say which classes it finished. Raising the job's
 bound would only hold `quality-gate` longer, and narrowing the tests to the ones the change touches
 would report every mutant other tests kill as uncovered.

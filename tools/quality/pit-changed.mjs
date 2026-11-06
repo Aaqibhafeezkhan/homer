@@ -185,7 +185,8 @@ export function main() {
   });
   if (gradle.error?.code === 'ETIMEDOUT') {
     // The timeout ends only the client: the daemon would go on running PIT and its minions.
-    spawnSync(gradlew, ['-p', 'app', '--stop'], { stdio: 'inherit', timeout: 60_000 });
+    const stop = spawnSync(gradlew, ['-p', 'app', '--stop'], { stdio: 'inherit', timeout: 60_000 });
+    if (stop.error || stop.status !== 0) console.error(`gradlew --stop failed (${stop.error?.message ?? `exit ${stop.status}`}): the Gradle daemon may still be running PIT`);
     console.error(`:app:pitest ran over its ${budget} s budget (MUTATE_BUDGET_SEC); the weekly full run covers these classes`);
     return skip(`over the ${budgetText(budget)} budget`);
   }

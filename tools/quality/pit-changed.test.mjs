@@ -148,10 +148,10 @@ test('only mutants on changed lines remain, with their repository path', () => {
  * Runs `main` in a temporary repository whose last commit adds `A.kt` with `text`, against a
  * stand-in for Gradle that records its arguments, writes `mutations` as PIT's report and exits
  * `exit`, or first hangs for `hang` seconds (and `exceptions` as the backend exceptions file, when
- * given; `budget` as MUTATE_BUDGET_SEC). The stand-in answers `--stop` at once. Returns main's
- * output (or the error it threw) and the recorded arguments, if any.
+ * given; `budget` as MUTATE_BUDGET_SEC). The stand-in answers `--stop` at once, exiting `stopExit`.
+ * Returns main's output (or the error it threw), what it wrote to stderr and the recorded arguments, if any.
  */
-async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budget } = {}) {
+async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budget, stopExit = 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-changed-'));
   const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q');
@@ -167,7 +167,7 @@ async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budge
     fs.writeFileSync(path.join(dir, 'tools/quality/mutation-exceptions/backend.json'), exceptions);
   }
   const end = hang ? `exec sleep ${hang}` : `exit ${exit}`;
-  const gradlew = `#!/bin/sh\nprintf "%s\\n" "$@" >> app/args.txt\n[ "$3" = --stop ] && exit 0\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\n${end}\n`;
+  const gradlew = `#!/bin/sh\nprintf "%s\\n" "$@" >> app/args.txt\n[ "$3" = --stop ] && exit ${stopExit}\nmkdir -p app/app/build/reports/pitest\ncp app/report.xml app/app/build/reports/pitest/mutations.xml\n${end}\n`;
   fs.writeFileSync(path.join(dir, 'app/gradlew'), gradlew, { mode: 0o755 });
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
@@ -177,6 +177,9 @@ async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budge
   if (budget === undefined) delete process.env.MUTATE_BUDGET_SEC;
   else process.env.MUTATE_BUDGET_SEC = budget;
   process.chdir(dir);
+  const stderr = [];
+  const error = console.error;
+  console.error = (...line) => stderr.push(line.join(' '));
   try {
     const { main } = await import('./pit-changed.mjs');
     let output;
@@ -189,10 +192,12 @@ async function runMain(text, { mutations = [], exit = 0, exceptions, hang, budge
     const summary = path.join(dir, 'app/app/build/reports/pitest/mutation-backend-summary.txt');
     return {
       output,
+      stderr: stderr.join('\n'),
       args: fs.existsSync(argsFile) ? fs.readFileSync(argsFile, 'utf8').trim().split('\n') : null,
       summary: fs.existsSync(summary) ? fs.readFileSync(summary, 'utf8') : null,
     };
   } finally {
+    console.error = error;
     process.chdir(cwd);
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];
@@ -221,11 +226,18 @@ test('main fails when Gradle fails, rather than reporting', async () => {
 
 test('a PIT run over its budget is stopped and reported skipped, not failed', async () => {
   const started = Date.now();
-  const { output, args, summary } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { mutations: [6], hang: 30, budget: '1' });
+  const { output, args, summary, stderr } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { mutations: [6], hang: 30, budget: '1' });
   assert.ok(Date.now() - started < 20_000, 'the budget, not the stand-in, ended the run');
   assert.equal(output, 'Backend mutation testing of the change (skipped: over the 1-second budget): 0 finding(s)\n');
   assert.equal(summary, 'findings=0\nskipped=over the 1-second budget\n');
   assert.deepEqual(args.slice(-3), ['-p', 'app', '--stop']);
+  assert.doesNotMatch(stderr, /--stop failed/);
+});
+
+test('a failed daemon stop after the budget is logged, and the run still reports skipped', async () => {
+  const { output, stderr } = await runMain(source('homer.app', 'class A {\n  fun f() = 1\n}'), { hang: 30, budget: '1', stopExit: 1 });
+  assert.match(stderr, /gradlew --stop failed \(exit 1\): the Gradle daemon may still be running PIT/);
+  assert.equal(output, 'Backend mutation testing of the change (skipped: over the 1-second budget): 0 finding(s)\n');
 });
 
 test('a PIT run inside its budget reports as before', async () => {
