@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.41.0] - 2026-11-06
+
 ### Homer
 
 - **Fixed: kubernetes runner pods rejected by RuntimeClass admission** — Pods no longer carry an empty `overhead` field, which current Kubernetes versions refuse. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
