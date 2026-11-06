@@ -21,6 +21,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
 import io.opentelemetry.sdk.trace.export.SpanExporter
 import kotlinx.coroutines.test.runTest
 import okhttp3.Request
+import okio.Buffer
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
@@ -35,6 +36,7 @@ class KubernetesRunnerSessionTest {
         excludes: List<String> = emptyList(),
         api: CoreV1Api = mockk(relaxed = true),
         keepPodOnFailure: Boolean = false,
+        maxRunSeconds: Long? = null,
         tracer: Tracer? = null,
         parentContext: Context = Context.root(),
     ) = KubernetesRunnerSession(
@@ -46,6 +48,7 @@ class KubernetesRunnerSessionTest {
         shell = mockk(relaxed = true),
         keepPodOnFailure = keepPodOnFailure,
         keepPodTtlSeconds = 3600,
+        maxRunSeconds = maxRunSeconds,
         runnerAlias = "k8s-box",
         sync = sync,
         translator =
@@ -113,6 +116,18 @@ class KubernetesRunnerSessionTest {
         s.markFailed()
         s.close()
         assertTrue(seen.any { it.method == "PATCH" })
+        assertEquals(emptyList(), seen.filter { it.method == "DELETE" })
+    }
+
+    @Test
+    fun `a failed session with maxRunSeconds keeps its pod without raising the deadline`() {
+        val seen = mutableListOf<Request>()
+        val s = session(api = interceptedCoreV1Api(seen), keepPodOnFailure = true, maxRunSeconds = 60)
+        s.markFailed()
+        s.close()
+        val body = seen.single { it.method == "PATCH" }.let { Buffer().also { b -> it.body!!.writeTo(b) }.readUtf8() }
+        assertFalse(body.contains("activeDeadlineSeconds"), body)
+        assertTrue(body.contains("homer.app~1kept"), body)
         assertEquals(emptyList(), seen.filter { it.method == "DELETE" })
     }
 

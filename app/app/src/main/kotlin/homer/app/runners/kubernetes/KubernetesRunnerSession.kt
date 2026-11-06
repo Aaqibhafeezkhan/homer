@@ -22,6 +22,7 @@ class KubernetesRunnerSession(
     override val shell: ShellExecutor,
     private val keepPodOnFailure: Boolean,
     private val keepPodTtlSeconds: Long,
+    private val maxRunSeconds: Long? = null,
     override val runnerAlias: String,
     private val sync: KubernetesWorkspaceSync,
     private val translator: RemotePathTranslator,
@@ -84,7 +85,7 @@ class KubernetesRunnerSession(
 
     private fun cleanUpPod(mode: String) {
         if (mode == "ttl") {
-            PodCleanup.keepWithTtl(api, namespace, podName, keepPodTtlSeconds)
+            PodCleanup.keepWithTtl(api, namespace, podName, keepPodTtlSeconds, maxRunSeconds)
         } else {
             PodCleanup.delete(api, namespace, podName)
         }

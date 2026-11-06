@@ -2840,7 +2840,10 @@ See [ADR-0043](../docs/adr/0043-k8s-sync-workspaces.md).
   start**, not from the failure — a long-running agent has already
   spent part of that budget by the time it fails, so a run whose
   duration approaches `keepPodTtlSeconds` may leave little or no
-  inspection window before the kubelet terminates the pod.
+  inspection window before the kubelet terminates the pod. With
+  `maxRunSeconds` set, a kept pod's deadline is the smaller of
+  `maxRunSeconds` and `keepPodTtlSeconds` (it is never raised; both
+  count from pod start).
 - **No live tailing mid-run.** Artifacts only appear host-side at the
   sync-down above — unlike the old shared-PVC model, there is no
   shared filesystem for `ArtifactService` to tail during the run.

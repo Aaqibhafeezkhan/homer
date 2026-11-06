@@ -40,20 +40,20 @@ object PodCleanup {
         namespace: String,
         podName: String,
         ttlSeconds: Long,
+        existingDeadlineSeconds: Long? = null,
     ) {
-        // Both ops use "add", not "replace": nothing ever sets activeDeadlineSeconds on our
-        // pods (PodSpecBuilder doesn't, Kubernetes doesn't default it), and RFC 6902 "replace"
-        // requires the target to already exist. Since a JSON Patch is applied atomically, a
-        // "replace" 422 here would also void the kept-label op in the same request. JSON
-        // Patch "add" on an existing object member overwrites it, so "add" is correct whether
-        // or not the field is already present.
+        // Kubernetes only lowers an existing activeDeadlineSeconds, never raises it (422): set it
+        // only when unset or ttl is lower, else label only. "add" overwrites, so it fits either way.
         // The label path escapes "/" as "~1" per RFC 6901 (JSON Pointer).
+        val label = """{"op":"add","path":"/metadata/labels/${PodLabels.KEPT.replace("/", "~1")}","value":"true"}"""
         val patch =
-            """[
-            |{"op":"add","path":"/spec/activeDeadlineSeconds","value":$ttlSeconds},
-            |{"op":"add","path":"/metadata/labels/${PodLabels.KEPT.replace("/", "~1")}","value":"true"}
-            |]
-            """.trimMargin()
+            if (existingDeadlineSeconds == null || ttlSeconds < existingDeadlineSeconds) {
+                "[\n" +
+                    """{"op":"add","path":"/spec/activeDeadlineSeconds","value":$ttlSeconds},""" + "\n" +
+                    label + "\n]"
+            } else {
+                "[\n$label\n]"
+            }
         try {
             // Must go through PatchUtils: the generated CoreV1Api declares no patch media
             // types, so execute() sends the body as application/json and the apiserver

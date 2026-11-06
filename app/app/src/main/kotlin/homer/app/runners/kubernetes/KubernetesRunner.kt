@@ -129,6 +129,7 @@ class KubernetesRunner(
             shell = shell,
             keepPodOnFailure = config.keepPodOnFailure,
             keepPodTtlSeconds = config.keepPodTtlSeconds,
+            maxRunSeconds = config.maxRunSeconds,
             runnerAlias = alias,
             sync = KubernetesWorkspaceSync(execClient, config.namespace, podName),
             translator =
@@ -239,7 +240,7 @@ class KubernetesRunner(
     private fun cleanupFailedPod(podName: String) {
         runCatching {
             if (config.keepPodOnFailure && podStartedOnNode(podName)) {
-                PodCleanup.keepWithTtl(api, config.namespace, podName, config.keepPodTtlSeconds)
+                PodCleanup.keepWithTtl(api, config.namespace, podName, config.keepPodTtlSeconds, config.maxRunSeconds)
             } else {
                 PodCleanup.delete(api, config.namespace, podName)
             }

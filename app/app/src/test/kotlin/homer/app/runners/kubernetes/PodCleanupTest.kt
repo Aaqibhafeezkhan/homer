@@ -1,10 +1,14 @@
 package homer.app.runners.kubernetes
 
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.int
+import io.kotest.property.checkAll
 import io.kubernetes.client.custom.V1Patch
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import okhttp3.Request
 import okio.Buffer
 import org.junit.jupiter.api.Test
@@ -74,4 +78,59 @@ class PodCleanupTest {
 
         assertEquals(emptyList(), seen.filter { it.method == "DELETE" })
     }
+
+    private fun keepPatchBody(
+        ttl: Long,
+        existing: Long?,
+        seen: MutableList<Request> = mutableListOf(),
+    ): String {
+        PodCleanup.keepWithTtl(interceptedCoreV1Api(seen), "homer", "pod-1", ttl, existing)
+        return seen.single { it.method == "PATCH" }.bodyText()
+    }
+
+    private fun deadlineOf(body: String): Long? =
+        Regex("\"/spec/activeDeadlineSeconds\",\"value\":(\\d+)")
+            .find(body)
+            ?.groupValues
+            ?.get(1)
+            ?.toLong()
+
+    @Test
+    fun `keepWithTtl without an existing deadline sends today's patch`() {
+        val body = keepPatchBody(900, null)
+        assertEquals(
+            "[\n" +
+                "{\"op\":\"add\",\"path\":\"/spec/activeDeadlineSeconds\",\"value\":900},\n" +
+                "{\"op\":\"add\",\"path\":\"/metadata/labels/homer.app~1kept\",\"value\":\"true\"}\n" +
+                "]",
+            body,
+        )
+    }
+
+    @Test
+    fun `keepWithTtl lowers a later existing deadline`() {
+        val body = keepPatchBody(3600, 10800)
+        assertEquals(3600L, deadlineOf(body), body)
+        assertTrue(body.contains("homer.app~1kept"), body)
+    }
+
+    @Test
+    fun `keepWithTtl leaves an earlier or equal deadline and only labels`() {
+        for (existing in listOf(3600L, 60L)) {
+            val seen = mutableListOf<Request>()
+            val body = keepPatchBody(3600, existing, seen)
+            assertFalse(body.contains("activeDeadlineSeconds"), body)
+            assertTrue(body.contains("\"/metadata/labels/homer.app~1kept\",\"value\":\"true\""), body)
+            assertEquals(emptyList(), seen.filter { it.method == "DELETE" })
+        }
+    }
+
+    @Test
+    fun `keepWithTtl never raises an existing deadline`() =
+        runTest {
+            checkAll(Arb.int(1..100_000), Arb.int(1..100_000)) { max, ttl ->
+                val deadline = deadlineOf(keepPatchBody(ttl.toLong(), max.toLong()))
+                assertTrue(deadline == null || deadline <= max, "max=$max ttl=$ttl deadline=$deadline")
+            }
+        }
 }
