@@ -38,10 +38,11 @@ class KubernetesRunnerStartupSweep(
                 errors += result.errors
                 result.deletedJobs?.let { deletedJobs = deletedJobs.orEmpty() + it }
                 log.info(
-                    "sweep: namespace={} scanned={} deleted={} errors={}",
+                    "sweep: namespace={} scanned={} deleted={} deletedJobs={} errors={}",
                     runner.namespace,
                     result.scanned,
                     result.deleted.size,
+                    result.deletedJobs?.size,
                     result.errors.size,
                 )
             } catch (e: Exception) {

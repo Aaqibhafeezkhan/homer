@@ -1,5 +1,7 @@
 package homer.app.runners.kubernetes
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.models.KubernetesWorkload
 import homer.app.models.ResourceSpec
@@ -26,6 +28,8 @@ import org.slf4j.LoggerFactory
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import ch.qos.logback.classic.Level as LogbackLevel
+import ch.qos.logback.classic.Logger as LogbackLogger
 
 class KubernetesRunnerStartupSweepTest {
     private val config =
@@ -219,8 +223,9 @@ class KubernetesRunnerStartupSweepTest {
             val runner = KubernetesRunner("k8s", jobConfig, api, dummyExec(), instanceId = "inst-xyz", batchApi = batch)
             val status = SweepStatus()
 
-            KubernetesRunnerStartupSweep(RunnerRegistry(listOf(runner)), pm, status).sweep()
+            val logged = sweepLog { KubernetesRunnerStartupSweep(RunnerRegistry(listOf(runner)), pm, status).sweep() }
 
+            assertEquals(listOf("sweep: namespace=homer scanned=0 deleted=0 deletedJobs=2 errors=0"), logged)
             val list = seen.first()
             assertEquals("/apis/batch/v1/namespaces/homer/jobs", list.url.encodedPath)
             assertEquals(
@@ -370,5 +375,21 @@ class KubernetesRunnerStartupSweepTest {
             captured.add(nameSlot.captured)
             deleteReq
         }
+    }
+
+    /** Runs [body] with the sweep's INFO output captured; returns the lines it logged. */
+    private suspend fun sweepLog(body: suspend () -> Unit): List<String> {
+        val appender = ListAppender<ILoggingEvent>().also { it.start() }
+        val logback = LoggerFactory.getLogger(KubernetesRunnerStartupSweep::class.java) as LogbackLogger
+        val level = logback.level
+        logback.level = LogbackLevel.INFO
+        logback.addAppender(appender)
+        try {
+            body()
+        } finally {
+            logback.detachAppender(appender)
+            logback.level = level
+        }
+        return appender.list.map { it.formattedMessage }
     }
 }
