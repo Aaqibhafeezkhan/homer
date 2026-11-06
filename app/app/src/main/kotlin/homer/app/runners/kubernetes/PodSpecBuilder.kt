@@ -127,6 +127,8 @@ class PodSpecBuilder(
                 toInitContainer(spec, workspaceMounts, containerSc)
             }
         return V1PodSpec()
+            // client-java defaults overhead to {}; RuntimeClass admission rejects any non-null overhead.
+            .overhead(null)
             .restartPolicy("Never")
             .activeDeadlineSeconds(config.maxRunSeconds)
             .containers(listOf(buildMainContainer(workspaceMounts, containerSc)))

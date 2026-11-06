@@ -14,6 +14,7 @@ import homer.app.runners.RunnerSessionParams
 import io.opentelemetry.context.Context
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -297,6 +298,36 @@ class PodSpecBuilderTest {
                 .serialize(pod)
         val golden = javaClass.getResource("/kubernetes/default-pod.json")!!.readText().trim()
         assertEquals(golden, actual)
+    }
+
+    @Test
+    fun `the pod spec omits overhead so RuntimeClass admission accepts it`() {
+        val pod = PodSpecBuilder("k8s-dev", config).build(params(), "homer-1-abcdef")
+
+        assertNull(pod.spec!!.overhead)
+        assertFalse(
+            io.kubernetes.client.openapi.JSON
+                .serialize(pod)
+                .contains("\"overhead\""),
+        )
+    }
+
+    @Test
+    fun `the Job template omits overhead so RuntimeClass admission accepts it`() {
+        val jobConfig = config.copy(workload = KubernetesWorkload.Job)
+
+        val job = PodSpecBuilder("k8s-dev", jobConfig).buildJob(params(), "homer-1-abcdef")
+
+        assertNull(
+            job.spec!!
+                .template.spec!!
+                .overhead,
+        )
+        assertFalse(
+            io.kubernetes.client.openapi.JSON
+                .serialize(job)
+                .contains("\"overhead\""),
+        )
     }
 
     @Test
