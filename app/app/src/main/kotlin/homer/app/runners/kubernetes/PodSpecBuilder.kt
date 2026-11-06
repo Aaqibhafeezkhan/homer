@@ -41,6 +41,12 @@ object PodLabels {
 
     /** Set on a pod kept via `keepPodOnFailure`; the startup sweep skips pods carrying it. */
     const val KEPT = "homer.app/kept"
+
+    /**
+     * The JSON-Patch op that sets [KEPT], for the pod and its Job alike, so the sweep's skip and the
+     * keep write the same key. The label path escapes "/" as "~1" per RFC 6901 (JSON Pointer).
+     */
+    internal val KEPT_LABEL_OP = """{"op":"add","path":"/metadata/labels/${KEPT.replace("/", "~1")}","value":"true"}"""
 }
 
 class PodSpecBuilder(

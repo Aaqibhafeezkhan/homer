@@ -56,21 +56,25 @@ Chosen: **the limit on the pod**, **a Job opt-in**, **the pod found by the Job's
 read after a failed command**.
 
 - `maxRunSeconds` sets the pod's `activeDeadlineSeconds`. The kubelet counts it from pod start and
-  stops the pod at the limit in either mode. A Job deadline would also count the time the pod waits
-  for quota or scheduling, which `podStartTimeoutSeconds` already bounds, so the same value would mean
-  different run times depending on cluster load.
-- `workload: Job` is opt-in, because always using a Job would change every existing deployment's API
-  calls and RBAC needs. The Job wraps the unchanged pod spec with `parallelism: 1`, `completions: 1`,
+  stops the pod at the limit in either mode.
+- `workload: Job` is opt-in. The Job wraps the unchanged pod spec with `parallelism: 1`, `completions: 1`,
   `backoffLimit: 0` (a retry would start an empty pod in the middle of a run, with none of the
   synced workspace) and `ttlSecondsAfterFinished` (`jobTtlSecondsAfterFinished`, default 3600). The
   Job and its template carry the pod's Homer labels and annotations.
 - The Job controller names the pod, so Homer lists pods with the created Job's own selector, which
   carries the controller-uid label of the cluster's version (`batch.kubernetes.io/controller-uid` on
   1.27+, `controller-uid` before), falling back to `batch.kubernetes.io/controller-uid=<uid>` when
-  the create response has none. The uid is unique per Job; a name prefix is not, and a pod someone
-  else creates with a matching name could be taken for the run's. Waiting for the pod to exist and
-  waiting for it to be ready share one `podStartTimeoutSeconds` budget, and the run's `runner.podName`
-  stays `null` until the pod exists, with `runner.jobName` naming the Job.
+  the create response has none. Waiting for the pod to exist and waiting for it to be ready share one
+  `podStartTimeoutSeconds` budget, and the run's `runner.podName` stays `null` until the pod exists,
+  with `runner.jobName` naming the Job.
+- While a Job has no pod, its newest `FailedCreate` event decides: a message containing `exceeded
+  quota` (the wording of the API server's `ResourceQuota` admission error) is a quota refusal the Job
+  controller retries, so Homer waits it out within `podStartTimeoutSeconds`; any other `FailedCreate`
+  ends the startup at once. The event's reason is `FailedCreate` for every refused create, so only the
+  message text tells a quota refusal apart. Accepted failure modes: if Kubernetes rewords the message,
+  quota refusals fail fast with that message, as a bare pod's create does today; a non-quota message
+  that contains the phrase (a webhook's, say) is waited out until `podStartTimeoutSeconds`, which still
+  bounds it.
 - `BatchV1Api` is built only for a Job-mode runner, so a Pod-mode runner makes no `batch` call at all.
 - A pod Kubernetes stopped mid-run (the deadline, eviction, an OOM kill, deletion) fails the run with
   the reason in `runner.termination`, in both modes and in the default config. Homer reads the pod's
@@ -80,9 +84,8 @@ read after a failed command**.
   (Kubernetes 1.36.4) a pod past its deadline stayed `Running` without a reason for about 1 s after
   the exec exited with 137, so a single read always lost the race and the failure lost its reason.
   When a read finds a stop, Homer collects the pod's diagnostics as it already does for a failed
-  exec channel. A periodic poll while a command runs (gated on `maxRunSeconds`) would add API load
-  per running session for nothing: a stopped pod ends its command, and the read after the failure
-  sees the same reason.
+  exec channel. The termination's message is the kubelet's (`status.message`), else the main
+  container's exit code; never the container's own `terminated.message` (see Security).
 
 ### Consequences
 
@@ -105,10 +108,11 @@ read after a failed command**.
 
 - No new principal: the Job's pod runs under the same `serviceAccountName`, image, security context
   and env delivery as today's pod; the Job adds no credential.
-- The termination message is agent-writable: the main container's `terminated.message` comes from its
-  `terminationMessagePath`, which the agent can write. Homer reduces it to one length-capped line and
-  puts it only into the run's `runner.termination` and failure text, which reach only callers who can
-  read the run and so already read its stdout. No principal is crossed.
+- The main container's `terminated.message` is agent-writable: it comes from its
+  `terminationMessagePath`. Homer never copies it into `runner.termination` or the failure text, which
+  are stored and served without the redaction a command's output gets, so a secret the agent wrote
+  there cannot leak through them (CWE-532). The termination's reason and message come from fields the
+  kubelet sets, each reduced to one length-capped line (CWE-117).
 - Homer's own ServiceAccount is widened by the `batch` `jobs` rule only in a namespace a Job-mode
   runner uses; the rule covers Jobs, not pods it could not already create.
 - Leaked Jobs are bounded by four mechanisms, none of them alone:
@@ -131,6 +135,53 @@ read after a failed command**.
   bound. The shared `ApiClient` is built with client-java's default read timeout of zero (none), so a
   stalled API server holds the read. This is pre-existing for every runner call; a follow-up is to
   set a read timeout for the non-watch calls.
+
+## Pros and Cons of the Options
+
+### Pod `spec.activeDeadlineSeconds`
+
+- Good: the kubelet counts from pod start, so the limit is the run's own time in both modes.
+- Good: works without Jobs, so a Pod-mode config can use it.
+
+### Job `spec.activeDeadlineSeconds`
+
+- Good: the standard Job field operators know.
+- Bad: also counts the time the pod waits for quota or scheduling, which `podStartTimeoutSeconds`
+  already bounds, so the same value would mean different run times depending on cluster load.
+- Bad: Job mode only.
+
+### A bare pod by default, a Job opt-in
+
+- Good: existing deployments keep their API calls and RBAC needs.
+- Bad: two code paths for startup, teardown and the sweep.
+
+### Always a Job
+
+- Good: one code path.
+- Bad: changes every existing deployment's API calls and RBAC needs (a `batch` rule), a breaking change
+  for teams that use the runner as it is.
+
+### The pod found by the Job's selector
+
+- Good: the controller-uid is unique per Job, and Homer reads it from its own create response.
+- Bad: one pod list per poll while the pod does not exist yet.
+
+### A predictable pod name
+
+- Good: a single read by name.
+- Bad: the Job controller chooses the name; a name prefix is not unique, and a pod someone else creates
+  with a matching name could be taken for the run's.
+
+### A `pods/status` read after a failed command
+
+- Good: no API load while commands run; a successful command reads nothing.
+- Bad: the stop reason lags the exec exit, so a signal exit needs the bounded re-read.
+
+### A periodic status poll while a command runs
+
+- Good: notices a stop while the command is still running.
+- Bad: API load per running session for nothing: a stopped pod ends its command, and a read after the
+  failure sees the same reason.
 
 ## More Information
 

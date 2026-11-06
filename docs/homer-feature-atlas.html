@@ -2508,8 +2508,11 @@ extraUploads:
         <article class="f">
           <h3>Orphan pod sweep <span class="where">k8s runner</span></h3>
           <p>On boot Homer deletes pods labelled with <em>its own</em> instance id whose process is no longer active, and
-            reports the result on <code>/api/v1/health</code>. No configuration.</p>
-          <pre><code>curl "$HOMER/api/v1/health"   # { "sweep": { "scanned":…, "deleted":… } }</code></pre>
+            reports the result on <code>/api/v1/health</code>. No configuration. A <code>workload: Job</code> runner also
+            deletes its orphan Jobs, a Job whose pod was never created included, and skips the pods a Job owns, which go
+            with their Job. Pods and Jobs kept by <code>keepPodOnFailure</code> are skipped. The deleted Jobs are
+            <code>deletedJobs</code>, <code>null</code> when no Job-mode runner was swept.</p>
+          <pre><code>curl "$HOMER/api/v1/health"   # { "sweep": { "scanned":…, "deleted":…, "deletedJobs": null } }</code></pre>
         </article>
 
         <article class="f">

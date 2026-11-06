@@ -10,7 +10,7 @@ import java.net.HttpURLConnection
 
 internal const val DEADLINE_EXCEEDED = "DeadlineExceeded"
 
-/** The longest termination message kept; the agent can write it through the container's termination log. */
+/** The longest termination reason or message kept. */
 internal const val TERMINATION_MESSAGE_MAX_CHARS = 512
 
 private val LINE_BREAKING = Regex("[\\s\\p{Cc}\\p{Z}]+")
@@ -38,7 +38,7 @@ private fun V1Pod.terminationOrNull(): PodTermination? {
     val terminated = status.mainTerminated()
     val deleting = metadata?.deletionTimestamp != null
     if (phase == "Running" && !deleting && terminated == null) return null
-    return PodTermination(status.reasonOf(phase, terminated, deleting), status.messageOf(phase, terminated))
+    return PodTermination(status.reasonOf(phase, terminated, deleting).toOneLine(), status.messageOf(phase, terminated))
 }
 
 private fun V1PodStatus.reasonOf(
@@ -47,10 +47,18 @@ private fun V1PodStatus.reasonOf(
     deleting: Boolean,
 ): String = reason ?: terminated?.reason ?: (if (deleting) "PodTerminating" else phase)
 
+/**
+ * The kubelet's message for the stop. Never the main container's `terminated.message`: that is its
+ * termination log, which the agent can write, so a secret it read would reach the run's failure text
+ * unredacted (ADR-0100 § Security). Its exit code stands in for it.
+ */
 private fun V1PodStatus.messageOf(
     phase: String,
     terminated: V1ContainerStateTerminated?,
-): String = (message ?: terminated?.message)?.toOneLine()?.ifEmpty { null } ?: "Pod phase $phase"
+): String =
+    message?.toOneLine()?.ifEmpty { null }
+        ?: terminated?.let { "Main container terminated with exit code ${it.exitCode}" }
+        ?: "Pod phase $phase"
 
 /** [this] as one line: whitespace and control-character runs become one space, cut to [TERMINATION_MESSAGE_MAX_CHARS]. */
 internal fun String.toOneLine(): String {

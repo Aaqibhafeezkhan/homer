@@ -41,7 +41,7 @@ object JobCleanup {
         namespace: String,
         jobName: String,
     ) {
-        val patch = """[{"op":"add","path":"/metadata/labels/${PodLabels.KEPT.replace("/", "~1")}","value":"true"}]"""
+        val patch = "[${PodLabels.KEPT_LABEL_OP}]"
         try {
             // PatchUtils sets the json-patch content type (see PodCleanup); Any, not V1Job, so a Job
             // carrying fields this client does not know still parses.

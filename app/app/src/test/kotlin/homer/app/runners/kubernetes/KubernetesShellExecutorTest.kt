@@ -7,6 +7,7 @@ import homer.app.models.PodTermination
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.CoreV1EventList
+import io.kubernetes.client.openapi.models.V1ContainerStateTerminated
 import io.kubernetes.client.openapi.models.V1Pod
 import io.mockk.every
 import io.mockk.mockk
@@ -544,8 +545,10 @@ class KubernetesShellExecutorTest {
         assertTrue(stdErr.readText().contains("[HOMER] Output cap exceeded ($cap bytes)"))
     }
 
-    private fun stoppedPodApi(): CoreV1Api {
-        val api = podStatusApi(podWithStatus("Failed", "DeadlineExceeded", "Pod was active longer than the deadline"))
+    private fun stoppedPodApi(
+        pod: V1Pod = podWithStatus("Failed", "DeadlineExceeded", "Pod was active longer than the deadline"),
+    ): CoreV1Api {
+        val api = podStatusApi(pod)
         every { api.listNamespacedEvent(any()) } returns
             mockk(relaxed = true) {
                 every { fieldSelector(any()) } returns this
@@ -623,6 +626,37 @@ class KubernetesShellExecutorTest {
         val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
 
         assertEquals("PodDeleted", e.termination?.reason)
+    }
+
+    @Test
+    fun `an ordinary non-zero exit on an evicted pod fails with the termination`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val seen = mutableListOf<PodTermination>()
+        val api = stoppedPodApi(podWithStatus("Failed", "Evicted", "The node was low on resource: memory."))
+        val executor = KubernetesShellExecutor(killedClient(1), api, "homer", "pod-1", onTermination = { seen += it })
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("Evicted", e.termination?.reason)
+        assertEquals("Kubernetes stopped the pod: The node was low on resource: memory. (Evicted)", e.message)
+        assertEquals(listOf(e.termination), seen)
+        verify(exactly = 2) { api.readNamespacedPodStatus(any(), any()) } // 1 status read + 1 diagnostics read
+    }
+
+    @Test
+    fun `a failed exec channel on an OOM-killed pod fails with the termination`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val seen = mutableListOf<PodTermination>()
+        val oomKilled = podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("OOMKilled").exitCode(137))
+        val client = killedClient(EXEC_NO_EXIT_STATUS_SENTINEL)
+        val executor = KubernetesShellExecutor(client, stoppedPodApi(oomKilled), "homer", "pod-1", onTermination = { seen += it })
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("OOMKilled", e.termination?.reason)
+        assertEquals(listOf(e.termination), seen)
     }
 
     private fun sequencedPodApi(

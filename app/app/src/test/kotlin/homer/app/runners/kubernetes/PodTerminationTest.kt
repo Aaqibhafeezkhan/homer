@@ -72,17 +72,24 @@ class PodTerminationTest {
     }
 
     @Test
-    fun `an OOMKilled main container reports its reason and message`() {
-        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("OOMKilled").message("out of memory")))
-        assertEquals(PodTermination("OOMKilled", "out of memory"), t)
+    fun `an OOMKilled main container reports its reason and exit code`() {
+        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("OOMKilled").exitCode(137)))
+        assertEquals(PodTermination("OOMKilled", "Main container terminated with exit code 137"), t)
     }
 
     @Test
-    fun `an agent-written multi-line termination message becomes one capped line`() {
-        val written = "first line\r\n\tsecond\u0000line  " + "x".repeat(2000)
-        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("Error").message(written)))!!
+    fun `the agent-written termination log never reaches the termination`() {
+        val written = "token=s3cr3t-value\nwritten by the agent"
+        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("Error").exitCode(1).message(written)))!!
+        assertEquals(PodTermination("Error", "Main container terminated with exit code 1"), t)
+    }
+
+    @Test
+    fun `a multi-line status message and reason become one capped line each`() {
+        val message = "first line\r\n\tsecond\u0000line  " + "x".repeat(2000)
+        val t = read(podWithStatus("Failed", "Evic\nted", message))!!
         assertEquals("first line second line " + "x".repeat(TERMINATION_MESSAGE_MAX_CHARS - 23), t.message)
-        assertEquals("Error", t.reason)
+        assertEquals("Evic ted", t.reason)
     }
 
     @Test

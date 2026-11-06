@@ -4,8 +4,8 @@
 
 ### Homer
 
-- **Fixed: kubernetes runner pods rejected by RuntimeClass admission** — Pods no longer carry an empty `overhead` field, which current Kubernetes versions refuse.
-- **Added: `maxRunSeconds` for the kubernetes runner** — A hard per-run limit enforced by Kubernetes on the pod; any run whose pod Kubernetes stops (the limit, eviction, OOM, deletion) now fails with the reason in the new `runner.termination` field.
+- **Fixed: kubernetes runner pods rejected by RuntimeClass admission** — Pods no longer carry an empty `overhead` field, which current Kubernetes versions refuse. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **Added: `maxRunSeconds` for the kubernetes runner** — A hard per-run limit enforced by Kubernetes on the pod; any run whose pod Kubernetes stops (the limit, eviction, OOM, deletion) now fails with the reason in the new `runner.termination` field. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 - **Added: `workload: Job` for the kubernetes runner** — Runs each session's pod in a one-pod Kubernetes Job that waits out namespace quota and is removed by its TTL even when Homer is down; the run's `runner.jobName` and the health sweep's `deletedJobs` name the Jobs. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 - **Fixed: a run that starts another run can finish during maintenance mode** — A `!<agent>` hop, a dispatch or a continuation fire whose own run is still `WORKING` is admitted at once instead of parking in the maintenance queue, while a start with no parent or one whose origin has ended still queues. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
 

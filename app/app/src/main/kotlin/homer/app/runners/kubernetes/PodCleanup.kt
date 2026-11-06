@@ -45,8 +45,7 @@ object PodCleanup {
     ): Boolean {
         // Kubernetes only lowers an existing activeDeadlineSeconds, never raises it (422): set it
         // only when unset or ttl is lower, else label only. "add" overwrites, so it fits either way.
-        // The label path escapes "/" as "~1" per RFC 6901 (JSON Pointer).
-        val label = """{"op":"add","path":"/metadata/labels/${PodLabels.KEPT.replace("/", "~1")}","value":"true"}"""
+        val label = PodLabels.KEPT_LABEL_OP
         val patch =
             if (existingDeadlineSeconds == null || ttlSeconds < existingDeadlineSeconds) {
                 "[\n" +
