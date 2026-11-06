@@ -2720,6 +2720,15 @@ each a `List<String>` of Linux capability names, default `[]`.
 (required; `RuntimeDefault`, `Localhost` or `Unconfined`) and
 `localhostProfile` (`String?`, the profile path, needed when `type` is `Localhost`); both are passed to Kubernetes as-is.
 
+**A pod Kubernetes stops mid-run.** In both modes, and also without
+`maxRunSeconds` or `workload` set, Homer reads the pod's status once after
+a command fails. If Kubernetes stopped the pod (`DeadlineExceeded` from
+`maxRunSeconds`, eviction, an OOM kill, deletion), the run fails with the
+reason in its `runner.termination` ([status API](README.md#example-api-usage)). After a killed
+command (exit 137 or 143) Homer re-reads for up to 5 s, because Kubernetes
+records why the pod stopped a moment after the kill, so the failure still
+names the reason. Homer does not poll the pod while a command runs.
+
 ### Job workload
 
 `workload: Job` runs each session in a Kubernetes Job with one pod
@@ -2762,9 +2771,6 @@ default `Pod` mode; only the object that owns the pod changes.
   quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
   not count — see
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
-  Homer waits up to 5 s after a killed command (exit 137 or 143) for
-  Kubernetes to record why the pod stopped, so the failure still names the
-  deadline.
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
 - **Cleanup.** At session close, and when a startup fails or Homer's
