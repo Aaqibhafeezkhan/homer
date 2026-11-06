@@ -7,6 +7,7 @@ import homer.app.models.PodTermination
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.CoreV1EventList
+import io.kubernetes.client.openapi.models.V1Pod
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -620,6 +621,89 @@ class KubernetesShellExecutorTest {
         val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
 
         assertEquals("PodDeleted", e.termination?.reason)
+    }
+
+    private fun sequencedPodApi(
+        vararg pods: V1Pod,
+        error: Exception? = null,
+    ): CoreV1Api {
+        val req = mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>()
+        var n = 0
+        every { req.execute() } answers {
+            val i = n++
+            if (i < pods.size) pods[i] else throw (error ?: IllegalStateException("unexpected read #$i"))
+        }
+        val api = mockk<CoreV1Api> { every { readNamespacedPodStatus(any(), any()) } returns req }
+        every { api.listNamespacedEvent(any()) } returns
+            mockk(relaxed = true) {
+                every { fieldSelector(any()) } returns this
+                every { execute() } returns CoreV1EventList()
+            }
+        return api
+    }
+
+    private fun killedClient(exit: Int) = KubernetesExecClient { _, _, _, _ -> fakeProcess("", "", exit) }
+
+    @Test
+    fun `a deadline kill whose pod status lags the exec exit still reports DeadlineExceeded`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val running = podWithStatus("Running")
+        val failed = podWithStatus("Failed", "DeadlineExceeded", "Pod was active longer than the deadline")
+        val api = sequencedPodApi(running, running, failed, failed)
+        val executor =
+            KubernetesShellExecutor(
+                killedClient(137),
+                api,
+                "homer",
+                "pod-1",
+                maxRunSeconds = 60,
+                stopReasonPollMs = 10,
+                stopReasonBudgetMs = 500,
+            )
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("DeadlineExceeded", e.termination?.reason)
+        verify(exactly = 4) { api.readNamespacedPodStatus(any(), any()) } // 3 status reads + 1 diagnostics read
+    }
+
+    @Test
+    fun `a signal exit on a pod that stays healthy gives up after the budget and returns the command result`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = podStatusApi(podWithStatus("Running"))
+        val executor =
+            KubernetesShellExecutor(killedClient(143), api, "homer", "pod-1", stopReasonPollMs = 10, stopReasonBudgetMs = 50)
+
+        assertEquals(143, run(executor, tmp).exitCode)
+        verify(exactly = 6) { api.readNamespacedPodStatus(any(), any()) }
+    }
+
+    @Test
+    fun `an ordinary non-zero exit reads the pod once`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = podStatusApi(podWithStatus("Running"))
+        val executor =
+            KubernetesShellExecutor(killedClient(1), api, "homer", "pod-1", stopReasonPollMs = 10, stopReasonBudgetMs = 50)
+
+        assertEquals(1, run(executor, tmp).exitCode)
+        verify(exactly = 1) { api.readNamespacedPodStatus(any(), any()) }
+    }
+
+    @Test
+    fun `a 404 during the retry reports PodDeleted at once`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = sequencedPodApi(podWithStatus("Running"), error = ApiException(404, "gone"))
+        val executor =
+            KubernetesShellExecutor(killedClient(137), api, "homer", "pod-1", stopReasonPollMs = 10, stopReasonBudgetMs = 500)
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("PodDeleted", e.termination?.reason)
+        verify(exactly = 3) { api.readNamespacedPodStatus(any(), any()) } // 2 status reads + 1 diagnostics read
     }
 
     private fun fakeProcess(

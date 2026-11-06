@@ -2762,6 +2762,9 @@ default `Pod` mode; only the object that owns the pod changes.
   quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
   not count — see
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+  Homer waits up to 5 s after a killed command (exit 137 or 143) for
+  Kubernetes to record why the pod stopped, so the failure still names the
+  deadline.
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
 - **Cleanup.** At session close, and when a startup fails or Homer's
