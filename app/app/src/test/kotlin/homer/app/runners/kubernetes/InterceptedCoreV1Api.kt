@@ -1,6 +1,7 @@
 package homer.app.runners.kubernetes
 
 import io.kubernetes.client.openapi.ApiClient
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -10,29 +11,45 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 
 /**
- * A real CoreV1Api whose OkHttp client is short-circuited by an interceptor:
- * requests land in [seen] and get [respond]'s status code back, no network.
- * Use instead of a mocked CoreV1Api when the test cares about what actually
- * goes on the wire (method, path, Content-Type) — a mock can't see that.
+ * An ApiClient whose OkHttp client is short-circuited by an interceptor:
+ * requests land in [seen] and get [respond]'s status code and JSON body back,
+ * no network.
  */
-fun interceptedCoreV1Api(
+fun interceptedApiClient(
     seen: MutableList<Request>,
-    respond: (Request) -> Int = { 200 },
-): CoreV1Api {
+    respond: (Request) -> Pair<Int, String>,
+): ApiClient {
     val http =
         OkHttpClient
             .Builder()
             .addInterceptor { chain ->
                 val request = chain.request()
                 seen += request
+                val (code, body) = respond(request)
                 Response
                     .Builder()
                     .request(request)
                     .protocol(Protocol.HTTP_1_1)
-                    .code(respond(request))
+                    .code(code)
                     .message("test")
-                    .body("{}".toResponseBody("application/json".toMediaType()))
+                    .body(body.toResponseBody("application/json".toMediaType()))
                     .build()
             }.build()
-    return CoreV1Api(ApiClient(http).setBasePath("http://kubernetes.invalid"))
+    return ApiClient(http).setBasePath("http://kubernetes.invalid")
 }
+
+/**
+ * A real CoreV1Api on [interceptedApiClient], answering `{}` with [respond]'s status code.
+ * Use instead of a mocked CoreV1Api when the test cares about what actually
+ * goes on the wire (method, path, Content-Type) — a mock can't see that.
+ */
+fun interceptedCoreV1Api(
+    seen: MutableList<Request>,
+    respond: (Request) -> Int = { 200 },
+): CoreV1Api = CoreV1Api(interceptedApiClient(seen) { respond(it) to "{}" })
+
+/** A real BatchV1Api on [interceptedApiClient]: the Job-mode counterpart of [interceptedCoreV1Api]. */
+fun interceptedBatchV1Api(
+    seen: MutableList<Request>,
+    respond: (Request) -> Pair<Int, String> = { 200 to "{}" },
+): BatchV1Api = BatchV1Api(interceptedApiClient(seen, respond))

@@ -3118,6 +3118,17 @@ class ApplicationTest {
     }
 
     @Test
+    fun `RunnerState jobName maps to the response`() {
+        val mapped =
+            RunnerState(alias = "k", jobName = "homer-7-abcdef")
+                .toResponse(type = "kubernetes", aliasVisible = false)
+
+        assertEquals("homer-7-abcdef", mapped.jobName)
+        assertNull(mapped.podName)
+        assertNull(RunnerState(alias = "k").toResponse(type = "kubernetes", aliasVisible = false).jobName)
+    }
+
+    @Test
     fun `RunnerState toResponse keeps the alias for an admin caller`() {
         val response =
             RunnerState(alias = "k8s-prod-eu", podPhase = PodPhase.READY)

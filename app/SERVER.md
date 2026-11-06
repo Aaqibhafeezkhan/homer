@@ -2671,9 +2671,9 @@ started in-process by Homer ([ADR-0030](../docs/adr/0030-runagent-in-process-dis
 | `podStartTimeoutSeconds` | `Long` | No | `120` | How long to wait for readiness before failing the run. |
 | `keepPodOnFailure` | `Boolean` | No | `false` | On a failed run — or a failed pod startup, if the pod already reached a node — patch the pod's TTL instead of deleting it: a failed run keeps its synced workspace under `/homer/workspace` available for inspection, a startup-failed pod keeps its image/init state inspectable. A pod that never got scheduled is always deleted (its TTL could never fire). A command timeout and an output-cap kill both count as a failure; an operator-initiated kill does not (the pod is still deleted). |
 | `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. |
-| `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in (see below). |
-| `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded` (see below). |
-| `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` (see below). |
+| `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in — see [Job workload](#job-workload). |
+| `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded`. Set on the pod in both modes — see [Job workload](#job-workload). |
+| `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` — see [Job workload](#job-workload). |
 | `homerApiUrl` | `String?` | No | `null` | Cluster-internal Homer URL; exposed in-pod as `HMR_API_URL` so the `homer-*` helpers and MCP question tools can reach Homer from inside the pod. |
 | `env` | `Map<String, String>` | No | `{}` | Per-runner environment variables, layered between `globalEnv` and agent `env` — the place for values describing *this* runner's host/image (`PATH` with `/opt/homebrew/bin` on a macOS ssh box, `JAVA_HOME`, `HOME` for a uid with no passwd entry). Values support `@SYSENV:VAR` (fail-fast at startup, and the resolved names join the telemetry redaction set exactly like `@SYSENV` in `globalEnv`); keys must not be blank or use the reserved `HMR_` prefix. Remote runners receive no `parentEnvAllowlist` host env, so this is also where a value the image must still see goes. Like agent `env`, values ride the per-exec `env K=V…` delivery — **visible in the remote process list (`ps`)** on multi-tenant hosts; forward credentials via `@SYSENV:` and prefer file delivery where possible. For a run that selected this runner via `runnerTags` rather than by alias, these keys are instead merged **above** agent `env` when the run is claimed — see [Runner claim queue](#runner-claim-queue). |
 | `tags` | `List<String>` | No | `[]` | Tags this runner serves for agents that select a runner with `runnerTags` (every requested tag must be present). Empty = reachable by alias only. Shape `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, at most 32. See [Runner claim queue](#runner-claim-queue). |
@@ -2719,6 +2719,43 @@ each a `List<String>` of Linux capability names, default `[]`.
 **`SeccompProfileSpec`** (`securityContext.seccompProfile`): `type`
 (required; `RuntimeDefault`, `Localhost` or `Unconfined`) and
 `localhostProfile` (`String?`, the profile path, needed when `type` is `Localhost`); both are passed to Kubernetes as-is.
+
+### Job workload
+
+`workload: Job` runs each session in a Kubernetes Job with one pod
+instead of a bare pod. The pod and everything Homer does with it — exec,
+workspace sync, env delivery, readiness wait — are the same as in the
+default `Pod` mode; only the object that owns the pod changes.
+
+- **The Job.** It takes the name a pod would get
+  (`homer-<processId>-<6 chars>`), has `parallelism: 1`,
+  `completions: 1` and `backoffLimit: 0` (a retry would start an empty
+  pod in the middle of a run), and `ttlSecondsAfterFinished` from
+  `jobTtlSecondsAfterFinished` (default `3600`). The Job and its pod
+  template carry the same Homer labels and `annotations` as a Pod-mode
+  pod, and the template's spec is the Pod-mode pod spec unchanged.
+- **Finding the pod.** The Job controller names the pod
+  (`<job>-<5 chars>`). Homer finds it through the selector the controller
+  put on the created Job (`batch.kubernetes.io/controller-uid`, or
+  `controller-uid` on older clusters), never by name, then waits for it
+  to become ready. Waiting for the pod to exist and waiting for it to be
+  ready share one `podStartTimeoutSeconds` budget. Until the pod exists
+  the run's `runner.podName` is `null`; `runner.jobName` names the Job.
+- **`maxRunSeconds`** works in both modes: it is the pod's
+  `spec.activeDeadlineSeconds` (on the pod template in Job mode), counted
+  from pod start and enforced by the kubelet even while Homer is down. It
+  is on the pod rather than on the Job so that time spent waiting for
+  quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
+  not count — see
+  [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **`!<runnerCmd>` steps** open their own session on the runner, so in Job
+  mode each step gets its own Job, and `maxRunSeconds` applies to it.
+- **Cleanup.** Homer deletes the pod at session close as in Pod mode; the
+  Job then ends, and the cluster removes it after
+  `ttlSecondsAfterFinished`.
+- **RBAC.** Job mode needs the `batch` `jobs` rule in
+  [RBAC](#rbac). Pod mode makes no `batch` API call, so an existing Role
+  without it keeps working.
 
 ### Running under Pod Security Admission `restricted`
 
@@ -2944,6 +2981,15 @@ roleRef:
   kind: Role
   name: homer-runner
   apiGroup: rbac.authorization.k8s.io
+```
+
+A runner with `workload: Job` ([Job workload](#job-workload)) also needs
+this rule in the same Role; Pod mode does not:
+
+```yaml
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch"]
 ```
 
 #### Env delivery over exec, not the pod spec

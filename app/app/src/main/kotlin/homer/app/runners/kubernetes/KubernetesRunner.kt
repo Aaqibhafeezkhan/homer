@@ -2,20 +2,21 @@ package homer.app.runners.kubernetes
 
 import homer.app.EnvConstants
 import homer.app.exceptions.PodStartupException
-import homer.app.models.PodPhase
-import homer.app.models.PodStartupFailure
+import homer.app.models.KubernetesWorkload
 import homer.app.models.RunnerConfig
-import homer.app.models.RunnerState
 import homer.app.runners.RemotePathTranslator
 import homer.app.runners.Runner
 import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
 import io.kubernetes.client.openapi.ApiException
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
+import io.kubernetes.client.openapi.models.V1Job
 import io.kubernetes.client.openapi.models.V1Pod
-import io.kubernetes.client.openapi.models.V1PodList
+import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -35,7 +36,15 @@ class KubernetesRunner(
     private val tracer: Tracer? = null,
     private val instanceId: String = "",
     override val sysEnvBackedEnvNames: Set<String> = emptySet(),
+    // Job mode only; Pod mode makes no batch call (ADR-0100).
+    private val batchApi: BatchV1Api? = null,
 ) : Runner {
+    init {
+        require(config.workload == KubernetesWorkload.Pod || batchApi != null) {
+            "kubernetes runner '$alias': workload Job needs a BatchV1Api"
+        }
+    }
+
     override val isRemote: Boolean = true
 
     override val runnerEnv: Map<String, String> = config.env
@@ -45,39 +54,16 @@ class KubernetesRunner(
     @Suppress("SuspendFunSwallowedCancellation") // records the span error and rethrows
     override suspend fun openSession(params: RunnerSessionParams): RunnerSession =
         withContext(Dispatchers.IO) {
-            val podName = generatePodName(params.processId)
-            val span =
-                tracer
-                    ?.spanBuilder("runner.session.open")
-                    ?.setParent(params.parentContext)
-                    ?.startSpan()
-                    ?.apply {
-                        setAttribute("runner.alias", alias)
-                        setAttribute("pod.namespace", config.namespace)
-                        setAttribute("pod.name", podName)
-                    }
+            // Names the pod in Pod mode and the Job in Job mode, where the Job controller names the pod.
+            val name = generatePodName(params.processId)
+            val jobName = name.takeIf { config.workload == KubernetesWorkload.Job }
+            val states = RunnerStateEmitter(alias, params.processId, jobName, clock, stateSink)
+            val span = openSpan(params, name, jobName)
             val openStartMs = clock()
             val sessionEnv = buildSessionEnv()
             try {
-                provisionPod(params, podName)
-                val shell =
-                    KubernetesShellExecutor(
-                        execClient = execClient,
-                        api = api,
-                        namespace = config.namespace,
-                        podName = podName,
-                        maxOutputBytes = params.workspace.maxOutputBytes,
-                        maxRunSeconds = config.maxRunSeconds,
-                        onTermination = { t ->
-                            emitState(params.processId) { prev ->
-                                (prev ?: base(podName, openStartMs / 1000)).copy(
-                                    termination = t,
-                                    podPhase = PodPhase.FAILED,
-                                    endedAt = clock() / 1000,
-                                )
-                            }
-                        },
-                    )
+                val podName = if (jobName == null) provisionPod(params, name, states) else provisionJob(params, jobName, states)
+                val shell = newShell(params, podName, states, openStartMs)
                 span?.setAttribute("pod.start_duration_ms", clock() - openStartMs)
                 span?.setStatus(StatusCode.OK)
                 newSession(params, podName, shell, sessionEnv)
@@ -95,33 +81,79 @@ class KubernetesRunner(
             }
         }
 
-    /** Creates the pod and waits for it to be ready, emitting each phase to [stateSink]. */
+    private fun openSpan(
+        params: RunnerSessionParams,
+        name: String,
+        jobName: String?,
+    ): Span? =
+        tracer
+            ?.spanBuilder("runner.session.open")
+            ?.setParent(params.parentContext)
+            ?.startSpan()
+            ?.apply {
+                setAttribute("runner.alias", alias)
+                setAttribute("pod.namespace", config.namespace)
+                if (jobName == null) setAttribute("pod.name", name) else setAttribute("job.name", jobName)
+            }
+
+    private fun newShell(
+        params: RunnerSessionParams,
+        podName: String,
+        states: RunnerStateEmitter,
+        openStartMs: Long,
+    ) = KubernetesShellExecutor(
+        execClient = execClient,
+        api = api,
+        namespace = config.namespace,
+        podName = podName,
+        maxOutputBytes = params.workspace.maxOutputBytes,
+        maxRunSeconds = config.maxRunSeconds,
+        onTermination = { t -> states.terminated(t, podName, openStartMs / 1000) },
+    )
+
+    /** Creates the pod and waits for it to be ready, emitting each phase to [states]; returns [podName]. */
     private suspend fun provisionPod(
         params: RunnerSessionParams,
         podName: String,
-    ) {
+        states: RunnerStateEmitter,
+    ): String {
         val pod = podSpecBuilder.build(params, podName)
         val createdAtSec = clock() / 1000
-        emitState(params.processId) {
-            RunnerState(
-                alias = alias,
-                podName = podName,
-                podPhase = PodPhase.CREATING,
-                createdAt = createdAtSec,
-            )
-        }
-        createPod(pod, podName, params.processId)
-        emitState(params.processId) { prev ->
-            (prev ?: base(podName, createdAtSec)).copy(podPhase = PodPhase.PENDING)
-        }
-        waitForReady(podName, params.processId)
-        emitState(params.processId) { prev ->
-            val readyAtSec = clock() / 1000
-            (prev ?: base(podName, createdAtSec)).copy(
-                podPhase = PodPhase.READY,
-                readyAt = readyAtSec,
-            )
-        }
+        states.creating(podName, createdAtSec)
+        createPod(pod, podName, states)
+        states.pending(podName, createdAtSec)
+        withinStartBudget(states, { podName }) { pollUntilReady(podName, states) }
+        states.ready(podName, createdAtSec)
+        return podName
+    }
+
+    /**
+     * Creates the one-pod Job, finds its pod by the Job's selector and waits for it to be ready, all under one
+     * `podStartTimeoutSeconds` budget, emitting each phase to [states]; returns the pod's name. See ADR-0100.
+     */
+    private suspend fun provisionJob(
+        params: RunnerSessionParams,
+        jobName: String,
+        states: RunnerStateEmitter,
+    ): String {
+        val job = podSpecBuilder.buildJob(params, jobName)
+        val createdAtSec = clock() / 1000
+        states.creating(null, createdAtSec)
+        val selector =
+            jobPodSelector(createJob(job, states))
+                ?: failStartup(null, states, "PodCreateFailed", "Job $jobName was created without a pod selector or uid")
+        states.pending(null, createdAtSec)
+        var found: String? = null
+        val podName =
+            withinStartBudget(states, { found }) {
+                val jobPod = pollForJobPod(selector, states)
+                found = jobPod
+                states.podFound(jobPod, createdAtSec)
+                pollUntilReady(jobPod, states)
+                jobPod
+            }
+        states.ready(podName, createdAtSec)
+        return podName
     }
 
     /** Wraps the ready pod in its session: tar-over-exec sync and the remote path layout (ADR-0043). */
@@ -163,29 +195,10 @@ class KubernetesRunner(
             config.homerApiUrl?.takeIf { it.isNotBlank() }?.let { put(EnvConstants.API_URL, it) }
         }
 
-    private fun base(
-        podName: String,
-        createdAtSec: Long,
-    ) = RunnerState(
-        alias = alias,
-        podName = podName,
-        podPhase = PodPhase.PENDING,
-        createdAt = createdAtSec,
-    )
-
-    @Suppress("SuspendFunSwallowedCancellation") // best-effort status write; a kill surfaces at the pod wait's delay
-    private suspend fun emitState(
-        processId: Int,
-        update: (RunnerState?) -> RunnerState,
-    ) {
-        runCatching { stateSink.update(processId, update) }
-            .onFailure { log.debug("Failed to emit runner state for pid={}: {}", processId, it.message) }
-    }
-
     private suspend fun createPod(
         pod: V1Pod,
         podName: String,
-        processId: Int,
+        states: RunnerStateEmitter,
     ) {
         try {
             api.createNamespacedPod(config.namespace, pod).execute()
@@ -198,44 +211,83 @@ class KubernetesRunner(
                     snap.events,
                     e,
                 )
-            emitFailure(processId, ex)
+            states.startupFailed(ex)
             throw ex
         }
     }
 
-    private suspend fun waitForReady(
-        podName: String,
-        processId: Int,
-    ) {
-        val startMs = clock()
-        val budget = config.podStartTimeoutSeconds.seconds
+    private suspend fun createJob(
+        job: V1Job,
+        states: RunnerStateEmitter,
+    ): V1Job =
         try {
-            withTimeout(budget) {
-                while (true) {
-                    val pod =
-                        try {
-                            readPod(podName)
-                        } catch (e: PodStartupException) {
-                            cleanupFailedPod(podName)
-                            emitFailure(processId, e)
-                            throw e
-                        }
-                    if (pod.isTerminalFailure()) {
-                        failStartup(podName, processId, "PodFailed", pod.terminalMessage() ?: "Pod reached terminal failure phase")
-                    }
-                    if (pod.isReady()) return@withTimeout
-                    delay(READY_POLL_INTERVAL_MS)
-                }
-            }
+            checkNotNull(batchApi).createNamespacedJob(config.namespace, job).execute()
+        } catch (e: ApiException) {
+            val ex = PodStartupException("PodCreateFailed", e.responseBody ?: e.message ?: "Job create failed", emptyList(), e)
+            states.startupFailed(ex)
+            throw ex
+        }
+
+    /**
+     * Runs [block] under the one `podStartTimeoutSeconds` budget; on expiry fails the startup as
+     * `PodStartTimeout`, diagnosing and cleaning up the pod [podName] names, if there is one yet.
+     */
+    private suspend fun <T> withinStartBudget(
+        states: RunnerStateEmitter,
+        podName: () -> String?,
+        block: suspend CoroutineScope.() -> T,
+    ): T {
+        val startMs = clock()
+        try {
+            return withTimeout(config.podStartTimeoutSeconds.seconds, block)
         } catch (e: TimeoutCancellationException) {
             val elapsedSec = (clock() - startMs) / 1000
             failStartup(
-                podName,
-                processId,
+                podName(),
+                states,
                 "PodStartTimeout",
                 "Pod did not become ready within ${config.podStartTimeoutSeconds}s (elapsed=${elapsedSec}s)",
                 cause = e,
             )
+        }
+    }
+
+    /** Polls the Job's pods until the Job controller has created one. */
+    private suspend fun pollForJobPod(
+        selector: String,
+        states: RunnerStateEmitter,
+    ): String {
+        while (true) {
+            val podName =
+                try {
+                    findJobPod(api, config.namespace, selector)
+                } catch (e: PodStartupException) {
+                    states.startupFailed(e)
+                    throw e
+                }
+            if (podName != null) return podName
+            delay(JOB_POLL_INTERVAL_MS)
+        }
+    }
+
+    private suspend fun pollUntilReady(
+        podName: String,
+        states: RunnerStateEmitter,
+    ) {
+        while (true) {
+            val pod =
+                try {
+                    readPod(podName)
+                } catch (e: PodStartupException) {
+                    cleanupFailedPod(podName)
+                    states.startupFailed(e)
+                    throw e
+                }
+            if (pod.isTerminalFailure()) {
+                failStartup(podName, states, "PodFailed", pod.terminalMessage() ?: "Pod reached terminal failure phase")
+            }
+            if (pod.isReady()) return
+            delay(READY_POLL_INTERVAL_MS)
         }
     }
 
@@ -268,15 +320,18 @@ class KubernetesRunner(
                 ?.startTime != null
         }.getOrDefault(false)
 
+    /** Fails the startup; with a [podName] it diagnoses and cleans up that pod first. */
     private suspend fun failStartup(
-        podName: String,
-        processId: Int,
+        podName: String?,
+        states: RunnerStateEmitter,
         fallbackReason: String,
         fallbackMessage: String,
         cause: Throwable? = null,
     ): Nothing {
-        val snap = PodDiagnostics.tryCollect(api, config.namespace, podName, fallbackReason)
-        cleanupFailedPod(podName)
+        val snap =
+            podName?.let { PodDiagnostics.tryCollect(api, config.namespace, it, fallbackReason) }
+                ?: PodDiagnostics.Snapshot(fallbackReason, fallbackMessage, emptyList())
+        podName?.let(::cleanupFailedPod)
         val ex =
             PodStartupException(
                 reason = snap.reason.ifBlank { fallbackReason },
@@ -284,32 +339,8 @@ class KubernetesRunner(
                 events = snap.events,
                 cause = cause,
             )
-        emitFailure(processId, ex)
+        states.startupFailed(ex)
         throw ex
-    }
-
-    private suspend fun emitFailure(
-        processId: Int,
-        ex: PodStartupException,
-    ) {
-        val endedAtSec = clock() / 1000
-        emitState(processId) { prev ->
-            (
-                prev ?: RunnerState(
-                    alias = alias,
-                    podPhase = PodPhase.FAILED,
-                )
-            ).copy(
-                podPhase = PodPhase.FAILED,
-                endedAt = endedAtSec,
-                startupFailure =
-                    PodStartupFailure(
-                        reason = ex.reason,
-                        message = ex.rawMessage,
-                        events = ex.events,
-                    ),
-            )
-        }
     }
 
     /**
@@ -327,82 +358,7 @@ class KubernetesRunner(
      * namespace-wide selector. Returns a summary for telemetry / health reporting.
      * Never throws; individual failures are reported via `SweepResult.errors`.
      */
-    fun sweepOrphans(activeProcessIds: Set<Int>): SweepResult {
-        val selector =
-            buildString {
-                append("${PodLabels.MANAGED_BY}=${PodLabels.MANAGED_BY_VALUE}")
-                if (instanceId.isNotBlank()) append(",${PodLabels.INSTANCE}=$instanceId")
-            }
-        val pods: V1PodList =
-            try {
-                api
-                    .listNamespacedPod(config.namespace)
-                    .labelSelector(selector)
-                    .execute()
-            } catch (e: ApiException) {
-                return SweepResult(
-                    scanned = 0,
-                    deleted = emptyList(),
-                    errors = listOf("list pods failed: ${e.code} ${e.responseBody ?: e.message}"),
-                )
-            }
-
-        val items = pods.items.orEmpty()
-        val deleted = mutableListOf<SweepStatus.DeletedPod>()
-        val errors = mutableListOf<String>()
-        for (pod in items) {
-            val orphan = orphanOf(pod, activeProcessIds) ?: continue
-            deleteOrphan(orphan, deleted, errors)
-        }
-        return SweepResult(scanned = items.size, deleted = deleted, errors = errors)
-    }
-
-    private data class OrphanPod(
-        val name: String,
-        val processId: Int?,
-        val runnerAlias: String?,
-    )
-
-    /** [pod] as an orphan to delete: null when it is unnamed, belongs to an active process, or is kept for debugging. */
-    private fun orphanOf(
-        pod: V1Pod,
-        activeProcessIds: Set<Int>,
-    ): OrphanPod? {
-        val meta = pod.metadata ?: return null
-        val name = meta.name ?: return null
-        val labels = meta.labels.orEmpty()
-        val pidLabel = labels[PodLabels.PROCESS_ID]
-        val pid = pidLabel?.toIntOrNull()
-        if (pid != null && pid in activeProcessIds) return null
-        if (labels[PodLabels.KEPT] == "true") {
-            log.info("Sweep skipping kept-for-debug pod {} (process {}) — bounded by its own TTL", name, pid)
-            return null
-        }
-        return OrphanPod(name, pid, labels[PodLabels.RUNNER])
-    }
-
-    /** Deletes [orphan], recording it in [deleted]; a pod already gone is no error. */
-    private fun deleteOrphan(
-        orphan: OrphanPod,
-        deleted: MutableList<SweepStatus.DeletedPod>,
-        errors: MutableList<String>,
-    ) {
-        val name = orphan.name
-        try {
-            api.deleteNamespacedPod(name, config.namespace).gracePeriodSeconds(0).execute()
-            deleted.add(
-                SweepStatus.DeletedPod(
-                    namespace = config.namespace,
-                    name = name,
-                    processId = orphan.processId,
-                    runnerAlias = orphan.runnerAlias,
-                ),
-            )
-        } catch (e: ApiException) {
-            if (e.code == 404) return
-            errors.add("delete $name failed: ${e.code} ${e.responseBody ?: e.message}")
-        }
-    }
+    fun sweepOrphans(activeProcessIds: Set<Int>): SweepResult = OrphanPodSweep(api, config.namespace, instanceId).sweep(activeProcessIds)
 
     data class SweepResult(
         val scanned: Int,
@@ -420,6 +376,7 @@ class KubernetesRunner(
 
     companion object {
         private const val READY_POLL_INTERVAL_MS = 500L
+        private const val JOB_POLL_INTERVAL_MS = 1000L
         private const val POD_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
         private val random = SecureRandom()
         private val log = LoggerFactory.getLogger(KubernetesRunner::class.java)

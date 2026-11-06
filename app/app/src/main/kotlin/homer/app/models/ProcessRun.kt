@@ -101,6 +101,7 @@ fun truncateFailureReason(text: String): String {
 @Serializable
 data class RunnerState(
     val alias: String,
+    // Null in Job mode until the Job controller has created the pod.
     val podName: String? = null,
     val podPhase: PodPhase = PodPhase.NONE,
     val createdAt: Long? = null,
@@ -108,6 +109,8 @@ data class RunnerState(
     val endedAt: Long? = null,
     val startupFailure: PodStartupFailure? = null,
     val termination: PodTermination? = null,
+    // The Kubernetes Job that owns the pod (`workload: Job`); null in Pod mode.
+    val jobName: String? = null,
 )
 
 @Serializable

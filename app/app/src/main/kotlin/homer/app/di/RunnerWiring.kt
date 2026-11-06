@@ -1,6 +1,7 @@
 package homer.app.di
 
 import homer.app.models.AppConfig
+import homer.app.models.KubernetesWorkload
 import homer.app.models.RunnerConfig
 import homer.app.runners.RunnerRegistry
 import homer.app.runners.external.ExternalRunnerDomain
@@ -14,6 +15,7 @@ import homer.app.runners.queue.RunnerClaimQueue
 import homer.app.runners.ssh.SshRunner
 import homer.app.runners.ssh.applySshClientTiming
 import io.kubernetes.client.openapi.ApiClient
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.Config
 import io.opentelemetry.api.trace.Tracer
@@ -136,8 +138,15 @@ private fun buildKubernetesRunner(
         tracer = tracer,
         instanceId = instanceId,
         sysEnvBackedEnvNames = sysEnvBackedEnvNames,
+        batchApi = batchApiFor(cfg, apiClient),
     )
 }
+
+/** Job mode's BatchV1Api on the runner's [apiClient]; null in Pod mode, which makes no batch call (ADR-0100). */
+internal fun batchApiFor(
+    cfg: RunnerConfig.Kubernetes,
+    apiClient: ApiClient,
+): BatchV1Api? = if (cfg.workload == KubernetesWorkload.Job) BatchV1Api(apiClient) else null
 
 // A new SshClient per alias, not a shared one: SshRunner.defaultConnect sets
 // client.serverKeyVerifier per config, which would race across aliases with

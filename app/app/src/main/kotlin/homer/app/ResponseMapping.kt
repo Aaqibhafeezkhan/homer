@@ -167,6 +167,7 @@ fun RunnerState.toResponse(
                 )
             },
         termination = this.termination?.let { PodTerminationResponse(reason = it.reason, message = it.message) },
+        jobName = this.jobName,
     )
 
 /** [redactedParams] must come from `redactStoredParams`; the raw map may hold credentials. */

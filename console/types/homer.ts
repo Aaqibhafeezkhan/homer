@@ -75,6 +75,8 @@ export interface RunnerState {
   endedAt?: number | null;
   startupFailure?: PodStartupFailure | null;
   termination?: PodTermination | null;
+  // The Job that owns the pod (`workload: Job`); podName stays null until the pod exists.
+  jobName?: string | null;
 }
 
 // Process Info

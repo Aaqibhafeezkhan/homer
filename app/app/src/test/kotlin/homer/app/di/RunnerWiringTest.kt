@@ -3,15 +3,19 @@ package homer.app.di
 import homer.app.exceptions.ConfigurationException
 import homer.app.fixtures.AgentFixtures
 import homer.app.models.AppConfig
+import homer.app.models.KubernetesWorkload
 import homer.app.models.LocalRunnerConfig
 import homer.app.models.RunnerConfig
 import homer.app.models.Server
 import homer.app.models.SshAuth
 import homer.app.runners.kubernetes.RunnerStateSink
+import io.kubernetes.client.openapi.ApiClient
 import io.opentelemetry.api.OpenTelemetry
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class RunnerWiringTest {
     private val stateSink = RunnerStateSink { _, _ -> }
@@ -82,5 +86,20 @@ class RunnerWiringTest {
         val e = assertThrows<IllegalArgumentException> { buildRunnerRegistry(config(mapOf("box" to ssh)), stateSink, tracer, "") }
 
         assertEquals("ssh runner 'box': strictHostKeyChecking=true requires knownHostsPath", e.message)
+    }
+
+    @Test
+    fun `Pod mode builds no BatchV1Api`() {
+        val cfg = RunnerConfig.Kubernetes(image = "ubuntu:24.04")
+
+        assertNull(batchApiFor(cfg, ApiClient()))
+    }
+
+    @Test
+    fun `Job mode builds one on the shared ApiClient`() {
+        val cfg = RunnerConfig.Kubernetes(image = "ubuntu:24.04", workload = KubernetesWorkload.Job)
+        val apiClient = ApiClient()
+
+        assertSame(apiClient, batchApiFor(cfg, apiClient)!!.apiClient)
     }
 }

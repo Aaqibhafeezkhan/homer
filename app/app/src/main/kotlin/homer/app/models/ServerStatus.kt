@@ -91,6 +91,7 @@ data class RunnerStateResponse(
     val endedAt: Long? = null,
     val startupFailure: PodStartupFailureResponse? = null,
     val termination: PodTerminationResponse? = null,
+    val jobName: String? = null,
 )
 
 @Serializable
