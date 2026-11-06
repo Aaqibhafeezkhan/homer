@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory
 internal class RunnerStateEmitter(
     private val alias: String,
     private val processId: Int,
-    private val jobName: String?,
+    val jobName: String?,
     private val clock: () -> Long,
     private val sink: RunnerStateSink,
 ) {

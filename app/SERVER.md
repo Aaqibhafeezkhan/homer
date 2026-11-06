@@ -2741,6 +2741,20 @@ default `Pod` mode; only the object that owns the pod changes.
   to become ready. Waiting for the pod to exist and waiting for it to be
   ready share one `podStartTimeoutSeconds` budget. Until the pod exists
   the run's `runner.podName` is `null`; `runner.jobName` names the Job.
+- **Waiting for the pod.** While the Job has no pod, Homer reads the
+  Job's conditions and its `FailedCreate` events once per second, inside
+  the same `podStartTimeoutSeconds` budget:
+  - a `FailedCreate` whose message has `exceeded quota` is a namespace
+    `ResourceQuota` refusal the Job controller keeps retrying, so Homer
+    keeps waiting; if the budget runs out, the `PodStartTimeout` message
+    ends with `; last FailedCreate: <message>`;
+  - any other newest `FailedCreate` (a PodSecurity or admission-webhook
+    rejection, an invalid spec) fails the startup at once with reason
+    `JobFailedCreate` and the event's message;
+  - a Job condition `Failed` fails the startup with reason `JobFailed`
+    and the condition's message.
+
+  The startup failure's `events` list the Job's conditions and events.
 - **`maxRunSeconds`** works in both modes: it is the pod's
   `spec.activeDeadlineSeconds` (on the pod template in Job mode), counted
   from pod start and enforced by the kubelet even while Homer is down. It
@@ -2750,9 +2764,12 @@ default `Pod` mode; only the object that owns the pod changes.
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
-- **Cleanup.** Homer deletes the pod at session close as in Pod mode; the
-  Job then ends, and the cluster removes it after
-  `ttlSecondsAfterFinished`.
+- **Cleanup.** A failed startup deletes the Job (`propagationPolicy:
+  Background`) and its pod, if one exists, and so does a startup that
+  Homer's shutdown cuts short; when `keepPodOnFailure` keeps the pod, the Job is
+  left too and ends when the kept pod's deadline does. At session close
+  Homer deletes the pod as in Pod mode; the Job then ends, and the
+  cluster removes it after `ttlSecondsAfterFinished`.
 - **RBAC.** Job mode needs the `batch` `jobs` rule in
   [RBAC](#rbac). Pod mode makes no `batch` API call, so an existing Role
   without it keeps working.

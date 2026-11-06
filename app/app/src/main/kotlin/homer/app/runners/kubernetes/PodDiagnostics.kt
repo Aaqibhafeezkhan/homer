@@ -1,8 +1,11 @@
 package homer.app.runners.kubernetes
 
 import io.kubernetes.client.openapi.ApiException
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
+import io.kubernetes.client.openapi.models.CoreV1Event
 import io.kubernetes.client.openapi.models.V1ContainerStatus
+import io.kubernetes.client.openapi.models.V1JobCondition
 import io.kubernetes.client.openapi.models.V1Pod
 
 /**
@@ -30,17 +33,30 @@ class PodDiagnostics(
         return Snapshot(reason = reason, message = message, events = events)
     }
 
-    private fun listEvents(podName: String): List<String> =
-        runCatching {
-            api
-                .listNamespacedEvent(namespace)
-                .fieldSelector("involvedObject.name=$podName")
-                .execute()
-        }.getOrNull()
-            ?.items
-            ?.sortedBy { it.lastTimestamp ?: it.eventTime ?: it.firstTimestamp }
-            ?.map { "${it.type ?: "?"}/${it.reason ?: "?"}: ${it.message ?: ""}".trim() }
-            ?: emptyList()
+    /**
+     * The Job [jobName]'s conditions, then its events (newest last), as event lines; the reason is
+     * `JobFailed` with the `Failed` condition's message when the Job has failed. See ADR-0100.
+     */
+    fun collectJob(
+        jobName: String,
+        batchApi: BatchV1Api,
+    ): Snapshot {
+        val conditions = readJobOrNull(batchApi, namespace, jobName)?.status?.conditions.orEmpty()
+        val events = sortedEvents(api, namespace, jobEventSelector(jobName)).map(::eventLine)
+        val failed = conditions.firstOrNull { it.isFailed() }
+        return Snapshot(
+            reason = if (failed != null) "JobFailed" else "Unknown",
+            message = failed?.message ?: events.lastOrNull() ?: "No diagnostic details available",
+            events = conditions.map(::conditionLine) + events,
+        )
+    }
+
+    private fun listEvents(podName: String): List<String> = sortedEvents(api, namespace, "involvedObject.name=$podName").map(::eventLine)
+
+    private fun eventLine(e: CoreV1Event): String = "${e.type ?: "?"}/${e.reason ?: "?"}: ${e.message ?: ""}".trim()
+
+    private fun conditionLine(c: V1JobCondition): String =
+        (listOf("Job/${c.type}=${c.status}") + listOfNotNull(c.reason, c.message)).joinToString(": ")
 
     private fun extractFailure(pod: V1Pod?): Pair<String, String>? {
         val status = pod?.status ?: return null
@@ -81,6 +97,18 @@ class PodDiagnostics(
                 "CreateContainerConfigError",
                 "InvalidImageName",
             )
+
+        /** The events matching [fieldSelector], oldest first; empty when they cannot be listed. */
+        internal fun sortedEvents(
+            api: CoreV1Api,
+            namespace: String,
+            fieldSelector: String,
+        ): List<CoreV1Event> =
+            runCatching { api.listNamespacedEvent(namespace).fieldSelector(fieldSelector).execute() }
+                .getOrNull()
+                ?.items
+                ?.sortedBy { it.lastTimestamp ?: it.eventTime ?: it.firstTimestamp }
+                .orEmpty()
 
         /** Best-effort wrapper that never throws; turns ApiException into a stub snapshot. */
         fun tryCollect(

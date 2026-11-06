@@ -16,8 +16,10 @@ import io.kubernetes.client.openapi.models.V1Pod
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -122,15 +124,19 @@ class KubernetesRunner(
         states.creating(podName, createdAtSec)
         createPod(pod, podName, states)
         states.pending(podName, createdAtSec)
-        withinStartBudget(states, { podName }) { pollUntilReady(podName, states) }
+        withinStartBudget(states, { podName }, { "Pod did not become ready within ${config.podStartTimeoutSeconds}s (elapsed=${it}s)" }) {
+            pollUntilReady(podName, states)
+        }
         states.ready(podName, createdAtSec)
         return podName
     }
 
     /**
      * Creates the one-pod Job, finds its pod by the Job's selector and waits for it to be ready, all under one
-     * `podStartTimeoutSeconds` budget, emitting each phase to [states]; returns the pod's name. See ADR-0100.
+     * `podStartTimeoutSeconds` budget, emitting each phase to [states]; returns the pod's name. A failed or
+     * cancelled startup deletes the Job. See ADR-0100.
      */
+    @Suppress("SuspendFunSwallowedCancellation") // deletes the Job on cancellation, then rethrows
     private suspend fun provisionJob(
         params: RunnerSessionParams,
         jobName: String,
@@ -139,21 +145,37 @@ class KubernetesRunner(
         val job = podSpecBuilder.buildJob(params, jobName)
         val createdAtSec = clock() / 1000
         states.creating(null, createdAtSec)
-        val selector =
-            jobPodSelector(createJob(job, states))
-                ?: failStartup(null, states, "PodCreateFailed", "Job $jobName was created without a pod selector or uid")
-        states.pending(null, createdAtSec)
+        val created = createJob(job, states)
+        val check = JobStartupCheck(api, checkNotNull(batchApi), config.namespace, jobName)
         var found: String? = null
-        val podName =
-            withinStartBudget(states, { found }) {
-                val jobPod = pollForJobPod(selector, states)
-                found = jobPod
-                states.podFound(jobPod, createdAtSec)
-                pollUntilReady(jobPod, states)
-                jobPod
-            }
-        states.ready(podName, createdAtSec)
-        return podName
+        try {
+            val selector =
+                jobPodSelector(created)
+                    ?: failStartup(null, states, "PodCreateFailed", "Job $jobName was created without a pod selector or uid")
+            states.pending(null, createdAtSec)
+            val podName =
+                withinStartBudget(states, { found }, { check.timeoutMessage(config.podStartTimeoutSeconds, it) }) {
+                    val jobPod = pollForJobPod(selector, check, states)
+                    found = jobPod
+                    states.podFound(jobPod, createdAtSec)
+                    pollUntilReady(jobPod, states)
+                    jobPod
+                }
+            states.ready(podName, createdAtSec)
+            return podName
+        } catch (e: CancellationException) {
+            // A cancelled startup must not leave the Job controller retrying pod creation.
+            withContext(NonCancellable) { deleteJobAndPod(jobName, found) }
+            throw e
+        }
+    }
+
+    private fun deleteJobAndPod(
+        jobName: String,
+        podName: String?,
+    ) {
+        JobCleanup.delete(checkNotNull(batchApi), config.namespace, jobName)
+        podName?.let { PodCleanup.delete(api, config.namespace, it) }
     }
 
     /** Wraps the ready pod in its session: tar-over-exec sync and the remote path layout (ADR-0043). */
@@ -223,38 +245,33 @@ class KubernetesRunner(
         try {
             checkNotNull(batchApi).createNamespacedJob(config.namespace, job).execute()
         } catch (e: ApiException) {
-            val ex = PodStartupException("PodCreateFailed", e.responseBody ?: e.message ?: "Job create failed", emptyList(), e)
-            states.startupFailed(ex)
-            throw ex
+            // The delete covers a create that landed although its answer failed; a 404 is tolerated.
+            failStartup(null, states, "PodCreateFailed", e.responseBody ?: e.message ?: "Job create failed", e)
         }
 
     /**
      * Runs [block] under the one `podStartTimeoutSeconds` budget; on expiry fails the startup as
-     * `PodStartTimeout`, diagnosing and cleaning up the pod [podName] names, if there is one yet.
+     * `PodStartTimeout` with [timeoutMessage] of the elapsed seconds, diagnosing and cleaning up the pod
+     * [podName] names, if there is one yet.
      */
     private suspend fun <T> withinStartBudget(
         states: RunnerStateEmitter,
         podName: () -> String?,
+        timeoutMessage: (Long) -> String,
         block: suspend CoroutineScope.() -> T,
     ): T {
         val startMs = clock()
         try {
             return withTimeout(config.podStartTimeoutSeconds.seconds, block)
         } catch (e: TimeoutCancellationException) {
-            val elapsedSec = (clock() - startMs) / 1000
-            failStartup(
-                podName(),
-                states,
-                "PodStartTimeout",
-                "Pod did not become ready within ${config.podStartTimeoutSeconds}s (elapsed=${elapsedSec}s)",
-                cause = e,
-            )
+            failStartup(podName(), states, "PodStartTimeout", timeoutMessage((clock() - startMs) / 1000), cause = e)
         }
     }
 
-    /** Polls the Job's pods until the Job controller has created one. */
+    /** Polls the Job's pods until the Job controller has created one, running [check] while there is none. */
     private suspend fun pollForJobPod(
         selector: String,
+        check: JobStartupCheck,
         states: RunnerStateEmitter,
     ): String {
         while (true) {
@@ -262,10 +279,10 @@ class KubernetesRunner(
                 try {
                     findJobPod(api, config.namespace, selector)
                 } catch (e: PodStartupException) {
-                    states.startupFailed(e)
-                    throw e
+                    failStartup(null, states, e.reason, e.rawMessage, e)
                 }
             if (podName != null) return podName
+            check.failure()?.let { (reason, message) -> failStartup(null, states, reason, message) }
             delay(JOB_POLL_INTERVAL_MS)
         }
     }
@@ -279,7 +296,7 @@ class KubernetesRunner(
                 try {
                     readPod(podName)
                 } catch (e: PodStartupException) {
-                    cleanupFailedPod(podName)
+                    cleanupFailed(podName, states.jobName)
                     states.startupFailed(e)
                     throw e
                 }
@@ -298,16 +315,30 @@ class KubernetesRunner(
             throw PodStartupException("PodStatusUnreadable", e.responseBody ?: (e.message ?: "unreadable"), emptyList(), e)
         }
 
-    /** Startup-failure teardown: same keep-or-delete choice as session close. */
-    private fun cleanupFailedPod(podName: String) {
+    /**
+     * Startup-failure teardown: the pod [podName] as at session close, then in Job mode the Job [jobName],
+     * unless the pod was kept: its deadline then ends the Job.
+     */
+    private fun cleanupFailed(
+        podName: String?,
+        jobName: String?,
+    ) {
+        val kept = podName != null && cleanupFailedPod(podName)
+        if (jobName != null && !kept) JobCleanup.delete(checkNotNull(batchApi), config.namespace, jobName)
+    }
+
+    /** Keeps or deletes the pod, the same choice as session close; true when it was kept. */
+    private fun cleanupFailedPod(podName: String): Boolean =
         runCatching {
-            if (config.keepPodOnFailure && podStartedOnNode(podName)) {
+            val keep = config.keepPodOnFailure && podStartedOnNode(podName)
+            if (keep) {
                 PodCleanup.keepWithTtl(api, config.namespace, podName, config.keepPodTtlSeconds, config.maxRunSeconds)
             } else {
                 PodCleanup.delete(api, config.namespace, podName)
             }
+            keep
         }.onFailure { log.debug("Failed to clean up pod after startup failure: {}", it.message) }
-    }
+            .getOrDefault(false)
 
     // activeDeadlineSeconds is enforced only relative to status.startTime; keeping a
     // never-scheduled pod would leak it past both the TTL and the kept-skipping sweep.
@@ -320,7 +351,7 @@ class KubernetesRunner(
                 ?.startTime != null
         }.getOrDefault(false)
 
-    /** Fails the startup; with a [podName] it diagnoses and cleans up that pod first. */
+    /** Fails the startup; it diagnoses and cleans up the pod [podName] when there is one, and in Job mode the Job. */
     private suspend fun failStartup(
         podName: String?,
         states: RunnerStateEmitter,
@@ -328,10 +359,8 @@ class KubernetesRunner(
         fallbackMessage: String,
         cause: Throwable? = null,
     ): Nothing {
-        val snap =
-            podName?.let { PodDiagnostics.tryCollect(api, config.namespace, it, fallbackReason) }
-                ?: PodDiagnostics.Snapshot(fallbackReason, fallbackMessage, emptyList())
-        podName?.let(::cleanupFailedPod)
+        val snap = diagnose(podName, states.jobName, fallbackReason, fallbackMessage)
+        cleanupFailed(podName, states.jobName)
         val ex =
             PodStartupException(
                 reason = snap.reason.ifBlank { fallbackReason },
@@ -341,6 +370,18 @@ class KubernetesRunner(
             )
         states.startupFailed(ex)
         throw ex
+    }
+
+    /** The pod's diagnostics; without a pod, the Job's conditions and events under the given reason and message. */
+    private fun diagnose(
+        podName: String?,
+        jobName: String?,
+        reason: String,
+        message: String,
+    ): PodDiagnostics.Snapshot {
+        if (podName != null) return PodDiagnostics.tryCollect(api, config.namespace, podName, reason)
+        val events = jobName?.let { PodDiagnostics(api, config.namespace).collectJob(it, checkNotNull(batchApi)).events }
+        return PodDiagnostics.Snapshot(reason, message, events.orEmpty())
     }
 
     /**
