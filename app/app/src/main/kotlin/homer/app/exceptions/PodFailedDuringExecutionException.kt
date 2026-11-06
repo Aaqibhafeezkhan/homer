@@ -1,5 +1,7 @@
 package homer.app.exceptions
 
+import homer.app.models.PodTermination
+
 /**
  * Raised when a worker pod disappears or transitions to a terminal
  * failure state (eviction, OOMKilled, node drain) while a command was
@@ -11,4 +13,9 @@ class PodFailedDuringExecutionException(
     message: String,
     val events: List<String>,
     cause: Throwable? = null,
-) : RuntimeException("Pod failed during execution ($reason): $message", cause)
+    val termination: PodTermination? = null,
+    stoppedSummary: String? = null,
+) : RuntimeException(
+        stoppedSummary?.let { "Kubernetes stopped the pod: $it" } ?: "Pod failed during execution ($reason): $message",
+        cause,
+    )

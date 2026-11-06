@@ -8,6 +8,7 @@ import homer.app.models.DispatchSummary
 import homer.app.models.ExecutionInfoResponse
 import homer.app.models.LangfuseConfig
 import homer.app.models.PodStartupFailureResponse
+import homer.app.models.PodTerminationResponse
 import homer.app.models.ProcessHistoryEntry
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
@@ -165,6 +166,7 @@ fun RunnerState.toResponse(
                     events = it.events,
                 )
             },
+        termination = this.termination?.let { PodTerminationResponse(reason = it.reason, message = it.message) },
     )
 
 /** [redactedParams] must come from `redactStoredParams`; the raw map may hold credentials. */

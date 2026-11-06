@@ -33,6 +33,8 @@ import homer.app.models.Param
 import homer.app.models.ParamSource
 import homer.app.models.ParamType
 import homer.app.models.PodPhase
+import homer.app.models.PodTermination
+import homer.app.models.PodTerminationResponse
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
@@ -3103,6 +3105,16 @@ class ApplicationTest {
 
         assertNull(response.alias, "a non-admin response must not carry the raw alias")
         assertEquals("kubernetes", response.type)
+    }
+
+    @Test
+    fun `RunnerState termination maps to the response`() {
+        val mapped =
+            RunnerState(alias = "k", termination = PodTermination("DeadlineExceeded", "late"))
+                .toResponse(type = "kubernetes", aliasVisible = false)
+
+        assertEquals(PodTerminationResponse("DeadlineExceeded", "late"), mapped.termination)
+        assertNull(RunnerState(alias = "k").toResponse(type = "kubernetes", aliasVisible = false).termination)
     }
 
     @Test

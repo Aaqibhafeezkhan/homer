@@ -408,6 +408,45 @@ class KubernetesRunnerTest {
             verify(exactly = 0) { api.patchNamespacedPod(any(), any(), any()) }
         }
 
+    @Test
+    fun `a pod Kubernetes stops mid-run fails the command and records the termination`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubCreatePod(api)
+        stubEvents(api, emptyList())
+        var stopped = false
+        val req =
+            mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                every { execute() } answers { if (stopped) podWithStatus("Failed", "DeadlineExceeded", "too long") else readyPod() }
+            }
+        every { api.readNamespacedPodStatus(any(), any()) } returns req
+        val exec =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns java.io.ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<java.util.concurrent.TimeUnit>()) } returns true
+                every { exitValue() } returns 137
+            }
+        val captured = mutableListOf<RunnerState>()
+        val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+        val runner =
+            KubernetesRunner("k8s-dev", config.copy(maxRunSeconds = 60), api, { _, _, _, _ -> exec }, clock = { 5_000L }, stateSink = sink)
+        val session = runner.openSession(params)
+        stopped = true
+
+        val e =
+            assertThrows<homer.app.exceptions.PodFailedDuringExecutionException> {
+                session.shell.cmd(listOf("sleep"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+            }
+
+        assertEquals("Kubernetes stopped the pod: maxRunSeconds (60 s) exceeded (DeadlineExceeded)", e.message)
+        assertEquals(PodPhase.FAILED, captured.last().podPhase)
+        assertEquals("DeadlineExceeded", captured.last().termination?.reason)
+        assertEquals(5L, captured.last().endedAt)
+    }
+
     private fun dummyExecClient(): KubernetesExecClient = KubernetesExecClient { _, _, _, _ -> mockk(relaxed = true) }
 
     private fun stubCreatePod(api: CoreV1Api) {

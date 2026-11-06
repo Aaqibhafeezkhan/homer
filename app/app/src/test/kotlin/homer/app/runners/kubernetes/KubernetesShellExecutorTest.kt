@@ -3,7 +3,10 @@ package homer.app.runners.kubernetes
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.PodFailedDuringExecutionException
 import homer.app.infra.OutputLineFilter
+import homer.app.models.PodTermination
+import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
+import io.kubernetes.client.openapi.models.CoreV1EventList
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -536,6 +539,87 @@ class KubernetesShellExecutorTest {
             executor.cmd(listOf("yes"), tmp.resolve("out"), stdErr, timeout = 10.seconds)
         }
         assertTrue(stdErr.readText().contains("[HOMER] Output cap exceeded ($cap bytes)"))
+    }
+
+    private fun stoppedPodApi(): CoreV1Api {
+        val api = podStatusApi(podWithStatus("Failed", "DeadlineExceeded", "Pod was active longer than the deadline"))
+        every { api.listNamespacedEvent(any()) } returns
+            mockk(relaxed = true) {
+                every { fieldSelector(any()) } returns this
+                every { execute() } returns CoreV1EventList()
+            }
+        return api
+    }
+
+    private suspend fun run(
+        executor: KubernetesShellExecutor,
+        tmp: Path,
+    ) = executor.cmd(listOf("sleep"), tmp.resolve("out"), tmp.resolve("err"), timeout = 10.seconds)
+
+    @Test
+    fun `a command killed by the pod deadline fails with the termination`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val seen = mutableListOf<PodTermination>()
+        val client = KubernetesExecClient { _, _, _, _ -> fakeProcess("", "", 137) }
+        val executor =
+            KubernetesShellExecutor(client, stoppedPodApi(), "homer", "pod-1", maxRunSeconds = 60, onTermination = { seen += it })
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("DeadlineExceeded", e.termination?.reason)
+        assertEquals("Kubernetes stopped the pod: maxRunSeconds (60 s) exceeded (DeadlineExceeded)", e.message)
+        assertEquals(listOf(e.termination), seen)
+    }
+
+    @Test
+    fun `a non-zero exit on a running pod stays a command result`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = podStatusApi(podWithStatus("Running"))
+        var called = false
+        val client = KubernetesExecClient { _, _, _, _ -> fakeProcess("", "", 1) }
+        val executor = KubernetesShellExecutor(client, api, "homer", "pod-1", onTermination = { called = true })
+
+        assertEquals(1, run(executor, tmp).exitCode)
+        verify(exactly = 1) { api.readNamespacedPodStatus(any(), any()) }
+        assertTrue(!called)
+    }
+
+    @Test
+    fun `a zero exit reads no pod status`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = podStatusApi(podWithStatus("Failed"))
+        val client = KubernetesExecClient { _, _, _, _ -> fakeProcess("", "", 0) }
+
+        assertEquals(0, run(KubernetesShellExecutor(client, api, "homer", "pod-1"), tmp).exitCode)
+        verify(exactly = 0) { api.readNamespacedPodStatus(any(), any()) }
+    }
+
+    @Test
+    fun `a channel failure on a deleted pod reports PodDeleted`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = podStatusApi(error = ApiException(404, "gone"))
+        every { api.listNamespacedEvent(any()) } returns
+            mockk(relaxed = true) {
+                every { fieldSelector(any()) } returns this
+                every { execute() } returns CoreV1EventList()
+            }
+        val proc =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<TimeUnit>()) } returns true
+                every { exitValue() } throws IllegalThreadStateException("channel closed")
+            }
+        val executor = KubernetesShellExecutor(KubernetesExecClient { _, _, _, _ -> proc }, api, "homer", "pod-1")
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("PodDeleted", e.termination?.reason)
     }
 
     private fun fakeProcess(

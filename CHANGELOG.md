@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Added: `maxRunSeconds` for the kubernetes runner** — A hard per-run limit enforced by Kubernetes on the pod; a run it stops fails with the reason in the new `runner.termination` field.
+
 ## [1.40.0] - 2026-11-05
 
 ### Homer

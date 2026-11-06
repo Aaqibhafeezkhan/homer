@@ -107,6 +107,13 @@ data class RunnerState(
     val readyAt: Long? = null,
     val endedAt: Long? = null,
     val startupFailure: PodStartupFailure? = null,
+    val termination: PodTermination? = null,
+)
+
+@Serializable
+data class PodTermination(
+    val reason: String,
+    val message: String,
 )
 
 @Serializable

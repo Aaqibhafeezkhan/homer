@@ -67,6 +67,16 @@ class KubernetesRunner(
                         namespace = config.namespace,
                         podName = podName,
                         maxOutputBytes = params.workspace.maxOutputBytes,
+                        maxRunSeconds = config.maxRunSeconds,
+                        onTermination = { t ->
+                            emitState(params.processId) { prev ->
+                                (prev ?: base(podName, openStartMs / 1000)).copy(
+                                    termination = t,
+                                    podPhase = PodPhase.FAILED,
+                                    endedAt = clock() / 1000,
+                                )
+                            }
+                        },
                     )
                 span?.setAttribute("pod.start_duration_ms", clock() - openStartMs)
                 span?.setStatus(StatusCode.OK)
