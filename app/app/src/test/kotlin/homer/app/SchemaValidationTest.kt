@@ -112,6 +112,33 @@ class SchemaValidationTest {
     }
 
     @Test
+    fun `homer-config schema constrains the kubernetes workload keys`() {
+        // Pins the minimums and the if/then that mirrors RunnerConfig.Kubernetes.validateWorkload.
+        val schema = loadSchema("homer-config.schema.json")
+        val base = Json.parseToJsonElement(File(repoRoot, "example/config/config-custom.json").readText()).jsonObject
+
+        fun withK8s(keys: String): String {
+            val runner = Json.parseToJsonElement("""{"type": "kubernetes", "image": "busybox"$keys}""")
+            return JsonObject(base + ("runners" to JsonObject(mapOf("k8s" to runner)))).toString()
+        }
+        validate(
+            schema,
+            withK8s(""", "workload": "Job", "maxRunSeconds": 10800, "jobTtlSecondsAfterFinished": 600"""),
+            "kubernetes runner with the workload keys",
+        )
+        validate(schema, withK8s(""", "maxRunSeconds": null"""), "kubernetes runner with null maxRunSeconds")
+        for (bad in listOf(
+            """, "maxRunSeconds": 0""",
+            """, "workload": "Job", "jobTtlSecondsAfterFinished": -1""",
+            """, "jobTtlSecondsAfterFinished": 60""",
+            """, "workload": "Pod", "jobTtlSecondsAfterFinished": 60""",
+            """, "workload": "CronJob"""",
+        )) {
+            assertTrue(schema.validate(withK8s(bad), InputFormat.JSON).isNotEmpty(), "schema accepted kubernetes runner $bad")
+        }
+    }
+
+    @Test
     fun `no example agent opts into dangerouslySkipPermissions`() {
         // Acceptance criterion (GH-7): a bundled example must not skip Claude's
         // permission gate without a comment saying why. JSON has no comments at
