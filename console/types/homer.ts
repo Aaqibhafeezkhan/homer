@@ -54,6 +54,12 @@ export interface PodStartupFailure {
   events: string[];
 }
 
+// Pod Termination (the pod was stopped by Kubernetes)
+export interface PodTermination {
+  reason: string;
+  message: string;
+}
+
 // Runner State (per-process)
 export interface RunnerState {
   // Raw backend alias; null for a non-admin viewer, who gets the generic `type`
@@ -68,6 +74,7 @@ export interface RunnerState {
   readyAt?: number | null;
   endedAt?: number | null;
   startupFailure?: PodStartupFailure | null;
+  termination?: PodTermination | null;
 }
 
 // Process Info
