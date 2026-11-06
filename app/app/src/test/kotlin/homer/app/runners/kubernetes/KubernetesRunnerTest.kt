@@ -483,6 +483,10 @@ class KubernetesRunnerTest {
         val jobName = captured.first().jobName!!
         assertTrue(jobName.startsWith("homer-7-"), jobName)
         assertTrue(captured.all { it.jobName == jobName }, "every state carries the Job name: $captured")
+        assertEquals(jobName, session.metadata["job.name"])
+        session.close()
+        assertEquals("/apis/batch/v1/namespaces/homer/jobs/$jobName", seen.single { it.method == "DELETE" }.url.encodedPath)
+        verify { api.deleteNamespacedPod("homer-7-job-x1y2z", "homer") }
         assertEquals(
             listOf(
                 PodPhase.CREATING to null,

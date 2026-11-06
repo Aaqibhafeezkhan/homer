@@ -9,9 +9,12 @@ import homer.app.models.ExtraUploadSpec
 import homer.app.models.TelemetryExport
 import homer.app.runners.DownloadMode
 import homer.app.runners.RemotePathTranslator
+import io.kubernetes.client.custom.V1Patch
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.mockk.mockk
 import io.mockk.verify
+import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.common.CompletableResultCode
@@ -39,8 +42,12 @@ class KubernetesRunnerSessionTest {
         maxRunSeconds: Long? = null,
         tracer: Tracer? = null,
         parentContext: Context = Context.root(),
+        jobName: String? = null,
+        batchApi: BatchV1Api? = null,
     ) = KubernetesRunnerSession(
         tracer = tracer,
+        jobName = jobName,
+        batchApi = batchApi,
         parentContext = parentContext,
         podName = "pod-1",
         namespace = "homer",
@@ -137,6 +144,110 @@ class KubernetesRunnerSessionTest {
         val s = session(api = api, keepPodOnFailure = true)
         s.close()
         verify { api.deleteNamespacedPod("pod-1", "homer") }
+    }
+
+    // ========== Job mode: the Job goes with its pod (ADR-0100) ==========
+
+    private fun Request.bodyText(): String = Buffer().also { body!!.writeTo(it) }.readUtf8()
+
+    /** A Job session whose core and batch calls land, in order, in [seen]; [podPatch] answers the pod PATCH. */
+    private fun jobSession(
+        seen: MutableList<Request>,
+        keepPodOnFailure: Boolean = false,
+        podPatch: Int = 200,
+    ) = session(
+        api = interceptedCoreV1Api(seen) { if (it.method == "PATCH") podPatch else 200 },
+        keepPodOnFailure = keepPodOnFailure,
+        jobName = "homer-7-job",
+        batchApi = interceptedBatchV1Api(seen),
+    )
+
+    @Test
+    fun `Job session close deletes the Job with Background propagation, then the pod with grace 0`() {
+        val seen = mutableListOf<Request>()
+
+        jobSession(seen).close()
+
+        assertEquals(
+            listOf("DELETE /apis/batch/v1/namespaces/homer/jobs/homer-7-job", "DELETE /api/v1/namespaces/homer/pods/pod-1"),
+            seen.map { "${it.method} ${it.url.encodedPath}" },
+        )
+        assertEquals("Background", seen[0].url.queryParameter("propagationPolicy"))
+        assertEquals("0", seen[1].url.queryParameter("gracePeriodSeconds"))
+    }
+
+    @Test
+    fun `Job session keep-on-failure labels the pod and the Job`() {
+        val seen = mutableListOf<Request>()
+        val s = jobSession(seen, keepPodOnFailure = true)
+
+        s.markFailed()
+        s.close()
+
+        assertEquals(
+            listOf("PATCH /api/v1/namespaces/homer/pods/pod-1", "PATCH /apis/batch/v1/namespaces/homer/jobs/homer-7-job"),
+            seen.map { "${it.method} ${it.url.encodedPath}" },
+        )
+        val jobPatch = seen[1]
+        assertEquals(V1Patch.PATCH_FORMAT_JSON_PATCH, jobPatch.body?.contentType()?.toString())
+        assertEquals("""[{"op":"add","path":"/metadata/labels/homer.app~1kept","value":"true"}]""", jobPatch.bodyText())
+    }
+
+    @Test
+    fun `a failed pod keep also deletes the Job`() {
+        val seen = mutableListOf<Request>()
+        val s = jobSession(seen, keepPodOnFailure = true, podPatch = 500)
+
+        s.markFailed()
+        s.close()
+
+        assertEquals(
+            listOf(
+                "PATCH /api/v1/namespaces/homer/pods/pod-1",
+                "DELETE /api/v1/namespaces/homer/pods/pod-1",
+                "DELETE /apis/batch/v1/namespaces/homer/jobs/homer-7-job",
+            ),
+            seen.map { "${it.method} ${it.url.encodedPath}" },
+        )
+        assertEquals("Background", seen[2].url.queryParameter("propagationPolicy"))
+    }
+
+    @Test
+    fun `a Pod session close makes no batch call`() {
+        for (failed in listOf(false, true)) {
+            val core = mutableListOf<Request>()
+            val batch = mutableListOf<Request>()
+            val s = session(api = interceptedCoreV1Api(core), keepPodOnFailure = true, batchApi = interceptedBatchV1Api(batch))
+            if (failed) s.markFailed()
+
+            s.close()
+
+            assertEquals(emptyList(), batch, "failed=$failed")
+            val expected = if (failed) "PATCH" else "DELETE"
+            assertEquals(listOf("$expected /api/v1/namespaces/homer/pods/pod-1"), core.map { "${it.method} ${it.url.encodedPath}" })
+            if (!failed) assertEquals("0", core.single().url.queryParameter("gracePeriodSeconds"))
+            assertEquals(mapOf("pod.name" to "pod-1"), s.metadata)
+        }
+    }
+
+    @Test
+    fun `a Job session names its Job in metadata and on the close span`() {
+        val exporter = CollectingExporter()
+        val provider = SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter)).build()
+        val s =
+            session(
+                api = interceptedCoreV1Api(mutableListOf()),
+                tracer = provider.get("test"),
+                jobName = "homer-7-job",
+                batchApi = interceptedBatchV1Api(mutableListOf()),
+            )
+
+        assertEquals(mapOf("pod.name" to "pod-1", "job.name" to "homer-7-job"), s.metadata)
+        s.close()
+        provider.forceFlush().join(5, TimeUnit.SECONDS)
+
+        val closeSpan = exporter.spans.single { it.name == "runner.session.close" }
+        assertEquals("homer-7-job", closeSpan.attributes.get(AttributeKey.stringKey("job.name")))
     }
 
     // ========== Session lifecycle spans follow the run's muting (ADR-0050) ==========

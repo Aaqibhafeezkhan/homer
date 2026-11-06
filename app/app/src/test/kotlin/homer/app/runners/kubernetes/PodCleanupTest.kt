@@ -42,8 +42,9 @@ class PodCleanupTest {
     fun `keepWithTtl sends the TTL patch as a JSON Patch, not application json`() {
         val seen = mutableListOf<Request>()
 
-        PodCleanup.keepWithTtl(interceptedCoreV1Api(seen), "homer", "pod-1", ttlSeconds = 900)
+        val kept = PodCleanup.keepWithTtl(interceptedCoreV1Api(seen), "homer", "pod-1", ttlSeconds = 900)
 
+        assertTrue(kept)
         assertEquals(listOf("PATCH"), seen.map { it.method })
         val patch = seen.single()
         assertTrue(patch.url.encodedPath.endsWith("/namespaces/homer/pods/pod-1"), patch.url.toString())
@@ -63,7 +64,7 @@ class PodCleanupTest {
         val seen = mutableListOf<Request>()
         val api = interceptedCoreV1Api(seen) { if (it.method == "PATCH") 415 else 200 }
 
-        PodCleanup.keepWithTtl(api, "homer", "pod-1", ttlSeconds = 900) // must not throw
+        assertFalse(PodCleanup.keepWithTtl(api, "homer", "pod-1", ttlSeconds = 900)) // must not throw
 
         val delete = seen.single { it.method == "DELETE" }
         assertTrue(delete.url.encodedPath.endsWith("/namespaces/homer/pods/pod-1"), delete.url.toString())
@@ -74,7 +75,7 @@ class PodCleanupTest {
         val seen = mutableListOf<Request>()
         val api = interceptedCoreV1Api(seen) { if (it.method == "PATCH") 404 else 200 }
 
-        PodCleanup.keepWithTtl(api, "homer", "pod-1", ttlSeconds = 900) // must not throw
+        assertFalse(PodCleanup.keepWithTtl(api, "homer", "pod-1", ttlSeconds = 900), "a vanished pod is not kept") // must not throw
 
         assertEquals(emptyList(), seen.filter { it.method == "DELETE" })
     }

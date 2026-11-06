@@ -5,6 +5,7 @@ import homer.app.models.ExtraUploadSpec
 import homer.app.runners.DownloadMode
 import homer.app.runners.RemotePathTranslator
 import homer.app.runners.RunnerSession
+import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
@@ -38,12 +39,15 @@ class KubernetesRunnerSession(
     // to mute a run: the root is valid but unsampled and ParentBased drops the
     // subtree. An unparented span escapes it. See ADR-0050.
     private val parentContext: Context = Context.root(),
+    private val jobName: String? = null,
+    private val batchApi: BatchV1Api? = null,
 ) : RunnerSession {
     private val closed = AtomicBoolean(false)
     private var failed: Boolean = false
+    private val teardown = WorkloadTeardown(api, namespace, jobName, batchApi)
 
     override val metadata: Map<String, String>
-        get() = mapOf("pod.name" to podName)
+        get() = mapOf("pod.name" to podName) + listOfNotNull(jobName?.let { "job.name" to it })
 
     override fun markFailed() {
         failed = true
@@ -78,16 +82,18 @@ class KubernetesRunnerSession(
                 setAttribute("runner.alias", runnerAlias)
                 setAttribute("pod.namespace", namespace)
                 setAttribute("pod.name", podName)
+                jobName?.let { setAttribute("job.name", it) }
                 setAttribute("pod.cleanup_mode", mode)
                 setAttribute("pod.final_phase", finalPhase)
             }
     }
 
+    /** The pod, and in Job mode its Job (ADR-0100). */
     private fun cleanUpPod(mode: String) {
         if (mode == "ttl") {
-            PodCleanup.keepWithTtl(api, namespace, podName, keepPodTtlSeconds, maxRunSeconds)
+            teardown.keep(podName, keepPodTtlSeconds, maxRunSeconds)
         } else {
-            PodCleanup.delete(api, namespace, podName)
+            teardown.delete(podName)
         }
     }
 

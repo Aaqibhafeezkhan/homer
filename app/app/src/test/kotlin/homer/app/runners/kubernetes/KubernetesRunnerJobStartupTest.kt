@@ -6,6 +6,7 @@ import homer.app.models.KubernetesWorkload
 import homer.app.models.ResourceSpec
 import homer.app.models.RunnerConfig
 import homer.app.runners.RunnerSessionParams
+import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.JSON
 import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
@@ -166,7 +167,7 @@ class KubernetesRunnerJobStartupTest {
         }
 
     @Test
-    fun `a pod kept at a Job-mode startup failure leaves its Job`() =
+    fun `a pod kept at a Job-mode startup failure labels its Job kept`() =
         runTest {
             val api = mockk<CoreV1Api>(relaxed = true)
             stubJobPods(api, "homer-7-job-k3p7a")
@@ -184,6 +185,103 @@ class KubernetesRunnerJobStartupTest {
 
             verify(exactly = 0) { api.deleteNamespacedPod(any(), any()) }
             assertTrue(seen.none { it.method == "DELETE" }, "a kept pod keeps its Job: ${seen.map { it.method }}")
+            val patch = seen.single { it.method == "PATCH" }
+            assertTrue(patch.url.encodedPath.startsWith("/apis/batch/v1/namespaces/homer/jobs/homer-7-"), patch.url.toString())
+        }
+
+    @Test
+    fun `Job mode startup failure after the pod exists deletes the Job and the pod`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubJobPods(api, "homer-7-job-u7r3d")
+            val status =
+                mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                    every { execute() } throws ApiException(403, "pods/status is forbidden")
+                }
+            every { api.readNamespacedPodStatus(any(), any()) } returns status
+            val order = mutableListOf<String>()
+            stubPodDelete(api, order)
+            val seen = mutableListOf<Request>()
+            val runner = runner(api, jobApi(seen) { order += "job ${it.method}" })
+
+            assertEquals("PodStatusUnreadable", assertThrows<PodStartupException> { runner.openSession(params) }.reason)
+
+            assertBackgroundJobDelete(seen)
+            assertEquals(listOf("job POST", "job DELETE", "pod homer-7-job-u7r3d"), order)
+        }
+
+    @Test
+    fun `a timeout with a found pod that is not ready deletes the Job and the pod`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubJobPods(api, "homer-7-job-p3nd1")
+            stubPodStatus(api, V1Pod().status(V1PodStatus().phase("Pending")))
+            val order = mutableListOf<String>()
+            stubPodDelete(api, order)
+            val seen = mutableListOf<Request>()
+            val runner = runner(api, jobApi(seen) { order += "job ${it.method}" }, config.copy(podStartTimeoutSeconds = 1))
+
+            assertEquals("PodStartTimeout", assertThrows<PodStartupException> { runner.openSession(params) }.reason)
+
+            assertBackgroundJobDelete(seen)
+            assertEquals(listOf("job POST", "job DELETE", "pod homer-7-job-p3nd1"), order)
+        }
+
+    @Test
+    fun `a kill before the Job has a pod deletes the Job`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val polled = CompletableDeferred<Unit>()
+            val list =
+                mockk<CoreV1Api.APIlistNamespacedPodRequest>(relaxed = true) {
+                    every { labelSelector(any()) } returns this
+                    every { execute() } answers { polled.complete(Unit).let { V1PodList() } }
+                }
+            every { api.listNamespacedPod("homer") } returns list
+            stubJobEvents(api)
+            val seen = mutableListOf<Request>()
+            val runner = runner(api, jobApi(seen), config.copy(podStartTimeoutSeconds = 30))
+
+            val opening = launch { runner.openSession(params) }
+            polled.await()
+            opening.cancelAndJoin()
+
+            assertBackgroundJobDelete(seen)
+            verify(exactly = 0) { api.deleteNamespacedPod(any(), any()) }
+        }
+
+    @Test
+    fun `an unexpected error while a Job-mode session starts deletes the Job and its pod`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubJobPods(api, "homer-7-job-e7r0r")
+            val status =
+                mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                    every { execute() } throws IllegalStateException("garbled pod status")
+                }
+            every { api.readNamespacedPodStatus(any(), any()) } returns status
+            val seen = mutableListOf<Request>()
+
+            assertThrows<IllegalStateException> { runner(api, jobApi(seen)).openSession(params) }
+
+            assertBackgroundJobDelete(seen)
+            verify { api.deleteNamespacedPod("homer-7-job-e7r0r", "homer") }
+        }
+
+    @Test
+    fun `a Job name another Job holds fails startup without reading or deleting that Job`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val seen = mutableListOf<Request>()
+            val batch = interceptedBatchV1Api(seen) { 409 to """{"message":"jobs.batch \"homer-7-x\" already exists"}""" }
+
+            val thrown = assertThrows<PodStartupException> { runner(api, batch).openSession(params) }
+
+            assertEquals("PodCreateFailed", thrown.reason)
+            assertTrue(thrown.rawMessage.contains("already exists"), thrown.rawMessage)
+            assertEquals(emptyList(), thrown.events)
+            assertEquals(listOf("POST"), seen.map { it.method })
+            verify(exactly = 0) { api.listNamespacedEvent(any()) }
         }
 
     @Test
@@ -217,9 +315,7 @@ class KubernetesRunnerJobStartupTest {
             val list =
                 mockk<CoreV1Api.APIlistNamespacedPodRequest>(relaxed = true) {
                     every { labelSelector(any()) } returns this
-                    every { execute() } throws
-                        io.kubernetes.client.openapi
-                            .ApiException(403, "pods is forbidden")
+                    every { execute() } throws ApiException(403, "pods is forbidden")
                 }
             every { api.listNamespacedPod(any()) } returns list
             val seen = mutableListOf<Request>()
@@ -262,14 +358,34 @@ class KubernetesRunnerJobStartupTest {
     private fun jobApi(
         seen: MutableList<Request>,
         read: V1Job = job(),
+        onRequest: (Request) -> Unit = {},
     ): BatchV1Api =
         interceptedBatchV1Api(seen) {
+            onRequest(it)
             when (it.method) {
                 "POST" -> 201 to JSON.serialize(job().apply { metadata!!.uid("uid-6") })
                 "DELETE" -> 200 to "{}"
                 else -> 200 to JSON.serialize(read)
             }
         }
+
+    /** Records each pod delete in [order] as `pod <name>`. */
+    private fun stubPodDelete(
+        api: CoreV1Api,
+        order: MutableList<String>,
+    ) {
+        val name = slot<String>()
+        val req =
+            mockk<CoreV1Api.APIdeleteNamespacedPodRequest>(relaxed = true) {
+                every { gracePeriodSeconds(any()) } returns this
+                every { body(any()) } returns this
+                every { execute() } answers {
+                    order += "pod ${name.captured}"
+                    V1Pod()
+                }
+            }
+        every { api.deleteNamespacedPod(capture(name), "homer") } returns req
+    }
 
     private fun job(vararg conditions: V1JobCondition): V1Job =
         V1Job()

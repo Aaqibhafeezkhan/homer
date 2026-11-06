@@ -16,7 +16,6 @@ import io.kubernetes.client.openapi.models.V1Pod
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.api.trace.Tracer
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -68,7 +67,7 @@ class KubernetesRunner(
                 val shell = newShell(params, podName, states, openStartMs)
                 span?.setAttribute("pod.start_duration_ms", clock() - openStartMs)
                 span?.setStatus(StatusCode.OK)
-                newSession(params, podName, shell, sessionEnv)
+                newSession(params, podName, jobName, shell, sessionEnv)
             } catch (e: PodStartupException) {
                 span?.setAttribute("pod.startup_failure.reason", e.reason)
                 span?.recordException(e)
@@ -134,9 +133,9 @@ class KubernetesRunner(
     /**
      * Creates the one-pod Job, finds its pod by the Job's selector and waits for it to be ready, all under one
      * `podStartTimeoutSeconds` budget, emitting each phase to [states]; returns the pod's name. A failed or
-     * cancelled startup deletes the Job. See ADR-0100.
+     * cancelled startup deletes the Job, unless `keepPodOnFailure` keeps its pod. See ADR-0100.
      */
-    @Suppress("SuspendFunSwallowedCancellation") // deletes the Job on cancellation, then rethrows
+    @Suppress("SuspendFunSwallowedCancellation") // deletes the Job on any throwable, then rethrows
     private suspend fun provisionJob(
         params: RunnerSessionParams,
         jobName: String,
@@ -163,25 +162,20 @@ class KubernetesRunner(
                 }
             states.ready(podName, createdAtSec)
             return podName
-        } catch (e: CancellationException) {
-            // A cancelled startup must not leave the Job controller retrying pod creation.
-            withContext(NonCancellable) { deleteJobAndPod(jobName, found) }
+        } catch (e: PodStartupException) {
+            throw e // past failStartup's cleanup, which may have kept the pod and its Job
+        } catch (e: Throwable) {
+            // A cancelled or broken startup must not leave the Job controller retrying pod creation.
+            withContext(NonCancellable) { WorkloadTeardown(api, config.namespace, jobName, batchApi).delete(found) }
             throw e
         }
-    }
-
-    private fun deleteJobAndPod(
-        jobName: String,
-        podName: String?,
-    ) {
-        JobCleanup.delete(checkNotNull(batchApi), config.namespace, jobName)
-        podName?.let { PodCleanup.delete(api, config.namespace, it) }
     }
 
     /** Wraps the ready pod in its session: tar-over-exec sync and the remote path layout (ADR-0043). */
     private fun newSession(
         params: RunnerSessionParams,
         podName: String,
+        jobName: String?,
         shell: KubernetesShellExecutor,
         sessionEnv: Map<String, String>,
     ): RunnerSession =
@@ -209,6 +203,8 @@ class KubernetesRunner(
             extraUploads = config.extraUploads,
             env = sessionEnv,
             tracer = tracer,
+            jobName = jobName,
+            batchApi = batchApi,
         )
 
     private fun buildSessionEnv(): Map<String, String> =
@@ -245,8 +241,11 @@ class KubernetesRunner(
         try {
             checkNotNull(batchApi).createNamespacedJob(config.namespace, job).execute()
         } catch (e: ApiException) {
-            // The delete covers a create that landed although its answer failed; a 404 is tolerated.
-            failStartup(null, states, "PodCreateFailed", e.responseBody ?: e.message ?: "Job create failed", e)
+            val message = e.responseBody ?: e.message ?: "Job create failed"
+            // 409: the name is another Job's, never read or deleted. Otherwise the delete covers a create
+            // that landed although its answer failed; a 404 is tolerated.
+            if (e.code == HTTP_CONFLICT) reportStartupFailure(states, PodStartupException("PodCreateFailed", message, emptyList(), e))
+            failStartup(null, states, "PodCreateFailed", message, e)
         }
 
     /**
@@ -316,29 +315,22 @@ class KubernetesRunner(
         }
 
     /**
-     * Startup-failure teardown: the pod [podName] as at session close, then in Job mode the Job [jobName],
-     * unless the pod was kept: its deadline then ends the Job.
+     * Startup-failure teardown, the same choice as session close: keeps the pod [podName] (and labels the Job
+     * [jobName] kept) when `keepPodOnFailure` applies, else deletes the Job, then the pod.
      */
     private fun cleanupFailed(
         podName: String?,
         jobName: String?,
     ) {
-        val kept = podName != null && cleanupFailedPod(podName)
-        if (jobName != null && !kept) JobCleanup.delete(checkNotNull(batchApi), config.namespace, jobName)
-    }
-
-    /** Keeps or deletes the pod, the same choice as session close; true when it was kept. */
-    private fun cleanupFailedPod(podName: String): Boolean =
+        val teardown = WorkloadTeardown(api, config.namespace, jobName, batchApi)
         runCatching {
-            val keep = config.keepPodOnFailure && podStartedOnNode(podName)
-            if (keep) {
-                PodCleanup.keepWithTtl(api, config.namespace, podName, config.keepPodTtlSeconds, config.maxRunSeconds)
+            if (podName != null && config.keepPodOnFailure && podStartedOnNode(podName)) {
+                teardown.keep(podName, config.keepPodTtlSeconds, config.maxRunSeconds)
             } else {
-                PodCleanup.delete(api, config.namespace, podName)
+                teardown.delete(podName)
             }
-            keep
         }.onFailure { log.debug("Failed to clean up pod after startup failure: {}", it.message) }
-            .getOrDefault(false)
+    }
 
     // activeDeadlineSeconds is enforced only relative to status.startTime; keeping a
     // never-scheduled pod would leak it past both the TTL and the kept-skipping sweep.
@@ -361,13 +353,21 @@ class KubernetesRunner(
     ): Nothing {
         val snap = diagnose(podName, states.jobName, fallbackReason, fallbackMessage)
         cleanupFailed(podName, states.jobName)
-        val ex =
+        reportStartupFailure(
+            states,
             PodStartupException(
                 reason = snap.reason.ifBlank { fallbackReason },
                 rawMessage = snap.message.ifBlank { fallbackMessage },
                 events = snap.events,
                 cause = cause,
-            )
+            ),
+        )
+    }
+
+    private suspend fun reportStartupFailure(
+        states: RunnerStateEmitter,
+        ex: PodStartupException,
+    ): Nothing {
         states.startupFailed(ex)
         throw ex
     }
@@ -418,6 +418,7 @@ class KubernetesRunner(
     companion object {
         private const val READY_POLL_INTERVAL_MS = 500L
         private const val JOB_POLL_INTERVAL_MS = 1000L
+        private const val HTTP_CONFLICT = 409
         private const val POD_NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
         private val random = SecureRandom()
         private val log = LoggerFactory.getLogger(KubernetesRunner::class.java)

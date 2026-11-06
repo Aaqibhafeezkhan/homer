@@ -2670,7 +2670,7 @@ started in-process by Homer ([ADR-0030](../docs/adr/0030-runagent-in-process-dis
 | `initContainers` | `List<ContainerSpec>` | No | `[]` | Init containers; pod waits for each to terminate with exit 0. |
 | `podStartTimeoutSeconds` | `Long` | No | `120` | How long to wait for readiness before failing the run. |
 | `keepPodOnFailure` | `Boolean` | No | `false` | On a failed run — or a failed pod startup, if the pod already reached a node — patch the pod's TTL instead of deleting it: a failed run keeps its synced workspace under `/homer/workspace` available for inspection, a startup-failed pod keeps its image/init state inspectable. A pod that never got scheduled is always deleted (its TTL could never fire). A command timeout and an output-cap kill both count as a failure; an operator-initiated kill does not (the pod is still deleted). |
-| `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. |
+| `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. With `workload: Job`, the cluster removes a kept pod `jobTtlSecondsAfterFinished` after its Job ends; see [Job workload](#job-workload). |
 | `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in — see [Job workload](#job-workload). |
 | `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded`. Set on the pod in both modes — see [Job workload](#job-workload). |
 | `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` — see [Job workload](#job-workload). |
@@ -2764,12 +2764,21 @@ default `Pod` mode; only the object that owns the pod changes.
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
-- **Cleanup.** A failed startup deletes the Job (`propagationPolicy:
-  Background`) and its pod, if one exists, and so does a startup that
-  Homer's shutdown cuts short; when `keepPodOnFailure` keeps the pod, the Job is
-  left too and ends when the kept pod's deadline does. At session close
-  Homer deletes the pod as in Pod mode; the Job then ends, and the
-  cluster removes it after `ttlSecondsAfterFinished`.
+- **Cleanup.** At session close, and when a startup fails or Homer's
+  shutdown cuts it short, Homer deletes the Job first (`propagationPolicy:
+  Background`) and then its pod, if one exists, with `gracePeriodSeconds:
+  0` as in Pod mode, so the Job controller never replaces the pod. A Job
+  name that another Job already holds fails the startup without reading
+  or deleting that Job.
+- **Kept pods.** When `keepPodOnFailure` keeps the pod, Homer labels the
+  Job `homer.app/kept=true` too, the label the startup sweep skips; if
+  the pod cannot be kept (its patch fails and Homer deletes the pod
+  instead), Homer deletes the Job too. The kept pod still belongs to its Job: the
+  Job ends when the pod does — at once for a pod that has already failed,
+  else at the pod's deadline (`keepPodTtlSeconds`, or `maxRunSeconds` if
+  smaller, counted from pod start) — and the cluster then removes the Job
+  **and the kept pod** `jobTtlSecondsAfterFinished` later, whatever
+  `keepPodTtlSeconds` says.
 - **RBAC.** Job mode needs the `batch` `jobs` rule in
   [RBAC](#rbac). Pod mode makes no `batch` API call, so an existing Role
   without it keeps working.

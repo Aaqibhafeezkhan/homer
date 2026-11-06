@@ -35,13 +35,14 @@ object PodCleanup {
         }
     }
 
+    /** Keeps [podName] for debugging; true when it was kept, false when it is gone or was deleted instead. */
     fun keepWithTtl(
         api: CoreV1Api,
         namespace: String,
         podName: String,
         ttlSeconds: Long,
         existingDeadlineSeconds: Long? = null,
-    ) {
+    ): Boolean {
         // Kubernetes only lowers an existing activeDeadlineSeconds, never raises it (422): set it
         // only when unset or ttl is lower, else label only. "add" overwrites, so it fits either way.
         // The label path escapes "/" as "~1" per RFC 6901 (JSON Pointer).
@@ -54,7 +55,7 @@ object PodCleanup {
             } else {
                 "[\n$label\n]"
             }
-        try {
+        return try {
             // Must go through PatchUtils: the generated CoreV1Api declares no patch media
             // types, so execute() sends the body as application/json and the apiserver
             // rejects the PATCH with 415. PatchUtils re-wraps it as json-patch+json.
@@ -64,6 +65,7 @@ object PodCleanup {
                 V1Patch.PATCH_FORMAT_JSON_PATCH,
                 api.apiClient,
             )
+            true
         } catch (e: ApiException) {
             if (e.code != HTTP_NOT_FOUND) {
                 // The pod can't be bounded (no TTL, no kept label) — leaving it running
@@ -71,6 +73,7 @@ object PodCleanup {
                 log.warn("Failed to set TTL on pod {}/{}, falling back to delete: {}", namespace, podName, e.responseBody)
                 delete(api, namespace, podName)
             }
+            false
         }
     }
 
