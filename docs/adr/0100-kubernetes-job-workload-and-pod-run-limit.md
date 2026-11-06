@@ -84,14 +84,24 @@ Chosen: **the limit on the pod**, **a Job opt-in**, and **the pod found by the J
   and env delivery as today's pod; the Job adds no credential and no new path for agent data.
 - Homer's own ServiceAccount is widened by the `batch` `jobs` rule only in a namespace a Job-mode
   runner uses; the rule covers Jobs, not pods it could not already create.
-- Every leaked object is bounded: `ttlSecondsAfterFinished` removes a finished Job and its pod even
-  if Homer never cleans up, and `maxRunSeconds`, when set, ends a running one.
+- Leaked Jobs are bounded by four mechanisms, none of them alone:
+  - Homer deletes the Job on every Job-mode startup failure and at session close.
+  - The boot-time startup sweep deletes this instance's orphan Jobs.
+  - `maxRunSeconds`, when set, ends a running pod, and with it the Job, even while Homer is down.
+  - `ttlSecondsAfterFinished` removes a *finished* Job and its pod while Homer is down. Its clock
+    starts only when the Job finishes, so it bounds nothing for a Job whose pod is still running or
+    was never created (the controller keeps retrying a quota-blocked create, and the pod may start
+    later).
+
+  Without `maxRunSeconds`, a Job whose Homer died is bounded only by the next boot sweep, the same as
+  a bare pod today.
 - The pod is identified by a selector Homer reads from its own create response, never by a name an
   agent or another tenant could choose.
 
 ## More Information
 
-- Issue #122 and the spec in `docs/superpowers/specs/2026-11-06-gh-122-k8s-job-workload.md`.
+- [Issue #122](https://github.com/livesport/homer/issues/122) and its
+  [full proposal](https://github.com/livesport/homer/issues/122#issuecomment-6658217003).
 - [ADR-0043](0043-k8s-sync-workspaces.md) — the pod-per-session model this builds on.
 - [ADR-0047](0047-security-by-design-and-threat-model.md) — the threat model.
 - Operator docs: `app/SERVER.md` § Job workload and § RBAC.
