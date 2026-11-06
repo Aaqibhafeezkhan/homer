@@ -144,10 +144,11 @@ class KubernetesRunner(
         val job = podSpecBuilder.buildJob(params, jobName)
         val createdAtSec = clock() / 1000
         states.creating(null, createdAtSec)
-        val created = createJob(job, states)
         val check = JobStartupCheck(api, checkNotNull(batchApi), config.namespace, jobName)
         var found: String? = null
         try {
+            // Inside the try: a create that landed but whose answer the client cannot parse is deleted by jobName.
+            val created = createJob(job, states)
             val selector =
                 jobPodSelector(created)
                     ?: failStartup(null, states, "PodCreateFailed", "Job $jobName was created without a pod selector or uid")

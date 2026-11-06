@@ -297,6 +297,22 @@ class KubernetesRunnerJobStartupTest {
         }
 
     @Test
+    fun `a Job created with an answer the client cannot parse is deleted by its generated name`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val seen = mutableListOf<Request>()
+            val unparseable = """{"metadata":{"name":"homer-7-job","uid":"uid-6"},"spec":{"template":{},"fieldFromANewerCluster":1}}"""
+            val batch = interceptedBatchV1Api(seen) { if (it.method == "POST") 201 to unparseable else 200 to "{}" }
+
+            assertThrows<IllegalArgumentException> { runner(api, batch).openSession(params) }
+
+            assertEquals(listOf("POST", "DELETE"), seen.map { it.method })
+            assertBackgroundJobDelete(seen)
+            // The name Homer generated, not the "homer-7-job" of the unread answer.
+            assertTrue(Regex(".*/jobs/homer-7-[a-z0-9]{6}").matches(seen.last().url.encodedPath), seen.last().url.toString())
+        }
+
+    @Test
     fun `a refused Job create still sends a tolerated Job delete`() =
         runTest {
             val api = mockk<CoreV1Api>(relaxed = true)
