@@ -109,7 +109,8 @@ read after a failed command**.
 - No new principal: the Job's pod runs under the same `serviceAccountName`, image, security context
   and env delivery as today's pod; the Job adds no credential.
 - The main container's `terminated.message` is agent-writable: it comes from its
-  `terminationMessagePath`. Homer never copies it into `runner.termination` or the failure text, which
+  `terminationMessagePath`. Homer never copies it, nor any container's, into `runner.termination` or
+  the failure text (the pod diagnostics give a terminated container's exit code instead), which
   are stored and served without the redaction a command's output gets, so a secret the agent wrote
   there cannot leak through them (CWE-532). The termination's reason and message come from fields the
   kubelet sets, each reduced to one length-capped line (CWE-117).

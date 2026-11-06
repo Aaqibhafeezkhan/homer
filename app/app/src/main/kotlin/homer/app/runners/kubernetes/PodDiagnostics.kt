@@ -7,6 +7,7 @@ import io.kubernetes.client.openapi.models.CoreV1Event
 import io.kubernetes.client.openapi.models.V1ContainerStatus
 import io.kubernetes.client.openapi.models.V1JobCondition
 import io.kubernetes.client.openapi.models.V1Pod
+import java.util.Objects
 
 /**
  * Collects Kubernetes events + container statuses for a pod so that
@@ -69,12 +70,19 @@ class PodDiagnostics(
         return null
     }
 
-    /** The reason and message of the failed container [failed]: its terminated state's, else its waiting state's. */
+    /**
+     * The reason and message of the failed container [failed]: its terminated state's, else its waiting state's.
+     * A terminated state's message is its termination log, which the agent can write, so its exit code stands
+     * in for it (ADR-0100 § Security).
+     */
     private fun failureOf(failed: V1ContainerStatus): Pair<String, String> {
         val t = failed.state?.terminated
         val w = failed.state?.waiting
         val reason = t?.reason ?: w?.reason ?: "ContainerFailed"
-        val msg = t?.message ?: w?.message ?: "Container '${failed.name}' failed"
+        val msg =
+            t?.let { "Container '${failed.name}' terminated with exit code ${Objects.toString(it.exitCode, "unknown")}" }
+                ?: w?.message
+                ?: "Container '${failed.name}' failed"
         return reason to msg
     }
 

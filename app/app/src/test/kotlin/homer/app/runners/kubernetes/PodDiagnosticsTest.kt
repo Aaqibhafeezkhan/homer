@@ -10,6 +10,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class PodDiagnosticsTest {
     /** A CoreV1Api answering the pod-status read with [podJson] (404 when null) and the event list with [events]. */
@@ -70,26 +71,27 @@ class PodDiagnosticsTest {
     ) = PodDiagnostics(api, "ns").collect("p", fallbackReason)
 
     @Test
-    fun `a container that exited non-zero reports its terminated reason and message`() {
+    fun `a container that exited non-zero reports its terminated reason and exit code, never its termination log`() {
         val status =
             """{"phase":"Running","containerStatuses":[""" +
                 container("ok", """{"running":{}}""") + "," +
-                container("main", """{"terminated":{"exitCode":1,"reason":"Error","message":"boom"}}""") + "]}"
+                container("main", """{"terminated":{"exitCode":1,"reason":"Error","message":"token=SECRET\\nforged"}}""") + "]}"
 
         val snapshot = collect(api(pod(status)))
 
         assertEquals("Error", snapshot.reason)
-        assertEquals("boom", snapshot.message)
+        assertEquals("Container 'main' terminated with exit code 1", snapshot.message)
+        assertFalse(snapshot.message.contains("SECRET"))
     }
 
     @Test
-    fun `a failed container without reason or message gets the generic container text`() {
+    fun `a failed container without a reason gets the generic reason and its exit code`() {
         val status = """{"containerStatuses":[""" + container("main", """{"terminated":{"exitCode":137}}""") + "]}"
 
         val snapshot = collect(api(pod(status)))
 
         assertEquals("ContainerFailed", snapshot.reason)
-        assertEquals("Container 'main' failed", snapshot.message)
+        assertEquals("Container 'main' terminated with exit code 137", snapshot.message)
     }
 
     @Test
@@ -125,7 +127,7 @@ class PodDiagnosticsTest {
         val snapshot = collect(api(pod(status)))
 
         assertEquals("InitError", snapshot.reason)
-        assertEquals("init broke", snapshot.message)
+        assertEquals("Container 'init' terminated with exit code 2", snapshot.message)
     }
 
     @Test

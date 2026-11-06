@@ -7,8 +7,11 @@ import homer.app.models.PodTermination
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.CoreV1EventList
+import io.kubernetes.client.openapi.models.V1ContainerState
 import io.kubernetes.client.openapi.models.V1ContainerStateTerminated
+import io.kubernetes.client.openapi.models.V1ContainerStatus
 import io.kubernetes.client.openapi.models.V1Pod
+import io.kubernetes.client.openapi.models.V1PodStatus
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -28,6 +31,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.readText
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -657,6 +661,31 @@ class KubernetesShellExecutorTest {
 
         assertEquals("OOMKilled", e.termination?.reason)
         assertEquals(listOf(e.termination), seen)
+    }
+
+    @Test
+    fun `a failed exec channel never carries a container's agent-written termination log`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val written = V1ContainerStateTerminated().reason("Error").exitCode(1).message("token=SECRET\nforged line")
+        val sidecarFailed =
+            V1Pod().status(
+                V1PodStatus().phase("Running").containerStatuses(
+                    listOf(V1ContainerStatus().name("side").state(V1ContainerState().terminated(written))),
+                ),
+            )
+        val executor =
+            KubernetesShellExecutor(
+                killedClient(EXEC_NO_EXIT_STATUS_SENTINEL),
+                sequencedPodApi(sidecarFailed, sidecarFailed),
+                "homer",
+                "pod-1",
+            )
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals("Pod failed during execution (Error): Container 'side' terminated with exit code 1", e.message)
+        assertFalse(e.message.orEmpty().contains("SECRET"))
     }
 
     private fun sequencedPodApi(
