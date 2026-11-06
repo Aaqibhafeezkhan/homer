@@ -1,6 +1,13 @@
 package homer.app.models
 
 import com.charleskorn.kaml.Yaml
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.choice
+import io.kotest.property.arbitrary.enum
+import io.kotest.property.arbitrary.long
+import io.kotest.property.arbitrary.orNull
+import io.kotest.property.checkAll
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
@@ -61,6 +68,28 @@ class KubernetesRunnerConfigTest {
             ex.message!!.contains("kubernetes runner 'k8s': jobTtlSecondsAfterFinished applies only to workload: Job"),
         )
     }
+
+    @Test
+    fun `jobTtlSecondsAfterFinished 0 with workload Job is valid`() {
+        assertEquals(0L, runner("workload: Job\njobTtlSecondsAfterFinished: 0").effectiveJobTtlSeconds)
+    }
+
+    @Test
+    fun `the load succeeds exactly when maxRunSeconds is at least 1 and a TTL is non-negative and Job-only`() =
+        runTest {
+            // Mostly around the 0 and 1 boundaries, sometimes anywhere.
+            val seconds = Arb.choice(Arb.long(-2L..2L), Arb.long(-100_000L..100_000L)).orNull(0.3)
+            checkAll(seconds, seconds, Arb.enum<KubernetesWorkload>()) { max, ttl, workload ->
+                val keys =
+                    listOfNotNull(
+                        "workload: $workload",
+                        max?.let { "maxRunSeconds: $it" },
+                        ttl?.let { "jobTtlSecondsAfterFinished: $it" },
+                    ).joinToString("\n")
+                val valid = (max == null || max >= 1) && (ttl == null || (ttl >= 0 && workload == KubernetesWorkload.Job))
+                assertEquals(valid, runCatching { runner(keys) }.isSuccess, keys)
+            }
+        }
 
     @Test
     fun `an unknown workload value fails to decode`() {
