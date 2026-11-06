@@ -10,6 +10,11 @@ import java.net.HttpURLConnection
 
 internal const val DEADLINE_EXCEEDED = "DeadlineExceeded"
 
+/** The longest termination message kept; the agent can write it through the container's termination log. */
+internal const val TERMINATION_MESSAGE_MAX_CHARS = 512
+
+private val LINE_BREAKING = Regex("[\\s\\p{Cc}\\p{Z}]+")
+
 /**
  * Why Kubernetes stopped the pod, read once after a command ended badly; null when the pod looks
  * healthy or the read fails for any reason but a 404, so a read error never masks the command result.
@@ -45,7 +50,13 @@ private fun V1PodStatus.reasonOf(
 private fun V1PodStatus.messageOf(
     phase: String,
     terminated: V1ContainerStateTerminated?,
-): String = message ?: terminated?.message ?: "Pod phase $phase"
+): String = (message ?: terminated?.message)?.toOneLine()?.ifEmpty { null } ?: "Pod phase $phase"
+
+/** [this] as one line: whitespace and control-character runs become one space, cut to [TERMINATION_MESSAGE_MAX_CHARS]. */
+internal fun String.toOneLine(): String {
+    val cut = replace(LINE_BREAKING, " ").trim().take(TERMINATION_MESSAGE_MAX_CHARS)
+    return (if (cut.lastOrNull()?.isHighSurrogate() == true) cut.dropLast(1) else cut).trimEnd()
+}
 
 private fun V1PodStatus.mainTerminated(): V1ContainerStateTerminated? =
     containerStatuses

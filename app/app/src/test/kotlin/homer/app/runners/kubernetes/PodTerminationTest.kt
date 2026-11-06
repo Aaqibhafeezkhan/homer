@@ -1,6 +1,13 @@
 package homer.app.runners.kubernetes
 
 import homer.app.models.PodTermination
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.Codepoint
+import io.kotest.property.arbitrary.choice
+import io.kotest.property.arbitrary.codepoints
+import io.kotest.property.arbitrary.element
+import io.kotest.property.arbitrary.string
+import io.kotest.property.checkAll
 import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1ContainerState
@@ -11,10 +18,12 @@ import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodStatus
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.time.OffsetDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** A CoreV1Api whose pod-status read returns [pod], or throws [error] when set. */
 internal fun podStatusApi(
@@ -67,6 +76,35 @@ class PodTerminationTest {
         val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("OOMKilled").message("out of memory")))
         assertEquals(PodTermination("OOMKilled", "out of memory"), t)
     }
+
+    @Test
+    fun `an agent-written multi-line termination message becomes one capped line`() {
+        val written = "first line\r\n\tsecond\u0000line  " + "x".repeat(2000)
+        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("Error").message(written)))!!
+        assertEquals("first line second line " + "x".repeat(TERMINATION_MESSAGE_MAX_CHARS - 23), t.message)
+        assertEquals("Error", t.reason)
+    }
+
+    @Test
+    fun `a termination message of only whitespace falls back to the phase`() {
+        val t = read(podWithStatus("Failed", "Evicted", " \n\t "))
+        assertEquals(PodTermination("Evicted", "Pod phase Failed"), t)
+    }
+
+    @Test
+    fun `any termination message is reduced to one line of at most the cap`() =
+        runTest {
+            val special =
+                Arb.element(
+                    listOf('\n', '\r', '\t', '\u000b', '\u0000', '\u0085', '\u2028', '\u2029', ' ').map { Codepoint(it.code) },
+                )
+            checkAll(Arb.string(0..1500, Arb.choice(Arb.codepoints(), special))) { written ->
+                val line = written.toOneLine()
+                assertTrue(line.none { it == '\n' || it == '\r' || it == '\u2028' || it == '\u2029' || it == '\u0085' }, line)
+                assertTrue(line.length <= TERMINATION_MESSAGE_MAX_CHARS, "length ${line.length}")
+                assertEquals(line.trim(), line)
+            }
+        }
 
     @Test
     fun `an evicted pod reports Evicted`() {
