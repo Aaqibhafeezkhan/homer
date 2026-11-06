@@ -85,7 +85,8 @@ read after a failed command**.
   the exec exited with 137, so a single read always lost the race and the failure lost its reason.
   When a read finds a stop, Homer collects the pod's diagnostics as it already does for a failed
   exec channel. The termination's message is the kubelet's (`status.message`), else the main
-  container's exit code; never the container's own `terminated.message` (see Security).
+  container's exit code, else `Pod phase <phase>`; never the container's own `terminated.message`
+  (see Security).
 
 ### Consequences
 

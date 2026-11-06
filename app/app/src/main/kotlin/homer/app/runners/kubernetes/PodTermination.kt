@@ -7,6 +7,7 @@ import io.kubernetes.client.openapi.models.V1ContainerStateTerminated
 import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodStatus
 import java.net.HttpURLConnection
+import java.util.Objects
 
 internal const val DEADLINE_EXCEEDED = "DeadlineExceeded"
 
@@ -48,16 +49,16 @@ private fun V1PodStatus.reasonOf(
 ): String = reason ?: terminated?.reason ?: (if (deleting) "PodTerminating" else phase)
 
 /**
- * The kubelet's message for the stop. Never the main container's `terminated.message`: that is its
- * termination log, which the agent can write, so a secret it read would reach the run's failure text
- * unredacted (ADR-0100 § Security). Its exit code stands in for it.
+ * The kubelet's message for the stop, else the main container's exit code, else `Pod phase <phase>`.
+ * Never the main container's `terminated.message`: that is its termination log, which the agent can
+ * write, so a secret it read would reach the run's failure text unredacted (ADR-0100 § Security).
  */
 private fun V1PodStatus.messageOf(
     phase: String,
     terminated: V1ContainerStateTerminated?,
 ): String =
     message?.toOneLine()?.ifEmpty { null }
-        ?: terminated?.let { "Main container terminated with exit code ${it.exitCode}" }
+        ?: terminated?.let { "Main container terminated with exit code ${Objects.toString(it.exitCode, "unknown")}" }
         ?: "Pod phase $phase"
 
 /** [this] as one line: whitespace and control-character runs become one space, cut to [TERMINATION_MESSAGE_MAX_CHARS]. */

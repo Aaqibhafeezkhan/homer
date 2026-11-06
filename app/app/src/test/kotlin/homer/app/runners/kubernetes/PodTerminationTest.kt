@@ -99,6 +99,18 @@ class PodTerminationTest {
     }
 
     @Test
+    fun `a whitespace termination message with a terminated main container falls back to its exit code`() {
+        val t = read(podWithStatus("Failed", "Evicted", " \n\t ", V1ContainerStateTerminated().reason("Error").exitCode(1)))
+        assertEquals(PodTermination("Evicted", "Main container terminated with exit code 1"), t)
+    }
+
+    @Test
+    fun `a terminated main container without an exit code reads unknown`() {
+        val t = read(podWithStatus("Running", mainTerminated = V1ContainerStateTerminated().reason("Error")))
+        assertEquals(PodTermination("Error", "Main container terminated with exit code unknown"), t)
+    }
+
+    @Test
     fun `any termination message is reduced to one line of at most the cap`() =
         runTest {
             val special =
