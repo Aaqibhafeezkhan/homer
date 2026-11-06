@@ -11,6 +11,8 @@ import io.kubernetes.client.openapi.models.V1Pod
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -704,6 +706,39 @@ class KubernetesShellExecutorTest {
 
         assertEquals("PodDeleted", e.termination?.reason)
         verify(exactly = 3) { api.readNamespacedPodStatus(any(), any()) } // 2 status reads + 1 diagnostics read
+    }
+
+    @Test
+    fun `a read error during the retry does not mask the command result`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val api = sequencedPodApi(podWithStatus("Running"), error = ApiException(500, "boom"))
+        val executor =
+            KubernetesShellExecutor(killedClient(137), api, "homer", "pod-1", stopReasonPollMs = 10, stopReasonBudgetMs = 50)
+
+        assertEquals(137, run(executor, tmp).exitCode)
+    }
+
+    @Test
+    fun `cancellation during the retry propagates and stops further reads`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val running = podWithStatus("Running")
+        val req = mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>()
+        val api = mockk<CoreV1Api> { every { readNamespacedPodStatus(any(), any()) } returns req }
+        lateinit var job: Job
+        every { req.execute() } answers {
+            job.cancel()
+            running
+        }
+        val executor =
+            KubernetesShellExecutor(killedClient(137), api, "homer", "pod-1", stopReasonPollMs = 10, stopReasonBudgetMs = 500)
+
+        job = launch { run(executor, tmp) }
+        job.join()
+
+        assertTrue(job.isCancelled)
+        verify(exactly = 1) { req.execute() }
     }
 
     private fun fakeProcess(

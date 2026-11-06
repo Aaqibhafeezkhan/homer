@@ -210,8 +210,8 @@ class KubernetesShellExecutor(
     /**
      * The exited command's code. After a non-zero exit or a failed exec channel the pod's status is read
      * once (a signal exit 137/143 re-reads it for up to [stopReasonBudgetMs], as Kubernetes records the
-     * stop reason a moment after the kill): a pod Kubernetes stopped (deadline, eviction, OOM, deletion) is a [PodFailedDuringExecutionException]
-     * carrying the reason; otherwise a failed channel is one with the pod's diagnostics.
+     * stop reason a moment after the kill): a pod Kubernetes stopped (deadline, eviction, OOM, deletion) is a
+     * [PodFailedDuringExecutionException] carrying the reason; otherwise a failed channel is one with the pod's diagnostics.
      */
     private suspend fun exitCodeOf(remote: Process): Int {
         val exit = runCatching { remote.exitValue() }
