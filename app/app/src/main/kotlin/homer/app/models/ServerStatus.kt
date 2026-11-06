@@ -90,6 +90,14 @@ data class RunnerStateResponse(
     val readyAt: Long? = null,
     val endedAt: Long? = null,
     val startupFailure: PodStartupFailureResponse? = null,
+    val termination: PodTerminationResponse? = null,
+    val jobName: String? = null,
+)
+
+@Serializable
+data class PodTerminationResponse(
+    val reason: String,
+    val message: String,
 )
 
 @Serializable
@@ -109,11 +117,22 @@ data class SweepDeletedPodResponse(
 )
 
 @Serializable
+data class SweepDeletedJobResponse(
+    val namespace: String,
+    val name: String,
+    val processId: Int? = null,
+    // Alias is admin-only (CWE-200, fail closed): null for a non-admin caller. See ADR-0077.
+    val runnerAlias: String? = null,
+)
+
+@Serializable
 data class SweepStatusResponse(
     val ranAt: Long, // Unix epoch seconds, matching every other API timestamp
     val scanned: Int,
     val deleted: List<SweepDeletedPodResponse>,
     val errors: List<String>,
+    // Null when no Job-mode kubernetes runner was swept. See ADR-0100.
+    val deletedJobs: List<SweepDeletedJobResponse>? = null,
 )
 
 @Serializable

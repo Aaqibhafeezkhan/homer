@@ -2679,7 +2679,10 @@ started in-process by Homer ([ADR-0030](../docs/adr/0030-runagent-in-process-dis
 | `initContainers` | `List<ContainerSpec>` | No | `[]` | Init containers; pod waits for each to terminate with exit 0. |
 | `podStartTimeoutSeconds` | `Long` | No | `120` | How long to wait for readiness before failing the run. |
 | `keepPodOnFailure` | `Boolean` | No | `false` | On a failed run — or a failed pod startup, if the pod already reached a node — patch the pod's TTL instead of deleting it: a failed run keeps its synced workspace under `/homer/workspace` available for inspection, a startup-failed pod keeps its image/init state inspectable. A pod that never got scheduled is always deleted (its TTL could never fire). A command timeout and an output-cap kill both count as a failure; an operator-initiated kill does not (the pod is still deleted). |
-| `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. |
+| `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. With `workload: Job`, the cluster removes a kept pod `jobTtlSecondsAfterFinished` after its Job ends; see [Job workload](#job-workload). |
+| `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in — see [Job workload](#job-workload). |
+| `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded`. Set on the pod in both modes — see [Job workload](#job-workload). |
+| `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` — see [Job workload](#job-workload). |
 | `homerApiUrl` | `String?` | No | `null` | Cluster-internal Homer URL; exposed in-pod as `HMR_API_URL` so the `homer-*` helpers and MCP question tools can reach Homer from inside the pod. |
 | `env` | `Map<String, String>` | No | `{}` | Per-runner environment variables, layered between `globalEnv` and agent `env` — the place for values describing *this* runner's host/image (`PATH` with `/opt/homebrew/bin` on a macOS ssh box, `JAVA_HOME`, `HOME` for a uid with no passwd entry). Values support `@SYSENV:VAR` (fail-fast at startup, and the resolved names join the telemetry redaction set exactly like `@SYSENV` in `globalEnv`); keys must not be blank or use the reserved `HMR_` prefix. Remote runners receive no `parentEnvAllowlist` host env, so this is also where a value the image must still see goes. Like agent `env`, values ride the per-exec `env K=V…` delivery — **visible in the remote process list (`ps`)** on multi-tenant hosts; forward credentials via `@SYSENV:` and prefer file delivery where possible. For a run that selected this runner via `runnerTags` rather than by alias, these keys are instead merged **above** agent `env` when the run is claimed — see [Runner claim queue](#runner-claim-queue). |
 | `tags` | `List<String>` | No | `[]` | Tags this runner serves for agents that select a runner with `runnerTags` (every requested tag must be present). Empty = reachable by alias only. Shape `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, at most 32. See [Runner claim queue](#runner-claim-queue). |
@@ -2725,6 +2728,81 @@ each a `List<String>` of Linux capability names, default `[]`.
 **`SeccompProfileSpec`** (`securityContext.seccompProfile`): `type`
 (required; `RuntimeDefault`, `Localhost` or `Unconfined`) and
 `localhostProfile` (`String?`, the profile path, needed when `type` is `Localhost`); both are passed to Kubernetes as-is.
+
+**A pod Kubernetes stops mid-run.** In both modes, and also without
+`maxRunSeconds` or `workload` set, Homer reads the pod's status once after
+a command fails. If Kubernetes stopped the pod (`DeadlineExceeded` from
+`maxRunSeconds`, eviction, an OOM kill, deletion), the run fails with the
+reason in its `runner.termination` ([status API](README.md#example-api-usage)). After a killed
+command (exit 137 or 143) Homer re-reads for up to 5 s, because Kubernetes
+records why the pod stopped a moment after the kill, so the failure still
+names the reason. Homer does not poll the pod while a command runs.
+
+### Job workload
+
+`workload: Job` runs each session in a Kubernetes Job with one pod
+instead of a bare pod. The pod and everything Homer does with it — exec,
+workspace sync, env delivery, readiness wait — are the same as in the
+default `Pod` mode; only the object that owns the pod changes.
+
+- **The Job.** It takes the name a pod would get
+  (`homer-<processId>-<6 chars>`), has `parallelism: 1`,
+  `completions: 1` and `backoffLimit: 0` (a retry would start an empty
+  pod in the middle of a run), and `ttlSecondsAfterFinished` from
+  `jobTtlSecondsAfterFinished` (default `3600`). The Job and its pod
+  template carry the same Homer labels and `annotations` as a Pod-mode
+  pod, and the template's spec is the Pod-mode pod spec unchanged.
+- **Finding the pod.** The Job controller names the pod
+  (`<job>-<5 chars>`). Homer finds it through the selector the controller
+  put on the created Job (`batch.kubernetes.io/controller-uid`, or
+  `controller-uid` on older clusters), never by name, then waits for it
+  to become ready. Waiting for the pod to exist and waiting for it to be
+  ready share one `podStartTimeoutSeconds` budget. Until the pod exists
+  the run's `runner.podName` is `null`; `runner.jobName` names the Job.
+- **Waiting for the pod.** While the Job has no pod, Homer reads the
+  Job's conditions and its `FailedCreate` events once per second, inside
+  the same `podStartTimeoutSeconds` budget:
+  - a `FailedCreate` whose message has `exceeded quota` is a namespace
+    `ResourceQuota` refusal the Job controller keeps retrying, so Homer
+    keeps waiting; if the budget runs out, the `PodStartTimeout` message
+    ends with `; last FailedCreate: <message>`;
+  - any other newest `FailedCreate` (a PodSecurity or admission-webhook
+    rejection, an invalid spec) fails the startup at once with reason
+    `JobFailedCreate` and the event's message;
+  - a Job condition `Failed` fails the startup with reason `JobFailed`
+    and the condition's message.
+
+  The startup failure's `events` list the Job's conditions and events.
+- **`maxRunSeconds`** works in both modes: it is the pod's
+  `spec.activeDeadlineSeconds` (on the pod template in Job mode), counted
+  from pod start and enforced by the kubelet even while Homer is down. It
+  is on the pod rather than on the Job so that time spent waiting for
+  quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
+  not count — see
+  [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **`!<runnerCmd>` steps** open their own session on the runner, so in Job
+  mode each step gets its own Job, and `maxRunSeconds` applies to it.
+- **Cleanup.** At session close, and when a startup fails or Homer's
+  shutdown cuts it short, Homer deletes the Job first (`propagationPolicy:
+  Background`) and then its pod, if one exists, with `gracePeriodSeconds:
+  0` as in Pod mode, so the Job controller never replaces the pod. A Job
+  name that another Job already holds fails the startup without reading
+  or deleting that Job.
+- **Kept pods.** When `keepPodOnFailure` keeps the pod, Homer labels the
+  Job `homer.app/kept=true` too, the label the startup sweep skips; if
+  the pod cannot be kept (its patch fails and Homer deletes the pod
+  instead), Homer deletes the Job too. The kept pod still belongs to its Job: the
+  Job ends when the pod does — at once for a pod that has already failed,
+  else at the pod's deadline (`keepPodTtlSeconds`, or `maxRunSeconds` if
+  smaller, counted from pod start) — and the cluster then removes the Job
+  **and the kept pod** `jobTtlSecondsAfterFinished` later, whatever
+  `keepPodTtlSeconds` says.
+- **Startup sweep.** On boot Homer deletes this instance's orphan Jobs
+  and leaves their pods to the Job delete — see
+  [Startup sweep](#startup-sweep).
+- **RBAC.** Job mode needs the `batch` `jobs` rule in
+  [RBAC](#rbac). Pod mode makes no `batch` API call, so an existing Role
+  without it keeps working.
 
 ### Running under Pod Security Admission `restricted`
 
@@ -2846,7 +2924,10 @@ See [ADR-0043](../docs/adr/0043-k8s-sync-workspaces.md).
   start**, not from the failure — a long-running agent has already
   spent part of that budget by the time it fails, so a run whose
   duration approaches `keepPodTtlSeconds` may leave little or no
-  inspection window before the kubelet terminates the pod.
+  inspection window before the kubelet terminates the pod. With
+  `maxRunSeconds` set, a kept pod's deadline is the smaller of
+  `maxRunSeconds` and `keepPodTtlSeconds` (it is never raised; both
+  count from pod start).
 - **No live tailing mid-run.** Artifacts only appear host-side at the
   sync-down above — unlike the old shared-PVC model, there is no
   shared filesystem for `ArtifactService` to tail during the run.
@@ -2949,6 +3030,15 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
+A runner with `workload: Job` ([Job workload](#job-workload)) also needs
+this rule in the same Role; Pod mode does not:
+
+```yaml
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch"]
+```
+
 #### Env delivery over exec, not the pod spec
 
 Pod specs carry **no** agent environment at all — the main container
@@ -3038,11 +3128,20 @@ On boot, for each configured kubernetes runner, Homer lists pods
 labelled `app.kubernetes.io/managed-by=homer` **and** carrying this
 instance's `homer.app/instance=<id>` label, and deletes any whose
 `homer.app/process-id` label does not match an active process. The
-sweep result (scanned / deleted / errors) is reported under
-`/api/v1/health`. Pods kept via `keepPodOnFailure` carry a
+sweep result (scanned / deleted / errors, and `deletedJobs`) is reported
+under `/api/v1/health`. Pods kept via `keepPodOnFailure` carry a
 `homer.app/kept` label and are skipped by the sweep regardless of
 process activity; their `keepPodTtlSeconds` still bounds their
-lifetime.
+lifetime (in Job mode, see [Kept pods](#job-workload)).
+
+A [`workload: Job`](#job-workload) runner also lists its Jobs with the
+same selector and deletes, with `propagationPolicy: Background`, every
+Job that is neither an active process's nor labelled kept, including a
+Job whose pod was never created (one still waiting for quota when Homer
+stopped). Its pod sweep skips pods a Job owns: the Job sweep handles
+them. The deleted Jobs are reported as `deletedJobs`, which is `null`
+when no Job-mode runner was swept. A Pod-mode runner makes no `batch`
+API call in the sweep.
 
 `<id>` is a stable per-instance identifier generated on first boot and
 persisted in Homer's SQLite database (distinct from the per-boot

@@ -54,6 +54,12 @@ export interface PodStartupFailure {
   events: string[];
 }
 
+// Pod Termination (the pod was stopped by Kubernetes)
+export interface PodTermination {
+  reason: string;
+  message: string;
+}
+
 // Runner State (per-process)
 export interface RunnerState {
   // Raw backend alias; null for a non-admin viewer, who gets the generic `type`
@@ -68,6 +74,9 @@ export interface RunnerState {
   readyAt?: number | null;
   endedAt?: number | null;
   startupFailure?: PodStartupFailure | null;
+  termination?: PodTermination | null;
+  // The Job that owns the pod (`workload: Job`); podName stays null until the pod exists.
+  jobName?: string | null;
 }
 
 // Process Info
@@ -413,12 +422,23 @@ export interface SweepDeletedPod {
   runnerAlias?: string | null;
 }
 
+// Orphan Job deleted during a Job-mode startup sweep
+export interface SweepDeletedJob {
+  namespace: string;
+  name: string;
+  processId?: number | null;
+  // Null for a non-admin viewer, as on `SweepDeletedPod`. See ADR-0077.
+  runnerAlias?: string | null;
+}
+
 // Startup sweep status
 export interface SweepStatus {
   ranAt: number;
   scanned: number;
   deleted: SweepDeletedPod[];
   errors: string[];
+  // Null when no Job-mode kubernetes runner was swept.
+  deletedJobs?: SweepDeletedJob[] | null;
 }
 
 // Health Response

@@ -158,3 +158,4 @@ One of:
 | [0097](0097-per-run-inbox.md) | A per-run inbox carries operator messages to a running run | proposed |
 | [0098](0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) | The stored pre-start failure reason is a fixed-vocabulary sentence | proposed |
 | [0099](0099-runner-affinity-prefers-the-instance-holding-the-flows-caches.md) | `runnerAffinity` prefers the instance that served the flow's earlier runs | proposed |
+| [0100](0100-kubernetes-job-workload-and-pod-run-limit.md) | The Kubernetes runner can run a session in a one-pod Job, and its run limit is on the pod | proposed |

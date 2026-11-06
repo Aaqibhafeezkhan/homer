@@ -33,6 +33,8 @@ import homer.app.models.Param
 import homer.app.models.ParamSource
 import homer.app.models.ParamType
 import homer.app.models.PodPhase
+import homer.app.models.PodTermination
+import homer.app.models.PodTerminationResponse
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
@@ -259,6 +261,22 @@ class ApplicationTest {
                 listOf(SweepDeletedPodResponse(namespace = "homer", name = "homer-99-xyz", processId = 99, runnerAlias = "k8s")),
                 snapshot.deleted,
             )
+        }
+
+    @Test
+    fun `with only Pod-mode runners the health response has deletedJobs null`() =
+        testApplication {
+            val sweep = SweepStatus()
+            sweep.set(SweepStatus.Snapshot(ranAt = 1_700_000_000L, scanned = 0, deleted = emptyList(), errors = emptyList()))
+            mountApiV1Routes {
+                every { config } returns configWithK8sRunner()
+                every { sweepStatus } returns sweep
+            }
+
+            val body = client.get("/api/v1/health").bodyAsText()
+
+            assertTrue(body.contains("\"deletedJobs\": null"), body)
+            assertNull(assertNotNull(apiJson.decodeFromString<HealthResponse>(body).sweep).deletedJobs)
         }
 
     // ========== GET/POST /maintenance Tests ==========
@@ -3116,6 +3134,27 @@ class ApplicationTest {
 
         assertNull(response.alias, "a non-admin response must not carry the raw alias")
         assertEquals("kubernetes", response.type)
+    }
+
+    @Test
+    fun `RunnerState termination maps to the response`() {
+        val mapped =
+            RunnerState(alias = "k", termination = PodTermination("DeadlineExceeded", "late"))
+                .toResponse(type = "kubernetes", aliasVisible = false)
+
+        assertEquals(PodTerminationResponse("DeadlineExceeded", "late"), mapped.termination)
+        assertNull(RunnerState(alias = "k").toResponse(type = "kubernetes", aliasVisible = false).termination)
+    }
+
+    @Test
+    fun `RunnerState jobName maps to the response`() {
+        val mapped =
+            RunnerState(alias = "k", jobName = "homer-7-abcdef")
+                .toResponse(type = "kubernetes", aliasVisible = false)
+
+        assertEquals("homer-7-abcdef", mapped.jobName)
+        assertNull(mapped.podName)
+        assertNull(RunnerState(alias = "k").toResponse(type = "kubernetes", aliasVisible = false).jobName)
     }
 
     @Test

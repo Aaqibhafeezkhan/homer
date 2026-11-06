@@ -519,4 +519,34 @@ class GrantsEnforcementTest {
             assertTrue(adminBody.contains("k8s-prod-eu"), "an admin still sees the configured alias")
             assertTrue(adminBody.contains("\"runnerAlias\": \"sweep-k8s\""), "an admin still sees the sweep alias")
         }
+
+    @Test
+    fun `the health response carries deletedJobs with the alias hidden from non-admins`() =
+        testApplication {
+            val tokens = mapOf("runner" to runToken, "root" to adminToken)
+            val sweepStatus = SweepStatus()
+            sweepStatus.set(
+                SweepStatus.Snapshot(
+                    ranAt = 1_700_000_000L,
+                    scanned = 0,
+                    deleted = emptyList(),
+                    errors = emptyList(),
+                    deletedJobs = listOf(SweepStatus.DeletedJob("homer", "homer-99-job", 99, "job-k8s")),
+                ),
+            )
+            val d =
+                deps(authorizerFor(tokens)).also {
+                    every { it.sweepStatus } returns sweepStatus
+                    every { it.config } returns
+                        AppConfig(agentsSearchPath = "unused", workspaceRootPath = "unused", databasePath = "unused")
+                }
+            application { installGrantsApp(tokens, d) }
+
+            val scopedBody = client.get("/api/v1/health") { header(HttpHeaders.Authorization, "Bearer run-token") }.bodyAsText()
+            assertTrue(scopedBody.contains("homer-99-job"), "a non-admin still sees the deleted Job")
+            assertFalse(scopedBody.contains("job-k8s"), "a non-admin must not see the Job's runner alias")
+
+            val adminBody = client.get("/api/v1/health") { header(HttpHeaders.Authorization, "Bearer admin-token") }.bodyAsText()
+            assertTrue(adminBody.contains("\"runnerAlias\": \"job-k8s\""), "an admin still sees the Job's runner alias")
+        }
 }

@@ -8,9 +8,11 @@ import homer.app.models.HeartbeatResponse
 import homer.app.models.MonthlyCostsResponse
 import homer.app.models.RunnerSummary
 import homer.app.models.ServerStatusResponse
+import homer.app.models.SweepDeletedJobResponse
 import homer.app.models.SweepDeletedPodResponse
 import homer.app.models.SweepStatusResponse
 import homer.app.models.TotalCostsResponse
+import homer.app.runners.kubernetes.SweepStatus
 import homer.app.runners.runnerQueueStatus
 import homer.app.runners.runnerType
 import homer.app.runners.runnersStatus
@@ -45,23 +47,7 @@ private fun Route.serverHealthRoutes(deps: ApiDeps) {
                         add(RunnerSummary(alias = if (aliasVisible) alias else null, type = runnerType(config, alias)))
                     }
                 }
-            val sweep =
-                sweepStatus.get()?.let { snap ->
-                    SweepStatusResponse(
-                        ranAt = snap.ranAt,
-                        scanned = snap.scanned,
-                        deleted =
-                            snap.deleted.map {
-                                SweepDeletedPodResponse(
-                                    namespace = it.namespace,
-                                    name = it.name,
-                                    processId = it.processId,
-                                    runnerAlias = if (aliasVisible) it.runnerAlias else null,
-                                )
-                            },
-                        errors = snap.errors,
-                    )
-                }
+            val sweep = sweepStatus.get()?.toResponse(aliasVisible)
             call.respond(
                 HealthResponse(
                     runners = runners,
@@ -73,6 +59,32 @@ private fun Route.serverHealthRoutes(deps: ApiDeps) {
         }
     }
 }
+
+/** The sweep snapshot as `/health` reports it; [aliasVisible] false hides every runner alias (ADR-0077). */
+private fun SweepStatus.Snapshot.toResponse(aliasVisible: Boolean): SweepStatusResponse =
+    SweepStatusResponse(
+        ranAt = ranAt,
+        scanned = scanned,
+        deleted =
+            deleted.map {
+                SweepDeletedPodResponse(
+                    namespace = it.namespace,
+                    name = it.name,
+                    processId = it.processId,
+                    runnerAlias = it.runnerAlias.takeIf { aliasVisible },
+                )
+            },
+        errors = errors,
+        deletedJobs =
+            deletedJobs?.map {
+                SweepDeletedJobResponse(
+                    namespace = it.namespace,
+                    name = it.name,
+                    processId = it.processId,
+                    runnerAlias = it.runnerAlias.takeIf { aliasVisible },
+                )
+            },
+    )
 
 /** `GET /costs`, `/costs/monthly` and `/costs/totals`: the admin-only cost-meter reads. */
 private fun Route.costMeterRoutes(deps: ApiDeps) {

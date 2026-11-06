@@ -6,6 +6,7 @@ import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.ShellExecutor
 import homer.app.models.CommandResult
+import homer.app.models.PodTermination
 import homer.app.runners.KillCause
 import homer.app.runners.exceedsOutputCap
 import io.kubernetes.client.openapi.apis.CoreV1Api
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,6 +43,10 @@ class KubernetesShellExecutor(
     private val podName: String,
     private val maxOutputBytes: Long = Long.MAX_VALUE,
     private val pumpJoinMs: Long = PUMP_JOIN_MS,
+    private val maxRunSeconds: Long? = null,
+    private val stopReasonPollMs: Long = STOP_REASON_POLL_MS,
+    private val stopReasonBudgetMs: Long = STOP_REASON_BUDGET_MS,
+    private val onTermination: suspend (PodTermination) -> Unit = {},
 ) : ShellExecutor {
     // ShellExecutor.cmd's override signature (fixed by the interface) and IO hop, as in SshShellExecutor.
     // jscpd:ignore-start
@@ -201,21 +207,41 @@ class KubernetesShellExecutor(
         return finished
     }
 
-    /** The exited command's code; a failed exec channel is a [PodFailedDuringExecutionException] with the pod's diagnostics. */
-    private fun exitCodeOf(remote: Process): Int {
-        val exitCode =
-            runCatching { remote.exitValue() }.getOrElse {
-                val snap = PodDiagnostics.tryCollect(api, namespace, podName, "ExecChannelFailed")
-                throw PodFailedDuringExecutionException(snap.reason, snap.message, snap.events, it)
-            }
-        // client-java's ExecProcess can RETURN its no-exit-status sentinel instead
-        // of throwing when the websocket closed without a v1.Status (e.g. a refused
-        // 101 upgrade) — a channel failure, never a real command exit code.
-        if (exitCode == EXEC_NO_EXIT_STATUS_SENTINEL) {
-            val snap = PodDiagnostics.tryCollect(api, namespace, podName, "ExecChannelFailed")
-            throw PodFailedDuringExecutionException(snap.reason, snap.message, snap.events)
+    /**
+     * The exited command's code. After a non-zero exit or a failed exec channel the pod's status is read
+     * once (a signal exit 137/143 re-reads it for up to [stopReasonBudgetMs], as Kubernetes records the
+     * stop reason a moment after the kill): a pod Kubernetes stopped (deadline, eviction, OOM, deletion) is a
+     * [PodFailedDuringExecutionException] carrying the reason; otherwise a failed channel is one with the pod's diagnostics.
+     */
+    private suspend fun exitCodeOf(remote: Process): Int {
+        val exit = runCatching { remote.exitValue() }
+        // client-java's ExecProcess can RETURN its no-exit-status sentinel instead of throwing when
+        // the websocket closed without a v1.Status (e.g. a refused 101 upgrade): a channel failure.
+        val code = exit.getOrNull()?.takeIf { it != EXEC_NO_EXIT_STATUS_SENTINEL }
+        if (code == 0) return 0
+        failIfPodStopped(patient = code in SIGNAL_EXITS)
+        if (code != null) return code
+        val snap = PodDiagnostics.tryCollect(api, namespace, podName, "ExecChannelFailed")
+        throw PodFailedDuringExecutionException(snap.reason, snap.message, snap.events, exit.exceptionOrNull())
+    }
+
+    private suspend fun failIfPodStopped(patient: Boolean) {
+        val t = (if (patient) awaitPodTermination() else readPodTermination(api, namespace, podName)) ?: return
+        onTermination(t)
+        val snap = PodDiagnostics.tryCollect(api, namespace, podName, t.reason)
+        throw PodFailedDuringExecutionException(t.reason, t.message, snap.events, null, t, t.summary(maxRunSeconds))
+    }
+
+    /** Re-reads the pod every [stopReasonPollMs] up to [stopReasonBudgetMs] until it reports a stop. */
+    private suspend fun awaitPodTermination(): PodTermination? {
+        var waited = 0L
+        var t = readPodTermination(api, namespace, podName)
+        while (t == null && waited < stopReasonBudgetMs) {
+            delay(stopReasonPollMs)
+            waited += stopReasonPollMs
+            t = readPodTermination(api, namespace, podName)
         }
-        return exitCode
+        return t
     }
 
     private fun envPrefix(env: Map<String, String>): List<String> =
@@ -301,6 +327,9 @@ class KubernetesShellExecutor(
         private const val POLL_INTERVAL_MS = 250L
         private const val KILL_WAIT_MS = 2_000L
         private const val PUMP_JOIN_MS = 5_000L
+        private const val STOP_REASON_POLL_MS = 500L
+        private const val STOP_REASON_BUDGET_MS = 5_000L
+        private val SIGNAL_EXITS = setOf(137, 143)
         private val logger = LoggerFactory.getLogger(KubernetesShellExecutor::class.java)
     }
 }

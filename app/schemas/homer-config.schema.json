@@ -757,6 +757,21 @@
         "podStartTimeoutSeconds": { "type": "integer", "minimum": 1, "default": 120 },
         "keepPodOnFailure": { "type": "boolean", "default": false },
         "keepPodTtlSeconds": { "type": "integer", "minimum": 1, "default": 3600 },
+        "workload": {
+          "enum": ["Pod", "Job"],
+          "default": "Pod",
+          "description": "Kubernetes object each run executes in: a bare Pod (default) or a Job."
+        },
+        "maxRunSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Upper bound on a whole run's wall-clock time in the cluster. null = no limit."
+        },
+        "jobTtlSecondsAfterFinished": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Seconds a finished Job is kept before the cluster deletes it. Only valid with workload: Job; null = 3600."
+        },
         "homerApiUrl": {
           "type": ["string", "null"],
           "description": "Cluster-internal Homer URL injected as HMR_API_URL. v1: plain HTTP only."
@@ -795,7 +810,12 @@
           "items": { "$ref": "#/$defs/ExtraUploadSpec" },
           "description": "Host files/folders uploaded into every pod workspace on this runner; env (optional) is repointed at the pod-local copy. See ADR-0042/0043."
         }
-      }
+      },
+      "if": {
+        "required": ["jobTtlSecondsAfterFinished"],
+        "properties": { "jobTtlSecondsAfterFinished": { "type": "integer" } }
+      },
+      "then": { "required": ["workload"], "properties": { "workload": { "const": "Job" } } }
     },
     "SshRunner": {
       "type": "object",

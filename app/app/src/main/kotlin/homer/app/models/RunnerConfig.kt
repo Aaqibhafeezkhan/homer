@@ -10,6 +10,10 @@ import kotlinx.serialization.Serializable
  */
 const val RUNNER_LONG_POLL_SEC = 30
 
+/** Kubernetes object a run executes in: a bare Pod (default) or a Job. */
+@Serializable
+enum class KubernetesWorkload { Pod, Job }
+
 /**
  * Per-alias runner backend configuration. Declared by operators in
  * AppConfig.runners. The built-in "local" runner is not a variant of
@@ -31,6 +35,9 @@ sealed class RunnerConfig {
         val podStartTimeoutSeconds: Long = 120,
         val keepPodOnFailure: Boolean = false,
         val keepPodTtlSeconds: Long = 3600,
+        val workload: KubernetesWorkload = KubernetesWorkload.Pod,
+        val maxRunSeconds: Long? = null,
+        val jobTtlSecondsAfterFinished: Long? = null,
         val homerApiUrl: String? = null,
         /** Per-runner env, layered between `globalEnv` and agent `env`. See SERVER.md, "Remote runners". */
         val env: Map<String, String> = emptyMap(),
@@ -43,11 +50,25 @@ sealed class RunnerConfig {
         override val concurrency: Int? = null,
     ) : RunnerConfig(),
         RunnerQueueFacets {
+        val effectiveJobTtlSeconds: Long get() = jobTtlSecondsAfterFinished ?: 3600
+
         /** Same contract as Ssh.validateExtraUploads — see that KDoc and ADR-0042/0043. */
         internal fun validateExtraUploads(alias: String) = validateExtraUploadSpecs(alias, extraUploads)
 
         /** Same shape rules as Ssh.validateEnv — see that KDoc. */
         internal fun validateEnv(alias: String) = validateRunnerEnv(alias, env)
+
+        internal fun validateWorkload(alias: String) {
+            require(maxRunSeconds == null || maxRunSeconds >= 1) {
+                "kubernetes runner '$alias': maxRunSeconds must be >= 1"
+            }
+            require(jobTtlSecondsAfterFinished == null || jobTtlSecondsAfterFinished >= 0) {
+                "kubernetes runner '$alias': jobTtlSecondsAfterFinished must be >= 0"
+            }
+            require(jobTtlSecondsAfterFinished == null || workload == KubernetesWorkload.Job) {
+                "kubernetes runner '$alias': jobTtlSecondsAfterFinished applies only to workload: Job"
+            }
+        }
     }
 
     @Serializable

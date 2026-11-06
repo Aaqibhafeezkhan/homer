@@ -2,6 +2,7 @@ package homer.app.runners.kubernetes
 
 import homer.app.exceptions.PodStartupException
 import homer.app.fixtures.TestFixtures
+import homer.app.models.KubernetesWorkload
 import homer.app.models.PodPhase
 import homer.app.models.ResourceSpec
 import homer.app.models.RunnerConfig
@@ -16,10 +17,18 @@ import io.kubernetes.client.openapi.models.V1ContainerState
 import io.kubernetes.client.openapi.models.V1ContainerStateTerminated
 import io.kubernetes.client.openapi.models.V1ContainerStateWaiting
 import io.kubernetes.client.openapi.models.V1ContainerStatus
+import io.kubernetes.client.openapi.models.V1Job
+import io.kubernetes.client.openapi.models.V1JobSpec
+import io.kubernetes.client.openapi.models.V1LabelSelector
+import io.kubernetes.client.openapi.models.V1ObjectMeta
 import io.kubernetes.client.openapi.models.V1Pod
+import io.kubernetes.client.openapi.models.V1PodList
 import io.kubernetes.client.openapi.models.V1PodStatus
+import io.kubernetes.client.openapi.models.V1PodTemplateSpec
+import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanBuilder
@@ -406,6 +415,288 @@ class KubernetesRunnerTest {
 
             verify { api.deleteNamespacedPod(any(), any()) }
             verify(exactly = 0) { api.patchNamespacedPod(any(), any(), any()) }
+        }
+
+    @Test
+    fun `a pod Kubernetes stops mid-run fails the command and records the termination`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubCreatePod(api)
+        stubEvents(api, emptyList())
+        var stopped = false
+        val req =
+            mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                every { execute() } answers { if (stopped) podWithStatus("Failed", "DeadlineExceeded", "too long") else readyPod() }
+            }
+        every { api.readNamespacedPodStatus(any(), any()) } returns req
+        val exec =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns java.io.ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<java.util.concurrent.TimeUnit>()) } returns true
+                every { exitValue() } returns 137
+            }
+        val captured = mutableListOf<RunnerState>()
+        val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+        val runner =
+            KubernetesRunner("k8s-dev", config.copy(maxRunSeconds = 60), api, { _, _, _, _ -> exec }, clock = { 5_000L }, stateSink = sink)
+        val session = runner.openSession(params)
+        stopped = true
+
+        val e =
+            assertThrows<homer.app.exceptions.PodFailedDuringExecutionException> {
+                session.shell.cmd(listOf("sleep"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+            }
+
+        assertEquals("Kubernetes stopped the pod: maxRunSeconds (60 s) exceeded (DeadlineExceeded)", e.message)
+        assertEquals(PodPhase.FAILED, captured.last().podPhase)
+        assertEquals("DeadlineExceeded", captured.last().termination?.reason)
+        assertEquals(5L, captured.last().endedAt)
+    }
+
+    @Test
+    fun `Job mode creates a Job, finds its pod by the Job selector and reaches ready`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubPodStatus(api, readyPod())
+        val selector = stubJobPods(api, "homer-7-job-x1y2z")
+        val seen = mutableListOf<okhttp3.Request>()
+        val batch = interceptedBatchV1Api(seen) { 201 to createdJob(matchLabels = mapOf("controller-uid" to "uid-1")) }
+        val execPods = mutableListOf<String>()
+        val exec = KubernetesExecClient { _, pod, _, _ -> execPods.add(pod).let { exitingProcess(0) } }
+        val captured = mutableListOf<RunnerState>()
+        val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+        val runner = KubernetesRunner("k8s-dev", jobConfig, api, exec, clock = { 1_000L }, stateSink = sink, batchApi = batch)
+
+        val session = runner.openSession(params)
+
+        val create = seen.single()
+        assertEquals("POST", create.method)
+        assertEquals("/apis/batch/v1/namespaces/homer/jobs", create.url.encodedPath)
+        assertEquals("controller-uid=uid-1", selector.captured)
+        assertEquals("homer-7-job-x1y2z", (session as KubernetesRunnerSession).podName)
+        session.shell.cmd(listOf("true"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+        assertEquals(listOf("homer-7-job-x1y2z"), execPods)
+        val jobName = captured.first().jobName!!
+        assertTrue(jobName.startsWith("homer-7-"), jobName)
+        assertTrue(captured.all { it.jobName == jobName }, "every state carries the Job name: $captured")
+        assertEquals(jobName, session.metadata["job.name"])
+        session.close()
+        assertEquals("/apis/batch/v1/namespaces/homer/jobs/$jobName", seen.single { it.method == "DELETE" }.url.encodedPath)
+        verify { api.deleteNamespacedPod("homer-7-job-x1y2z", "homer") }
+        assertEquals(
+            listOf(
+                PodPhase.CREATING to null,
+                PodPhase.PENDING to null,
+                PodPhase.PENDING to "homer-7-job-x1y2z",
+                PodPhase.READY to "homer-7-job-x1y2z",
+            ),
+            captured.map { it.podPhase to it.podName },
+        )
+    }
+
+    @Test
+    fun `Job mode falls back to the controller-uid label when the Job has no selector`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubPodStatus(api, readyPod())
+            val selector = stubJobPods(api, "homer-7-job-a1b2c")
+            val batch = interceptedBatchV1Api(mutableListOf()) { 201 to createdJob(uid = "uid-2") }
+            val runner = KubernetesRunner("k8s-dev", jobConfig, api, dummyExecClient(), clock = { 0L }, batchApi = batch)
+
+            runner.openSession(params)
+
+            assertEquals("batch.kubernetes.io/controller-uid=uid-2", selector.captured)
+        }
+
+    @Test
+    fun `Pod mode never calls the batch API`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubCreatePod(api)
+            stubPodStatus(api, readyPod())
+            val seen = mutableListOf<okhttp3.Request>()
+            val runner =
+                KubernetesRunner("k8s-dev", config, api, dummyExecClient(), clock = { 0L }, batchApi = interceptedBatchV1Api(seen))
+
+            runner.openSession(params).close()
+
+            assertTrue(seen.isEmpty(), "Pod mode made batch calls: ${seen.map { it.url }}")
+            verify(exactly = 0) { api.listNamespacedPod(any()) }
+        }
+
+    @Test
+    fun `Job mode fails startup with the API answer when the Job create is refused`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val batch = interceptedBatchV1Api(mutableListOf()) { 403 to """{"message":"jobs.batch is forbidden"}""" }
+            val captured = mutableListOf<RunnerState>()
+            val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+            val runner = KubernetesRunner("k8s-dev", jobConfig, api, dummyExecClient(), clock = { 0L }, stateSink = sink, batchApi = batch)
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodCreateFailed", thrown.reason)
+            assertTrue(thrown.rawMessage.contains("jobs.batch is forbidden"), thrown.rawMessage)
+            assertEquals(PodPhase.FAILED, captured.last().podPhase)
+            assertTrue(captured.last().jobName != null, "the failed state keeps the Job name")
+        }
+
+    @Test
+    fun `Job mode fails startup when the created Job names neither a selector nor a uid`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val runner =
+                KubernetesRunner(
+                    "k8s-dev",
+                    jobConfig,
+                    api,
+                    dummyExecClient(),
+                    clock = { 0L },
+                    batchApi = interceptedBatchV1Api(mutableListOf()),
+                )
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodCreateFailed", thrown.reason)
+            verify(exactly = 0) { api.listNamespacedPod(any()) }
+        }
+
+    @Test
+    fun `Job mode fails startup when the pod list is refused`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            val listReq =
+                mockk<CoreV1Api.APIlistNamespacedPodRequest>(relaxed = true) {
+                    every { labelSelector(any()) } returns this
+                    every { execute() } throws ApiException(403, "pods is forbidden")
+                }
+            every { api.listNamespacedPod(any()) } returns listReq
+            val batch = interceptedBatchV1Api(mutableListOf()) { 201 to createdJob(uid = "uid-3") }
+            val runner = KubernetesRunner("k8s-dev", jobConfig, api, dummyExecClient(), clock = { 0L }, batchApi = batch)
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodStatusUnreadable", thrown.reason)
+        }
+
+    @Test
+    fun `Job mode times out when the Job never creates a pod, inside the one start budget`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubJobPods(api, podName = null)
+            val batch = interceptedBatchV1Api(mutableListOf()) { 201 to createdJob(uid = "uid-4") }
+            val captured = mutableListOf<RunnerState>()
+            val sink = RunnerStateSink { _, update -> captured.add(update(null)) }
+            val runner =
+                KubernetesRunner(
+                    "k8s-dev",
+                    jobConfig.copy(podStartTimeoutSeconds = 1),
+                    api,
+                    dummyExecClient(),
+                    clock = { 0L },
+                    stateSink = sink,
+                    batchApi = batch,
+                )
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodStartTimeout", thrown.reason)
+            assertEquals(PodPhase.FAILED, captured.last().podPhase)
+            assertTrue(captured.last().jobName != null, "a rebuilt failed state keeps the Job name")
+            verify(exactly = 0) { api.deleteNamespacedPod(any(), any()) }
+        }
+
+    @Test
+    fun `Job mode records a mid-run stop against the found pod and keeps the Job name`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubEvents(api, emptyList())
+        var stopped = false
+        val req =
+            mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                every { execute() } answers { if (stopped) podWithStatus("Failed", "DeadlineExceeded", "too long") else readyPod() }
+            }
+        every { api.readNamespacedPodStatus(any(), any()) } returns req
+        stubJobPods(api, "homer-7-job-q9w8e")
+        val batch = interceptedBatchV1Api(mutableListOf()) { 201 to createdJob(uid = "uid-5") }
+        val captured = mutableListOf<RunnerState>()
+        // A sink that never hands back the stored state: the termination rebuilds it.
+        val sink = RunnerStateSink { _, update -> captured.add(update(null)) }
+        val runner =
+            KubernetesRunner(
+                "k8s-dev",
+                jobConfig.copy(maxRunSeconds = 60),
+                api,
+                { _, _, _, _ -> exitingProcess(137) },
+                clock = { 5_000L },
+                stateSink = sink,
+                batchApi = batch,
+            )
+        val session = runner.openSession(params)
+        stopped = true
+
+        assertThrows<homer.app.exceptions.PodFailedDuringExecutionException> {
+            session.shell.cmd(listOf("sleep"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+        }
+
+        val last = captured.last()
+        assertEquals("DeadlineExceeded", last.termination?.reason)
+        assertEquals("homer-7-job-q9w8e", last.podName)
+        assertTrue(last.jobName!!.startsWith("homer-7-"), "${last.jobName}")
+        verify { api.readNamespacedPodStatus("homer-7-job-q9w8e", "homer") }
+    }
+
+    @Test
+    fun `Job mode requires a BatchV1Api`() {
+        val e = assertThrows<IllegalArgumentException> { KubernetesRunner("k8s-dev", jobConfig, mockk(), dummyExecClient()) }
+        assertEquals("kubernetes runner 'k8s-dev': workload Job needs a BatchV1Api", e.message)
+    }
+
+    private val jobConfig = config.copy(workload = KubernetesWorkload.Job)
+
+    /** The created Job as the API server answers it: name, optional uid and controller selector. */
+    private fun createdJob(
+        uid: String? = null,
+        matchLabels: Map<String, String>? = null,
+    ): String =
+        io.kubernetes.client.openapi.JSON.serialize(
+            V1Job()
+                .metadata(V1ObjectMeta().name("homer-7-job").uid(uid))
+                .spec(
+                    V1JobSpec()
+                        .selector(matchLabels?.let { V1LabelSelector().matchLabels(it) })
+                        .template(V1PodTemplateSpec()),
+                ),
+        )
+
+    /** Stubs the Job's pod list with [podName] (none when null); returns the captured label selector. */
+    private fun stubJobPods(
+        api: CoreV1Api,
+        podName: String?,
+    ): CapturingSlot<String> {
+        val selector = slot<String>()
+        val pods = listOfNotNull(podName).map { V1Pod().metadata(V1ObjectMeta().name(it)) }
+        val req =
+            mockk<CoreV1Api.APIlistNamespacedPodRequest>(relaxed = true) {
+                every { labelSelector(capture(selector)) } returns this
+                every { execute() } returns V1PodList().items(pods)
+            }
+        every { api.listNamespacedPod("homer") } returns req
+        return selector
+    }
+
+    private fun exitingProcess(code: Int): Process =
+        mockk(relaxed = true) {
+            every { inputStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+            every { errorStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+            every { outputStream } returns java.io.ByteArrayOutputStream()
+            every { waitFor(any<Long>(), any<java.util.concurrent.TimeUnit>()) } returns true
+            every { exitValue() } returns code
         }
 
     private fun dummyExecClient(): KubernetesExecClient = KubernetesExecClient { _, _, _, _ -> mockk(relaxed = true) }

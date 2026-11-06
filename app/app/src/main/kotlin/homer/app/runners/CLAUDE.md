@@ -11,7 +11,7 @@ examples under one contract.
 ## Runner contract (lifecycle primitives)
 
 `Runner.openSession` provisions only (connect/auth for ssh, pod
-create for kubernetes, nothing for local). `RunnerSession` exposes
+or Job create for kubernetes, nothing for local). `RunnerSession` exposes
 mechanism primitives with no-op defaults — `createWorkspace()`
 (returns env overrides, e.g. `HMR_*` paths translated to the remote
 layout), `upload(local, remoteRelative, excludes = [])`,

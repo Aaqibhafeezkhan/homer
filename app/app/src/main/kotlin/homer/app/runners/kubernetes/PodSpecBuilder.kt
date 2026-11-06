@@ -14,11 +14,14 @@ import io.kubernetes.client.custom.Quantity
 import io.kubernetes.client.openapi.models.V1Capabilities
 import io.kubernetes.client.openapi.models.V1Container
 import io.kubernetes.client.openapi.models.V1EnvVar
+import io.kubernetes.client.openapi.models.V1Job
+import io.kubernetes.client.openapi.models.V1JobSpec
 import io.kubernetes.client.openapi.models.V1LocalObjectReference
 import io.kubernetes.client.openapi.models.V1ObjectMeta
 import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodSecurityContext
 import io.kubernetes.client.openapi.models.V1PodSpec
+import io.kubernetes.client.openapi.models.V1PodTemplateSpec
 import io.kubernetes.client.openapi.models.V1ResourceRequirements
 import io.kubernetes.client.openapi.models.V1SeccompProfile
 import io.kubernetes.client.openapi.models.V1SecurityContext
@@ -38,6 +41,12 @@ object PodLabels {
 
     /** Set on a pod kept via `keepPodOnFailure`; the startup sweep skips pods carrying it. */
     const val KEPT = "homer.app/kept"
+
+    /**
+     * The JSON-Patch op that sets [KEPT], for the pod and its Job alike, so the sweep's skip and the
+     * keep write the same key. The label path escapes "/" as "~1" per RFC 6901 (JSON Pointer).
+     */
+    internal val KEPT_LABEL_OP = """{"op":"add","path":"/metadata/labels/${KEPT.replace("/", "~1")}","value":"true"}"""
 }
 
 class PodSpecBuilder(
@@ -54,6 +63,28 @@ class PodSpecBuilder(
         return V1Pod()
             .metadata(buildMetadata(params, podName))
             .spec(buildPodSpec(workspaceMounts, containerSc))
+    }
+
+    /** A one-pod, no-retry Job around [build]'s pod: same labels and annotations on the Job and its template. See ADR-0100. */
+    fun buildJob(
+        params: RunnerSessionParams,
+        jobName: String,
+    ): V1Job {
+        val meta = buildMetadata(params, jobName)
+        val template =
+            V1PodTemplateSpec()
+                .metadata(V1ObjectMeta().labels(meta.labels).annotations(meta.annotations))
+                .spec(build(params, jobName).spec)
+        return V1Job()
+            .metadata(meta)
+            .spec(
+                V1JobSpec()
+                    .parallelism(1)
+                    .completions(1)
+                    .backoffLimit(0)
+                    .ttlSecondsAfterFinished(config.effectiveJobTtlSeconds.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                    .template(template),
+            )
     }
 
     private fun buildMetadata(
@@ -102,7 +133,10 @@ class PodSpecBuilder(
                 toInitContainer(spec, workspaceMounts, containerSc)
             }
         return V1PodSpec()
+            // client-java defaults overhead to {}; RuntimeClass admission rejects any non-null overhead.
+            .overhead(null)
             .restartPolicy("Never")
+            .activeDeadlineSeconds(config.maxRunSeconds)
             .containers(listOf(buildMainContainer(workspaceMounts, containerSc)))
             .initContainers(initContainers)
             .volumes(listOf(workspaceVolume()) + config.volumes.map(::toVolume))

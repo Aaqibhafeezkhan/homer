@@ -3,6 +3,7 @@ package homer.app.runners.kubernetes
 import homer.app.fixtures.TestFixtures
 import homer.app.models.CapabilitiesSpec
 import homer.app.models.ContainerSpec
+import homer.app.models.KubernetesWorkload
 import homer.app.models.ResourceSpec
 import homer.app.models.RunnerConfig
 import homer.app.models.SeccompProfileSpec
@@ -13,6 +14,7 @@ import homer.app.runners.RunnerSessionParams
 import io.opentelemetry.context.Context
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -281,6 +283,101 @@ class PodSpecBuilderTest {
             assertEquals(listOf("NET_BIND_SERVICE"), sc.capabilities!!.add)
             assertEquals("RuntimeDefault", sc.seccompProfile!!.type)
         }
+    }
+
+    @Test
+    fun `default config pod spec is unchanged (C1)`() {
+        val pod =
+            PodSpecBuilder(
+                "k8s-dev",
+                config.copy(annotations = mapOf("vault.hashicorp.com/role" to "homer-runner")),
+                instanceId = "inst-xyz",
+            ).build(params(), "homer-1-abcdef")
+        val actual =
+            io.kubernetes.client.openapi.JSON
+                .serialize(pod)
+        val golden = javaClass.getResource("/kubernetes/default-pod.json")!!.readText().trim()
+        assertEquals(golden, actual)
+    }
+
+    @Test
+    fun `the pod spec omits overhead so RuntimeClass admission accepts it`() {
+        val pod = PodSpecBuilder("k8s-dev", config).build(params(), "homer-1-abcdef")
+
+        assertNull(pod.spec!!.overhead)
+        assertFalse(
+            io.kubernetes.client.openapi.JSON
+                .serialize(pod)
+                .contains("\"overhead\""),
+        )
+    }
+
+    @Test
+    fun `the Job template omits overhead so RuntimeClass admission accepts it`() {
+        val jobConfig = config.copy(workload = KubernetesWorkload.Job)
+
+        val job = PodSpecBuilder("k8s-dev", jobConfig).buildJob(params(), "homer-1-abcdef")
+
+        assertNull(
+            job.spec!!
+                .template.spec!!
+                .overhead,
+        )
+        assertFalse(
+            io.kubernetes.client.openapi.JSON
+                .serialize(job)
+                .contains("\"overhead\""),
+        )
+    }
+
+    @Test
+    fun `maxRunSeconds sets the pod activeDeadlineSeconds`() {
+        val pod = PodSpecBuilder("k8s-dev", config.copy(maxRunSeconds = 10800)).build(params(), "homer-1-abcdef")
+        assertEquals(10800L, pod.spec!!.activeDeadlineSeconds)
+    }
+
+    @Test
+    fun `no maxRunSeconds leaves activeDeadlineSeconds unset`() {
+        val pod = PodSpecBuilder("k8s-dev", config).build(params(), "homer-1-abcdef")
+        assertNull(pod.spec!!.activeDeadlineSeconds)
+    }
+
+    @Test
+    fun `buildJob wraps the pod spec in a single-attempt Job`() {
+        val annotated = config.copy(workload = KubernetesWorkload.Job, annotations = mapOf("sidecar.io/inject" to "false"))
+        val builder = PodSpecBuilder("k8s-dev", annotated, instanceId = "inst-1")
+        val pod = builder.build(params(), "homer-1-abcdef")
+
+        val job = builder.buildJob(params(), "homer-1-abcdef")
+
+        assertEquals("homer-1-abcdef", job.metadata!!.name)
+        assertEquals("homer", job.metadata!!.namespace)
+        assertEquals(pod.metadata!!.labels, job.metadata!!.labels)
+        assertEquals(pod.metadata!!.annotations, job.metadata!!.annotations)
+        val spec = job.spec!!
+        assertEquals(1, spec.parallelism)
+        assertEquals(1, spec.completions)
+        assertEquals(0, spec.backoffLimit)
+        assertEquals(3600, spec.ttlSecondsAfterFinished)
+        assertNull(spec.template.metadata!!.name)
+        assertEquals(pod.metadata!!.labels, spec.template.metadata!!.labels)
+        assertEquals(pod.metadata!!.annotations, spec.template.metadata!!.annotations)
+        assertEquals(pod.spec, spec.template.spec)
+    }
+
+    @Test
+    fun `buildJob carries maxRunSeconds on the template and the configured TTL on the Job`() {
+        val jobConfig = config.copy(workload = KubernetesWorkload.Job, maxRunSeconds = 60, jobTtlSecondsAfterFinished = 120)
+
+        val job = PodSpecBuilder("k8s-dev", jobConfig).buildJob(params(), "homer-1-abcdef")
+
+        assertEquals(
+            60L,
+            job.spec!!
+                .template.spec!!
+                .activeDeadlineSeconds,
+        )
+        assertEquals(120, job.spec!!.ttlSecondsAfterFinished)
     }
 
     private fun params(

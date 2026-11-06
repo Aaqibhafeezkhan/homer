@@ -25,6 +25,7 @@ export const RENAMES = {
   RunnerState: 'RunnerStateResponse',
   PodStartupFailure: 'PodStartupFailureResponse',
   SweepDeletedPod: 'SweepDeletedPodResponse',
+  SweepDeletedJob: 'SweepDeletedJobResponse',
   SweepStatus: 'SweepStatusResponse',
   Question: 'QuestionResponse',
   RunMessage: 'RunMessageResponse',

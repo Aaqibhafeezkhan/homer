@@ -91,6 +91,7 @@ data class AppConfig(
                 }
 
                 is RunnerConfig.Kubernetes -> {
+                    runner.validateWorkload(alias)
                     runner.validateExtraUploads(alias)
                     runner.validateEnv(alias)
                     runner.validateQueueFacets(alias)

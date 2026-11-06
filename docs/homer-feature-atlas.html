@@ -2402,13 +2402,17 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
         <article class="f">
           <h3>Kubernetes runner <span class="where">server config</span></h3>
           <p>One ephemeral pod per run with a pod-local <code>emptyDir</code> workspace; content moves as gzip'd tar over
-            the exec channel. The image must ship <code>tar</code> and <code>gzip</code>.</p>
+            the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
+            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
+            the pod in a one-pod Job that waits out namespace quota and is removed by its TTL.</p>
           <pre><code>runners:
   k8s: !&lt;kubernetes&gt;
     namespace: homer
     image: registry.example.com/homer-runtime:1.22.0
     resources: { limits: { cpu: "2", memory: 2Gi } }
-    homerApiUrl: http://homer.homer.svc.cluster.local:8080</code></pre>
+    homerApiUrl: http://homer.homer.svc.cluster.local:8080
+    workload: Job        # default Pod
+    maxRunSeconds: 7200</code></pre>
         </article>
 
         <article class="f">
@@ -2504,8 +2508,11 @@ extraUploads:
         <article class="f">
           <h3>Orphan pod sweep <span class="where">k8s runner</span></h3>
           <p>On boot Homer deletes pods labelled with <em>its own</em> instance id whose process is no longer active, and
-            reports the result on <code>/api/v1/health</code>. No configuration.</p>
-          <pre><code>curl "$HOMER/api/v1/health"   # { "sweep": { "scanned":…, "deleted":… } }</code></pre>
+            reports the result on <code>/api/v1/health</code>. No configuration. A <code>workload: Job</code> runner also
+            deletes its orphan Jobs, a Job whose pod was never created included, and skips the pods a Job owns, which go
+            with their Job. Pods and Jobs kept by <code>keepPodOnFailure</code> are skipped. The deleted Jobs are
+            <code>deletedJobs</code>, <code>null</code> when no Job-mode runner was swept.</p>
+          <pre><code>curl "$HOMER/api/v1/health"   # { "sweep": { "scanned":…, "deleted":…, "deletedJobs": null } }</code></pre>
         </article>
 
         <article class="f">

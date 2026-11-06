@@ -5,10 +5,12 @@ import io.kubernetes.client.openapi.apis.CoreV1Api
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class PodDiagnosticsTest {
     /** A CoreV1Api answering the pod-status read with [podJson] (404 when null) and the event list with [events]. */
@@ -69,26 +71,27 @@ class PodDiagnosticsTest {
     ) = PodDiagnostics(api, "ns").collect("p", fallbackReason)
 
     @Test
-    fun `a container that exited non-zero reports its terminated reason and message`() {
+    fun `a container that exited non-zero reports its terminated reason and exit code, never its termination log`() {
         val status =
             """{"phase":"Running","containerStatuses":[""" +
                 container("ok", """{"running":{}}""") + "," +
-                container("main", """{"terminated":{"exitCode":1,"reason":"Error","message":"boom"}}""") + "]}"
+                container("main", """{"terminated":{"exitCode":1,"reason":"Error","message":"token=SECRET\\nforged"}}""") + "]}"
 
         val snapshot = collect(api(pod(status)))
 
         assertEquals("Error", snapshot.reason)
-        assertEquals("boom", snapshot.message)
+        assertEquals("Container 'main' terminated with exit code 1", snapshot.message)
+        assertFalse(snapshot.message.contains("SECRET"))
     }
 
     @Test
-    fun `a failed container without reason or message gets the generic container text`() {
+    fun `a failed container without a reason gets the generic reason and its exit code`() {
         val status = """{"containerStatuses":[""" + container("main", """{"terminated":{"exitCode":137}}""") + "]}"
 
         val snapshot = collect(api(pod(status)))
 
         assertEquals("ContainerFailed", snapshot.reason)
-        assertEquals("Container 'main' failed", snapshot.message)
+        assertEquals("Container 'main' terminated with exit code 137", snapshot.message)
     }
 
     @Test
@@ -124,7 +127,7 @@ class PodDiagnosticsTest {
         val snapshot = collect(api(pod(status)))
 
         assertEquals("InitError", snapshot.reason)
-        assertEquals("init broke", snapshot.message)
+        assertEquals("Container 'init' terminated with exit code 2", snapshot.message)
     }
 
     @Test
@@ -183,5 +186,44 @@ class PodDiagnosticsTest {
         val snapshot = PodDiagnostics.tryCollect(api(pod("""{"phase":"Failed"}""")), "ns", "p", "Timeout")
 
         assertEquals("PodFailed", snapshot.reason)
+    }
+
+    @Test
+    fun `collectJob includes Job conditions and events`() {
+        val seen = mutableListOf<Request>()
+        val events =
+            listOf(
+                event("Warning", "FailedCreate", "newest", "2026-01-01T00:00:10Z"),
+                event("Normal", "SuccessfulCreate", "oldest", "2026-01-01T00:00:01Z"),
+            )
+        val core = CoreV1Api(interceptedApiClient(seen) { 200 to """{"kind":"EventList","items":[${events.joinToString(",")}]}""" })
+        val job =
+            """{"metadata":{"name":"j"},"spec":{"template":{}},"status":{"conditions":[""" +
+                """{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"Job has reached the specified backoff limit"}]}}"""
+        val batch = interceptedBatchV1Api(seen) { 200 to job }
+
+        val snapshot = PodDiagnostics(core, "ns").collectJob("j", batch)
+
+        assertEquals("JobFailed", snapshot.reason)
+        assertEquals("Job has reached the specified backoff limit", snapshot.message)
+        assertEquals(
+            listOf(
+                "Job/Failed=True: BackoffLimitExceeded: Job has reached the specified backoff limit",
+                "Normal/SuccessfulCreate: oldest",
+                "Warning/FailedCreate: newest",
+            ),
+            snapshot.events,
+        )
+        val eventList = seen.single { it.url.encodedPath.endsWith("/events") }
+        assertEquals("involvedObject.kind=Job,involvedObject.name=j", eventList.url.queryParameter("fieldSelector"))
+    }
+
+    @Test
+    fun `collectJob of an unreadable Job without events reports nothing`() {
+        val snapshot = PodDiagnostics(api(podJson = null), "ns").collectJob("j", interceptedBatchV1Api(mutableListOf()) { 404 to "{}" })
+
+        assertEquals("Unknown", snapshot.reason)
+        assertEquals("No diagnostic details available", snapshot.message)
+        assertEquals(emptyList(), snapshot.events)
     }
 }
