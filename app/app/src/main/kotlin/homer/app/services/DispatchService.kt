@@ -222,6 +222,10 @@ internal class DispatchService(
                             dispatch.owner,
                             authorizer,
                         ),
+                    // The origin is the run that asked for this dispatch; while it is still
+                    // `WORKING` this start is part of admitted work and does not park at the
+                    // maintenance gate. An origin that ended parks as before. ADR-0092.
+                    serverDerivedParent = true,
                 ) {
                     agentInputResolver.resolveFromParams(inputParams, agent) + reservedControlParams(inputParams)
                 }
@@ -276,6 +280,10 @@ internal class DispatchService(
                 // Same root-visibility gate as fire: the fired run carries the dispatch
                 // owner's grant, not the origin process's. §12.
                 rootProcessId = processManager.visibleOriginRootProcessId(originProcessId, owner, authorizer),
+                // [liveRegistration] above proved the origin is live, and it is the run making
+                // this dispatch: while its row still reads `WORKING` the start is admitted and
+                // does not park at the maintenance gate. ADR-0092.
+                serverDerivedParent = true,
             ) {
                 agentInputResolver.resolveFromParams(params, target)
             }

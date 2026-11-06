@@ -121,17 +121,28 @@ marked `Constraint:`.
   `CooldownDecision` so the two cannot drift. ADR-0051.
 - **`MaintenanceModeService`** — the admin maintenance flag and the bounded queue of starts
   parked behind it: `isEnabled()`, `setEnabled()` (persisted to `server_meta`), `queueDepth()`,
-  `awaitRelease(owner)` and `gated(owner) { start }` — the park-and-release protocol every start
-  path runs through, `AgentRunStarter.start` and the direct-build starts in
+  `awaitRelease(owner)` and `gated(owner, admitted) { start }` — the park-and-release protocol
+  every start path runs through, `AgentRunStarter.start` and the direct-build starts in
   `routes/RunHandlers.kt` alike; `CronSchedulerService` reads the flag to skip its tick. Nearly
   every entry point converges on `AgentRunStarter.start`, so this one gate covers HTTP, MCP,
   `!<agent>` hops, dispatches and continuations; retry, resume and debug build their process
   directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`), so a
-  fourth start path must not be added without one. See ADR-0092.
+  fourth start path must not be added without one. An **admitted** start (`admitted = true`)
+  skips the queue: it is part of a run the window already let in — a `!<agent>` hop, a dispatch,
+  a continuation fire — and parking it would leave that run unable to finish. Only the paths
+  that derive the parent themselves (`AgentSubRunStarter`, `DispatchService`,
+  `ContinuationFireService`) pass the flag; every other start, parentless or with a
+  caller-supplied parent, parks. See ADR-0092.
   - **Constraint:** the gate is called **before** `AgentRunStarter`'s preflight, so a released
     start re-runs the cycle, depth, cost-cap and cooldown checks and resolves its inputs **at
     dequeue, not at enqueue** — moving the call below them starts a run on a decision that was
-    true minutes earlier, and creates its process row while it is still parked.
+    true minutes earlier, and creates its process row while it is still parked. An admitted start
+    skips the queue and nothing else: it runs that same preflight.
+  - **Constraint:** `admitted` is decided from the **parent run's own row**
+    (`ProcessRecordReads.getProcessStatus`), on a path that derived that parent itself — never
+    from a caller-supplied `X-Homer-Parent-Process-Id` header, and never from the parent id
+    alone. The flag must short-circuit **before** the read, so naming a parent admits no start
+    and probes no row the caller cannot see (root §12 rule 3).
   - **Constraint:** the drain releases waiters **in its own loop** (take a release slot,
     complete the waiter's `released`, then await its run off the loop), never by handing each
     waiter a coroutine to race for a slot — arrival order within one drain is the point (rapid

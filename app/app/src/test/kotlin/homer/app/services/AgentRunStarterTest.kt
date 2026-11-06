@@ -1,18 +1,25 @@
 package homer.app.services
 
 import homer.app.exceptions.CooldownActiveException
+import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.HomerException
+import homer.app.exceptions.InvocationCycleDetectedException
+import homer.app.exceptions.InvocationDepthExceededException
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.models.Agent
 import homer.app.models.AgentTelemetry
 import homer.app.models.Param
 import homer.app.models.ProcessCreationResult
+import homer.app.models.ProcessStatus
+import homer.app.services.persistence.ProcessRecordReads
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
@@ -58,6 +65,7 @@ class AgentRunStarterTest {
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
                 maintenanceGate = mockk(relaxed = true),
+                processReads = mockk(relaxed = true),
             )
         val agent =
             AgentFixtures
@@ -222,6 +230,7 @@ class AgentRunStarterTest {
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
                 maintenanceGate = mockk(relaxed = true),
+                processReads = mockk(relaxed = true),
             )
         val agent = AgentFixtures.simpleAgent(name = "child")
 
@@ -260,6 +269,7 @@ class AgentRunStarterTest {
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
                 maintenanceGate = mockk(relaxed = true),
+                processReads = mockk(relaxed = true),
             )
         val agent = AgentFixtures.simpleAgent(name = "child")
 
@@ -300,6 +310,7 @@ class AgentRunStarterTest {
                 maxInvocationDepth = 5,
                 cooldownGate = mockk(relaxed = true),
                 maintenanceGate = mockk(relaxed = true),
+                processReads = mockk(relaxed = true),
             )
 
         runBlocking { starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "agent") { emptyMap() } }
@@ -312,12 +323,17 @@ class AgentRunStarterTest {
 
     // --- the maintenance gate (ADR-0092) ---
 
-    /** A starter whose gate is [gate], returning a run id from a relaxed [ProcessExecutor]. */
+    /**
+     * A starter whose gate is [gate], returning a run id from a relaxed [ProcessExecutor].
+     * [parentStatus] is what the parent read reports for any id — `UNKNOWN`, the status of an
+     * absent or already-ended row, unless a test is exercising the maintenance bypass. See ADR-0092.
+     */
     private fun starterWithGate(
         gate: MaintenanceModeService,
         processExecutor: ProcessExecutor,
         cooldownGate: CooldownGate = mockk(relaxed = true),
         costMeter: CostMeter = mockk(relaxed = true),
+        parentStatus: ProcessStatus = ProcessStatus.UNKNOWN,
     ): AgentRunStarter =
         AgentRunStarter(
             serverId = "test-server",
@@ -328,7 +344,18 @@ class AgentRunStarterTest {
             maxInvocationDepth = 5,
             cooldownGate = cooldownGate,
             maintenanceGate = gate,
+            processReads = mockk { coEvery { getProcessStatus(any()) } returns parentStatus },
         )
+
+    /**
+     * A gate with the mode on that refuses every parker outright, so a start that reaches it fails
+     * instead of hanging the test — and a start that does not reach it proves the bypass.
+     */
+    private fun refusingGate(): MaintenanceModeService =
+        mockk {
+            every { isEnabled() } returns true
+            coEvery { awaitRelease(any()) } throws MaintenanceQueueFullException(500)
+        }
 
     @Test
     fun `a start parks at the gate and only then runs, once the mode goes off`() =
@@ -410,6 +437,203 @@ class AgentRunStarterTest {
                         starter.start(agent, emptyList(), "http") { mapOf("TOKEN" to secret) }
                     }
                 assertFalse(thrown.message!!.contains(secret), "the refusal must not echo an input value")
+            }
+        }
+
+    // --- the bypass for work the window already admitted (ADR-0092) ---
+
+    @Test
+    fun `a server-derived start whose parent is still WORKING runs without parking`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val gate = refusingGate()
+            val starter = starterWithGate(gate, processExecutor, parentStatus = ProcessStatus.WORKING)
+
+            val processId =
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "agent",
+                    parentProcessId = 42,
+                    serverDerivedParent = true,
+                ) { emptyMap() }
+
+            assertEquals(7, processId)
+            coVerify(exactly = 0) { gate.awaitRelease(any()) }
+            coVerify(exactly = 1) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `the bypass is reported on the request span as a boolean`() =
+        runBlocking {
+            val span = TestFixtures.mockSpan()
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val starter =
+                AgentRunStarter(
+                    serverId = "test-server",
+                    processExecutor = processExecutor,
+                    processFactory = mockk(relaxed = true),
+                    telemetryService = TestFixtures.mockTelemetryService(span),
+                    costMeter = mockk(relaxed = true),
+                    maxInvocationDepth = 5,
+                    cooldownGate = mockk(relaxed = true),
+                    maintenanceGate = refusingGate(),
+                    processReads = mockk { coEvery { getProcessStatus(any()) } returns ProcessStatus.WORKING },
+                )
+
+            starter.start(
+                AgentFixtures.simpleAgent(name = "child"),
+                emptyList(),
+                "agent",
+                parentProcessId = 42,
+                serverDerivedParent = true,
+            ) { emptyMap() }
+
+            val attributes = slot<Attributes>()
+            verify { span.setAllAttributes(capture(attributes)) }
+            assertEquals(true, attributes.captured.get(AttributeKey.booleanKey("maintenance.bypassed")))
+        }
+
+    @Test
+    fun `a server-derived start runs with the mode off without reading the parent row`() =
+        runBlocking {
+            // The steady state: the in-memory flag decides first, so the start neither parks
+            // (nothing to bypass) nor probes a parent row it would discard the answer of.
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val gate =
+                mockk<MaintenanceModeService> {
+                    every { isEnabled() } returns false
+                    coEvery { awaitRelease(any()) } returns MaintenanceSlot { }
+                }
+            val processReads =
+                mockk<ProcessRecordReads> {
+                    coEvery { getProcessStatus(any()) } returns ProcessStatus.WORKING
+                }
+            val span = TestFixtures.mockSpan()
+            val starter =
+                AgentRunStarter(
+                    serverId = "test-server",
+                    processExecutor = processExecutor,
+                    processFactory = mockk(relaxed = true),
+                    telemetryService = TestFixtures.mockTelemetryService(span),
+                    costMeter = mockk(relaxed = true),
+                    maxInvocationDepth = 5,
+                    cooldownGate = mockk(relaxed = true),
+                    maintenanceGate = gate,
+                    processReads = processReads,
+                )
+
+            val processId =
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "agent",
+                    parentProcessId = 42,
+                    serverDerivedParent = true,
+                ) { emptyMap() }
+
+            assertEquals(7, processId)
+            coVerify(exactly = 0) { processReads.getProcessStatus(any()) }
+            val attributes = slot<Attributes>()
+            verify { span.setAllAttributes(capture(attributes)) }
+            assertEquals(false, attributes.captured.get(AttributeKey.booleanKey("maintenance.bypassed")))
+        }
+
+    @Test
+    fun `a start whose server-derived parent has ended parks as before`() =
+        runBlocking {
+            for (status in listOf(ProcessStatus.FINISHED, ProcessStatus.FAILED, ProcessStatus.KILLED, ProcessStatus.UNKNOWN)) {
+                val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+                val gate = refusingGate()
+                val starter = starterWithGate(gate, processExecutor, parentStatus = status)
+
+                assertFailsWith<MaintenanceQueueFullException> {
+                    starter.start(
+                        AgentFixtures.simpleAgent(name = "child"),
+                        emptyList(),
+                        "agent",
+                        parentProcessId = 42,
+                        serverDerivedParent = true,
+                    ) { emptyMap() }
+                }
+                coVerify(exactly = 1) { gate.awaitRelease(any()) }
+                coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+            }
+        }
+
+    @Test
+    fun `a start with no parent parks even when the flag is set`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val gate = refusingGate()
+            val starter = starterWithGate(gate, processExecutor, parentStatus = ProcessStatus.WORKING)
+
+            assertFailsWith<MaintenanceQueueFullException> {
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "agent",
+                    serverDerivedParent = true,
+                ) { emptyMap() }
+            }
+            coVerify(exactly = 1) { gate.awaitRelease(any()) }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a caller-supplied parent that happens to be WORKING still parks`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val gate = refusingGate()
+            val starter = starterWithGate(gate, processExecutor, parentStatus = ProcessStatus.WORKING)
+
+            assertFailsWith<MaintenanceQueueFullException> {
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "http",
+                    parentProcessId = 42,
+                ) { emptyMap() }
+            }
+            coVerify(exactly = 1) { gate.awaitRelease(any()) }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a bypassing start still runs the cycle, depth, cost-cap and cooldown checks`() =
+        runBlocking {
+            supervisorScope {
+                val agent = AgentFixtures.simpleAgent(name = "child")
+                val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+                val costMeter = mockk<CostMeter>(relaxed = true)
+                val cooldownGate = mockk<CooldownGate>(relaxed = true)
+
+                suspend fun start(
+                    chain: List<String>,
+                    target: Agent = agent,
+                ): Int =
+                    starterWithGate(
+                        refusingGate(),
+                        processExecutor,
+                        cooldownGate = cooldownGate,
+                        costMeter = costMeter,
+                        parentStatus = ProcessStatus.WORKING,
+                    ).start(target, chain, "agent", parentProcessId = 42, serverDerivedParent = true) { emptyMap() }
+
+                // The admitted start skips the gate, not the request-boundary refusals.
+                assertFailsWith<InvocationCycleDetectedException> { start(listOf("child")) }
+                assertFailsWith<InvocationDepthExceededException> { start(listOf("a", "b", "c", "d", "e")) }
+
+                coEvery { costMeter.checkCaps(any()) } throws CostCapExceededException("child", 1.0, 2.0)
+                assertFailsWith<CostCapExceededException> { start(emptyList(), AgentFixtures.claudeAgent(name = "child")) }
+
+                coEvery { cooldownGate.check(any()) } throws CooldownActiveException("child", 5, "cooling down")
+                assertFailsWith<CooldownActiveException> { start(emptyList()) }
+
+                coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
             }
         }
 }

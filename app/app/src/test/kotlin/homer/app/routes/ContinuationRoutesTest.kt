@@ -100,7 +100,8 @@ class ContinuationRoutesTest {
             val h = Harness()
             // A real WORKING sub so the continuation stays PENDING (the race re-check is exercised separately).
             val subId = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns subId
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                subId
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -137,7 +138,8 @@ class ContinuationRoutesTest {
         testApplication {
             val h = Harness()
             val subId = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns subId
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                subId
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -174,7 +176,7 @@ class ContinuationRoutesTest {
     fun `callback runs without continuation fields is a plain dispatch`() =
         testApplication {
             val h = Harness()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -200,7 +202,7 @@ class ContinuationRoutesTest {
     fun `callback runs with a non-dispatchable continueAgent is rejected without starting the sub`() =
         testApplication {
             val h = Harness()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -217,14 +219,16 @@ class ContinuationRoutesTest {
 
             assertEquals(HttpStatusCode.Forbidden, resp.status)
             // Continuation validation runs BEFORE dispatchNow, so the sub never started.
-            coVerify(exactly = 0) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(
+                exactly = 0,
+            ) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
     fun `callback runs with a blank resumeParam is rejected without starting the sub`() =
         testApplication {
             val h = Harness()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -240,7 +244,9 @@ class ContinuationRoutesTest {
                 }
 
             assertEquals(HttpStatusCode.BadRequest, resp.status)
-            coVerify(exactly = 0) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(
+                exactly = 0,
+            ) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -254,8 +260,10 @@ class ContinuationRoutesTest {
                     h.processManager.setProcessStatus(pid, ProcessStatus.FINISHED)
                     pid
                 }
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns subId
-            coEvery { h.runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                subId
+            coEvery { h.runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                99
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -285,7 +293,7 @@ class ContinuationRoutesTest {
             val h = Harness()
             val sub1 = h.workingProcess()
             val sub2 = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
                 listOf(sub1, sub2)
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
@@ -325,7 +333,7 @@ class ContinuationRoutesTest {
     fun `callback joins with a non-dispatchable sub starts no sub and is rejected`() =
         testApplication {
             val h = Harness()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -346,7 +354,9 @@ class ContinuationRoutesTest {
 
             assertEquals(HttpStatusCode.Forbidden, resp.status)
             // Validate-before-start: a non-dispatchable sub must reject before any sub is started.
-            coVerify(exactly = 0) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(
+                exactly = 0,
+            ) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test
@@ -365,9 +375,10 @@ class ContinuationRoutesTest {
                     h.processManager.setProcessStatus(p, ProcessStatus.FINISHED)
                     p
                 }
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
                 listOf(sub1, sub2)
-            coEvery { h.runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any()) } returns 99
+            coEvery { h.runStarter.start(any(), any(), eq("continuation"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                99
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
                 every { questionsService } returns h.questions
@@ -406,7 +417,8 @@ class ContinuationRoutesTest {
         testApplication {
             val h = Harness(DispatchConfig(maxPending = 1))
             val subId = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns subId
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                subId
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             h.fillPendingCap()
             mountCallbackRoutes {
@@ -432,7 +444,7 @@ class ContinuationRoutesTest {
         testApplication {
             val h = Harness()
             val sub1 = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns
                 sub1 andThenThrows CooldownActiveException("handler", 30, "cooldown.min")
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             mountCallbackRoutes {
@@ -464,7 +476,7 @@ class ContinuationRoutesTest {
             val h = Harness(DispatchConfig(maxPending = 1))
             val sub1 = h.workingProcess()
             val sub2 = h.workingProcess()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
                 listOf(sub1, sub2)
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
             h.fillPendingCap()
@@ -495,7 +507,7 @@ class ContinuationRoutesTest {
     fun `callback joins with invalid params on a later sub starts no sub`() =
         testApplication {
             val h = Harness()
-            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            coEvery { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
             every { h.inputResolver.resolveFromParams(eq(mapOf("BAD" to "x")), any(), any()) } throws
                 ValidationException("unknown input 'BAD'", "BAD")
             val token = runBlocking { h.questions.registerProcess(7, "asker") }
@@ -519,7 +531,9 @@ class ContinuationRoutesTest {
                 }
 
             assertEquals(HttpStatusCode.BadRequest, resp.status)
-            coVerify(exactly = 0) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(
+                exactly = 0,
+            ) { h.runStarter.start(any(), any(), eq("dispatch"), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test

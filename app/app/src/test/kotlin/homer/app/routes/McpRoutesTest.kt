@@ -68,8 +68,8 @@ class McpRoutesTest {
         agentsService = mockk(relaxed = true)
         every { agentsService.agents } returns emptyMap()
         agentRunStarter = mockk()
-        coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
-            arg<suspend () -> Map<String, String>>(9).invoke()
+        coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            arg<suspend () -> Map<String, String>>(10).invoke()
             42
         }
         processManager = mockk(relaxed = true)

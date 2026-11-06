@@ -65,8 +65,8 @@ class McpToolFactoryTest {
         agentsService = mockk(relaxed = true)
         every { agentsService.agents } returns emptyMap()
         agentRunStarter = mockk()
-        coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
-            resolvedInputs = arg<suspend () -> Map<String, String>>(9).invoke()
+        coEvery { agentRunStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            resolvedInputs = arg<suspend () -> Map<String, String>>(10).invoke()
             RUN_ID
         }
         processManager = mockk(relaxed = true)
@@ -449,7 +449,7 @@ class McpToolFactoryTest {
             assertEquals(RUN_ID, (structured["runId"] as JsonPrimitive).content.toInt())
             assertEquals("WORKING", (structured["status"] as JsonPrimitive).content)
             coVerify {
-                agentRunStarter.start(agent, emptyList(), "mcp", any(), any(), any(), any(), any(), any(), any())
+                agentRunStarter.start(agent, emptyList(), "mcp", any(), any(), any(), any(), any(), any(), any(), any())
             }
         }
 
@@ -463,7 +463,7 @@ class McpToolFactoryTest {
 
             assertNull(result.isError)
             coVerify {
-                agentRunStarter.start(agent, emptyList(), "mcp", any(), any(), "runner", any(), any(), any(), any())
+                agentRunStarter.start(agent, emptyList(), "mcp", any(), any(), "runner", any(), any(), any(), any(), any())
             }
         }
 

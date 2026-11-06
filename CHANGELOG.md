@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Fixed: a run that starts another run can finish during maintenance mode** — A `!<agent>` hop, a dispatch or a continuation fire whose own run is still `WORKING` is admitted at once instead of parking in the maintenance queue, while a start with no parent or one whose origin has ended still queues. See [ADR-0092](docs/adr/0092-maintenance-mode-queues-starts-and-skips-cron.md).
+
 ## [1.40.0] - 2026-11-05
 
 ### Homer

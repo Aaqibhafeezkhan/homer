@@ -231,7 +231,7 @@ Output:
 | GET | `/api/v1/runners` | Configured runners with permits in use, and each external domain's live instances | `admin` role required |
 | GET | `/api/v1/runners/queue` | Pending runner claims: count, oldest age, breakdown by filter | `admin` role required |
 | GET | `/api/v1/maintenance` | Maintenance mode state: `enabled`, `since` (Unix epoch seconds; null while off, and also for a mode that was already on when the server booted — the toggle time is not persisted) and `queued` (starts waiting). Responses carry `Cache-Control: no-store`. | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
-| POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues. Off: the queue drains in arrival order within one release drain, `releaseConcurrency` at a time — rapid re-toggles overlap drains, so the order across drains is not guaranteed. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
+| POST | `/api/v1/maintenance` | Turn maintenance mode on or off (body `{"enabled": true\|false}`, `400` on a malformed body). On: cron fires are skipped and every other agent start queues — except a start that is part of a run still `WORKING` (a `!<agent>` hop, a dispatch, a continuation fire from a live origin), which is admitted at once. Off: the queue drains in arrival order within one release drain, `releaseConcurrency` at a time — rapid re-toggles overlap drains, so the order across drains is not guaranteed. See [below](#getpost-apiv1maintenance). | `admin` role required; a non-admin gets the same `404` an unmounted path answers |
 | GET | `/api/v1/costs` | Current LLM harness (Claude/Codex/opencode) spend windows + configured caps; also returns `costTrackedTagKeys`, the keys queryable via `GET /api/v1/costs/by-tag/{key}` | `admin` role required |
 | GET | `/api/v1/costs/monthly` | Per-agent LLM harness (Claude/Codex/opencode) spend for one UTC month, from the persistent cost ledger (query: `month`, defaults to current UTC month; `400` if malformed) | `admin` role required |
 | GET | `/api/v1/costs/totals` | All-time per-agent LLM harness (Claude/Codex/opencode) spend from the persistent cost ledger | `admin` role required |
@@ -430,7 +430,15 @@ Admin maintenance mode: a durable switch an operator flips before replacing the
 server. While it is on, cron fires are **skipped** (a missed schedule is never
 replayed) and every other agent start — HTTP, MCP, dispatch, continuation,
 `!<agent>` hop — waits in a bounded queue instead of running. A run already
-`WORKING` is untouched: this is an admission gate, not a kill switch.
+`WORKING` is untouched, and so is the work it starts: a `!<agent>` hop, a
+dispatch or a continuation fire whose origin run is still `WORKING` is admitted
+at once rather than parked, so a run that starts another run can still finish
+during the window. That origin is read from the server's own record of the run,
+never from a caller-supplied `X-Homer-Parent-Process-Id` header: a start with no
+parent (HTTP, MCP, the console) and a start whose origin has already ended queue
+like any other, and an admitted start still runs the invocation-chain depth and
+cycle checks, the cost caps and the cooldown. This is an admission gate, not a
+kill switch.
 
 ```json
 {

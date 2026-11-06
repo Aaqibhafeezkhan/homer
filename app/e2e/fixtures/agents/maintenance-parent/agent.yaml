@@ -1,0 +1,14 @@
+name: maintenance-parent
+description: Sleeps, then hops to `echo` — a maintenance window can be turned on while this run is still WORKING
+env:
+  CHILD_MESSAGE: from-maintenance-parent
+commands:
+  - !<script>
+    label: sleep
+    content: sleep 2
+  - !<agent>
+    label: run-child
+    agentName: echo
+    queryParams:
+      - paramName: message
+        envName: CHILD_MESSAGE

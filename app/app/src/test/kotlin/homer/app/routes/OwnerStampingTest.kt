@@ -78,6 +78,7 @@ class OwnerStampingTest {
                     maxInvocationDepth = 5,
                     cooldownGate = mockk(relaxed = true),
                     maintenanceGate = mockk(relaxed = true),
+                    processReads = mockk(relaxed = true),
                 )
 
             application {

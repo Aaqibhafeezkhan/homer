@@ -117,6 +117,10 @@ internal class ContinuationFireService(
                             continuation.owner,
                             authorizer,
                         ),
+                    // The origin link is server-derived, so a continuation whose origin is still
+                    // `WORKING` (a fan-out parent waiting on its subs) is admitted rather than
+                    // parked. A fire for an origin that already ended parks as before. ADR-0092.
+                    serverDerivedParent = true,
                 ) {
                     agentInputResolver.resolveFromParams(inputParams, agent) + reservedControlParams(inputParams)
                 }
