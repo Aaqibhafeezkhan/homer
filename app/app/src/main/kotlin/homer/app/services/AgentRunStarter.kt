@@ -70,9 +70,10 @@ internal class AgentRunStarter(
         // HMR_ROOT_PROCESS_ID. Null for a run with no parent. ADR-0058.
         rootProcessId: Int? = null,
         // True only for a path whose [parentProcessId] the server derived from a run it knows
-        // is live (a `!<agent>` hop, a dispatch): it may admit this start without queueing when
-        // that parent row still reads `WORKING`. A caller-supplied or inherited parent link
-        // (HTTP parent header, retry, resume) leaves this false, so it never bypasses. ADR-0092.
+        // is live (a `!<agent>` hop, a dispatch, a continuation fire): it may admit this start
+        // without queueing when that parent row still reads `WORKING`. A caller-supplied or
+        // inherited parent link (HTTP parent header, retry, resume) leaves this false, so it
+        // never bypasses. ADR-0092.
         serverDerivedParent: Boolean = false,
         resolveInputs: suspend () -> Map<String, String>,
     ): Int {
@@ -139,13 +140,15 @@ internal class AgentRunStarter(
     /**
      * Whether this start is part of work the maintenance window already admitted: [serverDerivedParent]
      * is set (the caller derived the link from a run it knows is live — a `!<agent>` hop, a dispatch, a
-     * continuation fire) **and** that run's own row still reads `WORKING`. A parent that is absent or
-     * already terminal parks as before.
+     * continuation fire), the mode is on, **and** that run's own row still reads `WORKING`. A parent
+     * that is absent or already terminal parks as before.
      *
      * [information_disclosure / CWE-200] The status is read from the row, never taken from the caller's
      * link, and a false flag short-circuits **before** the read: a caller-supplied parent admits nothing
      * and probes nothing, so naming a parent cannot turn this into an existence check on a row the caller
-     * cannot see (root §12 rule 3). See ADR-0092.
+     * cannot see (root §12 rule 3). The in-memory mode check runs before the read, so the steady
+     * state — mode off, the row's answer discarded anyway — pays no database round-trip.
+     * See ADR-0092.
      */
     private suspend fun admittedByLiveParent(
         serverDerivedParent: Boolean,
@@ -153,6 +156,7 @@ internal class AgentRunStarter(
     ): Boolean =
         serverDerivedParent &&
             parentProcessId != null &&
+            maintenanceGate.isEnabled() &&
             processReads.getProcessStatus(parentProcessId) == ProcessStatus.WORKING
 
     /**
@@ -204,7 +208,8 @@ internal class AgentRunStarter(
             .apply { parentProcessId?.let { put("parent.process.id", it.toLong()) } }
             .apply { rootProcessId?.let { put("root.process.id", it.toLong()) } }
             // Why this start did not wait at the maintenance gate: a boolean only, never a
-            // parent's inputs. False for every start that parked or ran with the mode off.
+            // parent's inputs. True only for a start admitted while the mode was on; false for
+            // every parked start and every start that ran with the mode off.
             .put("maintenance.bypassed", admitted)
             // Langfuse names a trace after its root span, which is the constant
             // "agent_request" — so every run of every agent lands under one name and its

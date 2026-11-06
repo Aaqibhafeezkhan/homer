@@ -52,6 +52,8 @@ window is open.
   queue.**
 - **D. Refuse every start immediately with `503` — no queue at all.**
 - **E. Queue cron fires like any other start, so nothing is lost.**
+- **F. Park an admitted start in the same bounded queue and release it ahead of
+  the others — a priority lane in the drain.**
 
 ## Decision Outcome
 
@@ -143,6 +145,16 @@ convergence point already exists.
   planned window into a batch of failed requests to retry by hand.
 - **E** replays the whole window at its end. The missed ticks are exactly the
   burst the window exists to prevent.
+- **F** keeps the parent blocked anyway. A run waiting at a `!<agent>` hop or a
+  dispatch waits on its child's completion, so a child released ahead of the
+  queue still has to run to the end before the parent can finish — the "wait
+  until nothing is `WORKING`" the operator opens the window for never ends while
+  a fan-out is mid-flight. The admitted start then also competes for the queue's
+  bounds, so it can be shed with `429` or let its wait expire with `503` —
+  failing work a live run is actively blocked on, a worse refusal than parking a
+  start nothing admitted waits on — and the release slots it holds slow the
+  backlog behind it. The total bypass leaves the parent unblocked and costs the
+  queue nothing.
 
 ### Confirmation
 

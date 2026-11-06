@@ -16,8 +16,10 @@ import homer.app.models.AgentTelemetry
 import homer.app.models.Param
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessStatus
+import homer.app.services.persistence.ProcessRecordReads
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
@@ -346,11 +348,12 @@ class AgentRunStarterTest {
         )
 
     /**
-     * A gate that refuses every parker outright, so a start that reaches it fails instead of
-     * hanging the test — and a start that does not reach it proves the bypass.
+     * A gate with the mode on that refuses every parker outright, so a start that reaches it fails
+     * instead of hanging the test — and a start that does not reach it proves the bypass.
      */
     private fun refusingGate(): MaintenanceModeService =
         mockk {
+            every { isEnabled() } returns true
             coEvery { awaitRelease(any()) } throws MaintenanceQueueFullException(500)
         }
 
@@ -491,6 +494,52 @@ class AgentRunStarterTest {
             val attributes = slot<Attributes>()
             verify { span.setAllAttributes(capture(attributes)) }
             assertEquals(true, attributes.captured.get(AttributeKey.booleanKey("maintenance.bypassed")))
+        }
+
+    @Test
+    fun `a server-derived start runs with the mode off without reading the parent row`() =
+        runBlocking {
+            // The steady state: the in-memory flag decides first, so the start neither parks
+            // (nothing to bypass) nor probes a parent row it would discard the answer of.
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val gate =
+                mockk<MaintenanceModeService> {
+                    every { isEnabled() } returns false
+                    coEvery { awaitRelease(any()) } returns MaintenanceSlot { }
+                }
+            val processReads =
+                mockk<ProcessRecordReads> {
+                    coEvery { getProcessStatus(any()) } returns ProcessStatus.WORKING
+                }
+            val span = TestFixtures.mockSpan()
+            val starter =
+                AgentRunStarter(
+                    serverId = "test-server",
+                    processExecutor = processExecutor,
+                    processFactory = mockk(relaxed = true),
+                    telemetryService = TestFixtures.mockTelemetryService(span),
+                    costMeter = mockk(relaxed = true),
+                    maxInvocationDepth = 5,
+                    cooldownGate = mockk(relaxed = true),
+                    maintenanceGate = gate,
+                    processReads = processReads,
+                )
+
+            val processId =
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "agent",
+                    parentProcessId = 42,
+                    serverDerivedParent = true,
+                ) { emptyMap() }
+
+            assertEquals(7, processId)
+            coVerify(exactly = 0) { processReads.getProcessStatus(any()) }
+            val attributes = slot<Attributes>()
+            verify { span.setAllAttributes(capture(attributes)) }
+            assertEquals(false, attributes.captured.get(AttributeKey.booleanKey("maintenance.bypassed")))
         }
 
     @Test
