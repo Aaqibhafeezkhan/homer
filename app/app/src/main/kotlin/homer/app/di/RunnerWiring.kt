@@ -24,6 +24,14 @@ import kotlin.time.Duration.Companion.seconds
 import io.kubernetes.client.Exec as KubernetesExec
 
 /**
+ * How long a non-streaming API-server read may take before the runner gives up on it. Without it
+ * client-java leaves the read unbounded, so a stalled API server holds the run in WORKING and its
+ * runner slot for good (ADR-0100). Exec channels are upgraded WebSockets, which OkHttp leaves on
+ * the socket's own timeout, so no command is cut by this (ADR-0043).
+ */
+private const val K8S_API_READ_TIMEOUT_MS = 30_000
+
+/**
  * The [RunnerRegistry] of [appConfig]: the local runner, one entry per Kubernetes and SSH runner,
  * and one [ExternalRunnerDomain] per pull-mode domain, all sharing one claim queue. [k8sInstanceId]
  * scopes the Kubernetes runners' startup sweep to this instance's pods.
@@ -126,6 +134,7 @@ private fun buildKubernetesRunner(
         } else {
             runCatching { Config.fromCluster() }.getOrElse { Config.defaultClient() }
         }
+    withApiReadTimeout(apiClient)
     val api = CoreV1Api(apiClient)
     val upstreamExec = KubernetesExec(apiClient)
     val execClient = KubernetesApiExecClient(upstreamExec)
@@ -140,6 +149,16 @@ private fun buildKubernetesRunner(
         sysEnvBackedEnvNames = sysEnvBackedEnvNames,
         batchApi = batchApiFor(cfg, apiClient),
     )
+}
+
+/**
+ * Bounds every non-streaming read on [apiClient], in place, so one stalled API-server call cannot
+ * hold a run in WORKING for good (ADR-0100). The exec channel shares this client on purpose: its
+ * timeout does not reach an upgraded WebSocket (ADR-0043), while a second client built from
+ * `httpClient.newBuilder()` would drop the kubeconfig's base path and credentials.
+ */
+internal fun withApiReadTimeout(apiClient: ApiClient) {
+    apiClient.setReadTimeout(K8S_API_READ_TIMEOUT_MS)
 }
 
 /** Job mode's BatchV1Api on the runner's [apiClient]; null in Pod mode, which makes no batch call (ADR-0100). */

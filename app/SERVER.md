@@ -2738,6 +2738,15 @@ command (exit 137 or 143) Homer re-reads for up to 5 s, because Kubernetes
 records why the pod stopped a moment after the kill, so the failure still
 names the reason. Homer does not poll the pod while a command runs.
 
+**A stalled API server.** Every non-streaming call the runner makes to the
+API server — creating, reading, patching and deleting pods and Jobs, listing
+them for the sweep, and the diagnostics reads — gives up after 30 s, so the
+run fails instead of sitting in `WORKING` and holding its runner slot. The
+bound is fixed, not configurable. The `exec` channels and the workspace sync
+are streamed and deliberately not on this clock: they stay open as long as
+the command needs. See
+[ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+
 ### Job workload
 
 `workload: Job` runs each session in a Kubernetes Job with one pod

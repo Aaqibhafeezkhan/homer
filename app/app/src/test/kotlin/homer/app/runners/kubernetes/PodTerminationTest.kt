@@ -20,6 +20,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import java.net.SocketTimeoutException
 import java.time.OffsetDateTime
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -159,6 +160,11 @@ class PodTerminationTest {
     @Test
     fun `a 500 gives null`() {
         assertNull(read(error = ApiException(500, "boom")))
+    }
+
+    @Test
+    fun `a read that timed out reports no termination, never a healthy pod`() {
+        assertNull(read(error = ApiException(SocketTimeoutException("read timed out"))))
     }
 
     @Test

@@ -137,6 +137,8 @@ ktorClientMock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 jsonSchemaValidator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
 konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist" }
 kotestProperty = { module = "io.kotest:kotest-property", version.ref = "kotestProperty" }
+# OkHttp's own test server, for the stalled-connection cases; held to the okhttp pin above.
+mockwebserver3 = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 
 # Libraries can be bundled together for easier import
 [bundles]
