@@ -11,6 +11,7 @@ import homer.app.models.SshAuth
 import homer.app.runners.kubernetes.KubernetesRunner
 import homer.app.runners.kubernetes.RunnerStateSink
 import io.kubernetes.client.openapi.ApiClient
+import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.opentelemetry.api.OpenTelemetry
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -151,8 +152,20 @@ class RunnerWiringTest {
             )
 
         assertEquals(setOf("local", "pod", "job"), registry.aliases())
-        assertIs<KubernetesRunner>(registry.get("pod"))
-        assertIs<KubernetesRunner>(registry.get("job"))
+        val pod = assertIs<KubernetesRunner>(registry.get("pod"))
+        val job = assertIs<KubernetesRunner>(registry.get("job"))
+        // The bound must reach the client the built runner actually holds, not only the helper:
+        // deleting the call in buildKubernetesRunner fails here, so the wiring cannot silently
+        // revert to an unbounded read.
+        assertEquals(30_000, pod.wiredApiClient().readTimeout)
+        assertEquals(30_000, job.wiredApiClient().readTimeout)
+    }
+
+    /** The client the runner's REST APIs are built on, read off the private `api` for this wiring test. */
+    private fun KubernetesRunner.wiredApiClient(): ApiClient {
+        val field = KubernetesRunner::class.java.getDeclaredField("api")
+        field.isAccessible = true
+        return (field.get(this) as CoreV1Api).apiClient
     }
 
     private companion object {

@@ -95,6 +95,9 @@ class KubernetesApiReadTimeoutTest {
                 Thread {
                     Thread.sleep(SILENT_MS)
                     webSocket.send(EXIT_STATUS_FRAME)
+                    // Close the stream once the exit status is out, or the open server-side
+                    // WebSocket outlives the test and MockWebServer.close() times out on it.
+                    webSocket.close(1000, "exit")
                 }.start()
             }
         }

@@ -23,12 +23,7 @@ import org.apache.sshd.client.SshClient
 import kotlin.time.Duration.Companion.seconds
 import io.kubernetes.client.Exec as KubernetesExec
 
-/**
- * How long a non-streaming API-server read may take before the runner gives up on it. Without it
- * client-java leaves the read unbounded, so a stalled API server holds the run in WORKING and its
- * runner slot for good (ADR-0100). Exec channels are upgraded WebSockets, which OkHttp leaves on
- * the socket's own timeout, so no command is cut by this (ADR-0043).
- */
+/** How long a non-streaming API-server read may take; exec's upgraded WebSocket is untouched — see ADR-0100 and ADR-0043. */
 private const val K8S_API_READ_TIMEOUT_MS = 30_000
 
 /**
@@ -152,10 +147,8 @@ private fun buildKubernetesRunner(
 }
 
 /**
- * Bounds every non-streaming read on [apiClient], in place, so one stalled API-server call cannot
- * hold a run in WORKING for good (ADR-0100). The exec channel shares this client on purpose: its
- * timeout does not reach an upgraded WebSocket (ADR-0043), while a second client built from
- * `httpClient.newBuilder()` would drop the kubeconfig's base path and credentials.
+ * Bounds [apiClient] in place — the exec channel shares it on purpose; never build a second client
+ * from `httpClient.newBuilder()`, which drops the kubeconfig's base path and credentials. See ADR-0100 and ADR-0043.
  */
 internal fun withApiReadTimeout(apiClient: ApiClient) {
     apiClient.setReadTimeout(K8S_API_READ_TIMEOUT_MS)
