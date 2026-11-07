@@ -23,6 +23,9 @@ import org.apache.sshd.client.SshClient
 import kotlin.time.Duration.Companion.seconds
 import io.kubernetes.client.Exec as KubernetesExec
 
+/** How long a non-streaming API-server read may take; exec's upgraded WebSocket is untouched — see ADR-0100 and ADR-0043. */
+private const val K8S_API_READ_TIMEOUT_MS = 30_000
+
 /**
  * The [RunnerRegistry] of [appConfig]: the local runner, one entry per Kubernetes and SSH runner,
  * and one [ExternalRunnerDomain] per pull-mode domain, all sharing one claim queue. [k8sInstanceId]
@@ -126,6 +129,7 @@ private fun buildKubernetesRunner(
         } else {
             runCatching { Config.fromCluster() }.getOrElse { Config.defaultClient() }
         }
+    withApiReadTimeout(apiClient)
     val api = CoreV1Api(apiClient)
     val upstreamExec = KubernetesExec(apiClient)
     val execClient = KubernetesApiExecClient(upstreamExec)
@@ -140,6 +144,14 @@ private fun buildKubernetesRunner(
         sysEnvBackedEnvNames = sysEnvBackedEnvNames,
         batchApi = batchApiFor(cfg, apiClient),
     )
+}
+
+/**
+ * Bounds [apiClient] in place — the exec channel shares it on purpose; never build a second client
+ * from `httpClient.newBuilder()`, which drops the kubeconfig's base path and credentials. See ADR-0100 and ADR-0043.
+ */
+internal fun withApiReadTimeout(apiClient: ApiClient) {
+    apiClient.setReadTimeout(K8S_API_READ_TIMEOUT_MS)
 }
 
 /** Job mode's BatchV1Api on the runner's [apiClient]; null in Pod mode, which makes no batch call (ADR-0100). */

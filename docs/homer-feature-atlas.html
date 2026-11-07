@@ -2404,7 +2404,8 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
           <p>One ephemeral pod per run with a pod-local <code>emptyDir</code> workspace; content moves as gzip'd tar over
             the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
             hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
-            the pod in a one-pod Job that waits out namespace quota and is removed by its TTL.</p>
+            the pod in a one-pod Job that waits out namespace quota and is removed by its TTL. A stalled API server fails
+            the run after a fixed 30 s instead of holding it, while the exec and workspace streams stay open.</p>
           <pre><code>runners:
   k8s: !&lt;kubernetes&gt;
     namespace: homer

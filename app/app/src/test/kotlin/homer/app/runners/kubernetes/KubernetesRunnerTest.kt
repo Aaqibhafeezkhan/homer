@@ -657,6 +657,61 @@ class KubernetesRunnerTest {
         assertEquals("kubernetes runner 'k8s-dev': workload Job needs a BatchV1Api", e.message)
     }
 
+    @Test
+    fun `a timed-out pod create fails the startup as PodCreateFailed, nothing escaping`() =
+        runTest {
+            val api = interceptedCoreV1Api(mutableListOf(), timeoutOn = { true })
+            val captured = mutableListOf<RunnerState>()
+            val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+            val runner = KubernetesRunner("k8s-dev", config, api, dummyExecClient(), clock = { 0L }, stateSink = sink)
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodCreateFailed", thrown.reason)
+            assertTrue(thrown.cause is ApiException, "a timeout must reach the caller as an ApiException, got ${thrown.cause}")
+            assertEquals(PodPhase.FAILED, captured.last().podPhase)
+        }
+
+    @Test
+    fun `a timed-out pod status read fails the startup inside the start budget`() =
+        runTest {
+            val api = interceptedCoreV1Api(mutableListOf(), timeoutOn = { it.url.encodedPath.endsWith("/status") })
+            val runner = KubernetesRunner("k8s-dev", config, api, dummyExecClient(), clock = { 0L })
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            // The read's own timeout, not the startup budget running out under a stalled read.
+            assertEquals("PodStatusUnreadable", thrown.reason)
+            assertTrue(thrown.cause is ApiException, "got ${thrown.cause}")
+        }
+
+    @Test
+    fun `a timed-out pod read never counts as started on a node, and a failed cleanup never masks the startup failure`() =
+        runTest {
+            val seen = mutableListOf<okhttp3.Request>()
+            // Only the create gets an answer: every read and delete after it times out.
+            val api = interceptedCoreV1Api(seen, timeoutOn = { it.method != "POST" })
+            val runner = KubernetesRunner("k8s-dev", config.copy(keepPodOnFailure = true), api, dummyExecClient(), clock = { 0L })
+
+            val thrown = assertThrows<PodStartupException> { runner.openSession(params) }
+
+            assertEquals("PodStatusUnreadable", thrown.reason)
+            assertTrue(seen.any { it.method == "DELETE" }, "an unreadable pod is deleted: ${seen.map { it.method }}")
+            assertTrue(seen.none { it.method == "PATCH" }, "a pod that may never have started must not be kept")
+        }
+
+    @Test
+    fun `the orphan sweep reports a timed-out pod list as an error, never as a clean scan`() {
+        val api = interceptedCoreV1Api(mutableListOf(), timeoutOn = { true })
+        val runner = KubernetesRunner("k8s-dev", config, api, dummyExecClient())
+
+        val result = runner.sweepOrphans(activeProcessIds = emptySet())
+
+        assertEquals(0, result.scanned)
+        assertEquals(emptyList(), result.deleted)
+        assertTrue(result.errors.single().contains("list pods failed"), result.errors.toString())
+    }
+
     private val jobConfig = config.copy(workload = KubernetesWorkload.Job)
 
     /** The created Job as the API server answers it: name, optional uid and controller selector. */

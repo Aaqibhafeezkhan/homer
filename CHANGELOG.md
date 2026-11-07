@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Homer
+
+- **Fixed: a stalled Kubernetes API server no longer holds a run** — The runner's non-streaming API reads now fail after a fixed 30 s instead of hanging, so the run ends and its runner slot is freed; exec and workspace-sync streams stay open as long as the command needs. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+
 ## [1.41.0] - 2026-11-06
 
 ### Homer

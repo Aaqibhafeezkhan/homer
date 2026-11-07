@@ -133,10 +133,14 @@ read after a failed command**.
   a bare pod today.
 - The pod is identified by a selector Homer reads from its own create response, never by a name an
   agent or another tenant could choose.
-- Accepted risk: the runner's API reads, the new `pods/status` read included, have no local time
-  bound. The shared `ApiClient` is built with client-java's default read timeout of zero (none), so a
-  stalled API server holds the read. This is pre-existing for every runner call; a follow-up is to
-  set a read timeout for the non-watch calls.
+- Accepted risk, since settled: the runner's API reads, the new `pods/status` read included, had no
+  local time bound. The shared `ApiClient` was built with client-java's default read timeout of zero
+  (none), so a stalled API server held the read — and with it the run in WORKING and its runner slot,
+  for good. This was pre-existing for every runner call. `buildKubernetesRunner` now bounds every
+  non-streaming read on that client at a fixed 30 s, which is what a stalled read needs to fail the
+  run instead of holding it. The exec channel keeps sharing that client on purpose: the read timeout
+  does not reach an upgraded WebSocket, so no command is cut (ADR-0043), and a second client built
+  from `httpClient.newBuilder()` would drop the kubeconfig's base path and credentials.
 
 ## Pros and Cons of the Options
 

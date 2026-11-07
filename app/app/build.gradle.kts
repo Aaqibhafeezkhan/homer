@@ -48,6 +48,7 @@ dependencies {
     // Testing
     testImplementation(libs.bundles.testing)
     testImplementation(libs.kotestProperty)
+    testImplementation(libs.mockwebserver3)
 
     // Transitive dependencies flagged by dependency scanners whose direct
     // consumers (langfuse-java, json-schema-validator, kubernetes client-java)

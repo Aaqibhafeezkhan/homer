@@ -182,6 +182,15 @@ class PodDiagnosticsTest {
     }
 
     @Test
+    fun `a timed-out status read and event list keep the failure reason and report nothing else`() {
+        val snapshot = collect(interceptedCoreV1Api(mutableListOf(), timeoutOn = { true }), fallbackReason = "PodCreateFailed")
+
+        assertEquals("PodCreateFailed", snapshot.reason)
+        assertEquals("No diagnostic details available", snapshot.message)
+        assertEquals(emptyList(), snapshot.events)
+    }
+
+    @Test
     fun `tryCollect returns the collected snapshot`() {
         val snapshot = PodDiagnostics.tryCollect(api(pod("""{"phase":"Failed"}""")), "ns", "p", "Timeout")
 
