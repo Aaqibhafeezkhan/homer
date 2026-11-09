@@ -21,6 +21,10 @@ import java.net.URI
 import java.net.URISyntaxException
 import java.util.Base64
 
+/** The Langfuse OTLP ingestion header and the version Homer speaks. See ADR-0050. */
+internal const val LANGFUSE_INGESTION_VERSION_HEADER = "x-langfuse-ingestion-version"
+internal const val LANGFUSE_INGESTION_VERSION = "4"
+
 class OtelTelemetryService(
     langfuseConfig: LangfuseConfig,
     export: OpenTelemetryExport,
@@ -60,6 +64,10 @@ class OtelTelemetryService(
                         .builder()
                         .setEndpoint(endpoint)
                         .addHeader("Authorization", authHeader)
+                        // Langfuse v4 ingests an OTLP batch within seconds only when it declares
+                        // this version; without it spans show up 10-15 minutes late. v3 ignores an
+                        // unknown header, so one value serves both. See ADR-0050.
+                        .addHeader(LANGFUSE_INGESTION_VERSION_HEADER, LANGFUSE_INGESTION_VERSION)
                         .build(),
                     loggableEndpoint,
                 )
@@ -76,6 +84,9 @@ class OtelTelemetryService(
             SdkTracerProvider
                 .builder()
                 .setResource(resource)
+                // Before the batch processor: the copy runs on span start, and the batch
+                // processor must never see a span whose trace name/tags are not on it yet.
+                .addSpanProcessor(LangfuseTraceAttributesSpanProcessor())
                 .addSpanProcessor(BatchSpanProcessor.builder(exporter).build())
                 .build()
 

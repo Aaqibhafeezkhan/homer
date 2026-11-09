@@ -29,6 +29,15 @@ internal object TagValidation {
     /** Per-run ceiling on runtime-declared tags; a write past it is refused (400). §12 rule 4. */
     const val MAX_RUNTIME_TAGS_PER_RUN = 20
 
+    /**
+     * Per-span ceiling on the run's trace tags — the same number as [MAX_RUNTIME_TAGS_PER_RUN].
+     * The run's tags are stamped on the root span and copied onto **every** span of the run, so
+     * without a local cap the exported payload grows with span count × declared inputs
+     * (denial_of_service / CWE-400). A list over the ceiling is truncated at the stamping site,
+     * which keeps the tag list a property of the run rather than of how long it ran. §12 rule 4.
+     */
+    const val MAX_TRACE_TAGS = 20
+
     /** Per-request ceiling on `?tag=` params on `/status/all`; over it is refused (400). §12 rule 4. */
     const val MAX_TAG_QUERY_PARAMS = 10
 

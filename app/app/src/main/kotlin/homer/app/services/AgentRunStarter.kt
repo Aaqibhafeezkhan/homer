@@ -6,12 +6,12 @@ import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
 import homer.app.infra.TelemetryService
 import homer.app.infra.langfuseTraceTags
+import homer.app.infra.stampLangfuseTrace
 import homer.app.infra.startAgentRootSpan
 import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.ProcessStatus
 import homer.app.services.persistence.ProcessRecordReads
-import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.context.Context
@@ -93,6 +93,8 @@ internal class AgentRunStarter(
                     // Current flags for a fresh run; union with the registration snapshot when
                     // this is a replay of stored inputs.
                     val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
+                    val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
+                    span.stampLangfuseTrace(agent, traceTags)
 
                     val result =
                         processExecutor.execute(
@@ -110,7 +112,6 @@ internal class AgentRunStarter(
                             context,
                         )
 
-                    val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
                     span.setAllAttributes(
                         runAttributes(
                             result.processId,
@@ -119,7 +120,6 @@ internal class AgentRunStarter(
                             parentProcessId,
                             rootProcessId,
                             admitted,
-                            traceTags,
                             extraAttributes,
                         ),
                     )
@@ -196,7 +196,6 @@ internal class AgentRunStarter(
         parentProcessId: Int?,
         rootProcessId: Int?,
         admitted: Boolean,
-        traceTags: List<String>,
         extraAttributes: Attributes,
     ): Attributes =
         Attributes
@@ -211,12 +210,6 @@ internal class AgentRunStarter(
             // parent's inputs. True only for a start admitted while the mode was on; false for
             // every parked start and every start that ran with the mode off.
             .put("maintenance.bypassed", admitted)
-            // Langfuse names a trace after its root span, which is the constant
-            // "agent_request" — so every run of every agent lands under one name and its
-            // trace API (name/tags/userId/sessionId only) cannot separate them. These two
-            // attributes are the documented way to give it the agent instead.
-            .put("langfuse.trace.name", agent.name)
-            .put(AttributeKey.stringArrayKey("langfuse.trace.tags"), traceTags)
             .putAll(extraAttributes)
             .build()
 }

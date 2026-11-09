@@ -2,14 +2,20 @@ package homer.app.infra
 
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.sun.net.httpserver.Headers
+import com.sun.net.httpserver.HttpServer
 import homer.app.models.LangfuseConfig
 import homer.app.models.OpenTelemetryExport
 import io.mockk.mockk
+import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
+import java.net.InetSocketAddress
+import java.util.Base64
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -178,4 +184,95 @@ class OtelTelemetryServiceTest {
     fun `redactUrls reports a null message rather than printing null`() {
         assertEquals("<no message>", redactUrls(null))
     }
+
+    // ========== OTLP export against a local stand-in for the Langfuse collector ==========
+
+    /**
+     * What actually leaves the process. The ingestion header is the difference between Langfuse
+     * v4 showing a span within seconds and within minutes, and a collector is the only place it
+     * can be observed — it reaches no log and no span. Same stub pattern as
+     * `DefaultLangfuseClientTest`.
+     */
+    @Test
+    fun `an exported batch carries the ingestion version and the Basic authorization header`() =
+        withCollectorStub { server, requests ->
+            exportOneSpan(
+                OtelTelemetryService(
+                    langfuseConfig.copy(serverUrl = "http://127.0.0.1:${server.address.port}"),
+                    OpenTelemetryExport.LANGFUSE,
+                ),
+            )
+
+            val request = awaitRequests(requests).single()
+            assertEquals("/api/public/otel/v1/traces", request.path)
+            assertEquals("4", request.headers.getFirst(LANGFUSE_INGESTION_VERSION_HEADER))
+            val authorization = request.headers.getFirst("Authorization")
+            assertTrue(
+                authorization != null && authorization.startsWith("Basic "),
+                "the OTLP request must be authenticated",
+            )
+            // Decoded rather than compared as text, so a failure message never echoes the header.
+            assertEquals(
+                "pk-test:sk-test",
+                String(Base64.getDecoder().decode(authorization.removePrefix("Basic "))),
+                "the Basic credentials must be the configured public:secret pair",
+            )
+        }
+
+    /**
+     * The denial half: a span must not reach a collector the configuration did not select. A
+     * `serverUrl` in the config is not on its own a licence to export to it.
+     */
+    @Test
+    fun `a logging export and a blank serverUrl both leave the collector untouched`() =
+        withCollectorStub { server, requests ->
+            val url = "http://127.0.0.1:${server.address.port}"
+            exportOneSpan(OtelTelemetryService(langfuseConfig.copy(serverUrl = url), OpenTelemetryExport.LOG))
+            exportOneSpan(OtelTelemetryService(LangfuseConfig(), OpenTelemetryExport.LANGFUSE))
+
+            assertEquals(emptyList(), requests, "no collector may be called")
+        }
+
+    /** Ends one span and flushes the batch processor, whose schedule delay is otherwise 5 s. */
+    private fun exportOneSpan(service: OtelTelemetryService) {
+        service.tracer
+            .spanBuilder("test-span")
+            .startSpan()
+            .end()
+        val field = OtelTelemetryService::class.java.getDeclaredField("openTelemetry")
+        field.isAccessible = true
+        (field.get(service) as OpenTelemetrySdk).sdkTracerProvider.forceFlush()
+    }
+
+    /** The exporter sends on its own thread, so the request can land after `forceFlush` returns. */
+    private fun awaitRequests(requests: List<CapturedRequest>): List<CapturedRequest> {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (requests.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(20)
+        }
+        return requests
+    }
+
+    /** A local stand-in for the Langfuse OTLP collector: records each request and answers 200. */
+    private fun <T> withCollectorStub(block: (HttpServer, List<CapturedRequest>) -> T): T {
+        val requests = java.util.Collections.synchronizedList(mutableListOf<CapturedRequest>())
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            requests += CapturedRequest(exchange.requestURI.toString(), exchange.requestHeaders)
+            exchange.requestBody.use { it.readBytes() }
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            return block(server, requests)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    private class CapturedRequest(
+        val path: String,
+        val headers: Headers,
+    )
 }

@@ -3057,6 +3057,11 @@ sessionSecretPrevious: "@SYSENV:OLD_SECRET"</code></pre>
             at startup and a failed batch at <code>WARN</code> through Homer's own logger, so a collector that silently
             stopped accepting spans is visible in <code>app.log</code> — the <code>LOG</code>-mode spans themselves
             never land there.</p>
+          <p>The Langfuse exporter declares OTLP ingestion version 4
+            (<code>x-langfuse-ingestion-version: 4</code>), which is what makes a v4 server ingest a batch within
+            seconds instead of minutes; a v3 server ignores the unknown header. A run's trace name and subject tags ride
+            on <em>every</em> span it exports, not just the root, because v4 keeps no separate trace record and reads
+            both off each observation — so a name or tag filter finds the whole run, generations included.</p>
           <pre><code>openTelemetryExport: LANGFUSE     # or LOG
 langfuse:
   serverUrl: "https://cloud.langfuse.com"
@@ -3087,7 +3092,10 @@ langfuse:
             status response: a tag whose value would be redacted from a run's display (a <code>secret</code> input) is not
             matchable via <code>?tag=</code> for that run, so the count cannot confirm a guessed secret. Tag-filtered results are bounded at 10 000 matching rows; <code>total</code> reflects only that prefix in the order specified by <code>?order=</code>, default descending. Values match
             <code>^[A-Za-z0-9._-]{1,128}$</code> (no <code>/</code>, so tag path-shaped subjects by numeric id);
-            cardinality is unbounded, so tag ticket ids and numeric ids, never free text.
+            cardinality is unbounded, so tag ticket ids and numeric ids, never free text. The list a run exports as
+            trace tags — its source followed by the <code>fromInputs</code> values — is capped at 20 per span: it is
+            copied onto every span of the run, so an uncapped list would multiply the exported payload by the span
+            count. The cap truncates and warns rather than refusing the run.
             (<code>telemetry.traceTags</code> is the deprecated alias for <code>tags.fromInputs</code>.) The bundled
             <code>example/agents/tagged-run/</code> agent is the worked example: <code>projectId</code> and
             <code>mr</code> resolved from its inputs, and <code>decision</code> declared mid-run with
@@ -3110,7 +3118,7 @@ GET /api/v1/status/all?tag=mr:15&amp;tag=projectId:4711</code></pre>
 
         <article class="f">
           <h3>Named traces &amp; priced runs <span class="where">telemetry</span></h3>
-          <p>Traces carry the agent's name and the request source; each <code>!&lt;claude&gt;</code>/<code>!&lt;codex&gt;</code>
+          <p>Traces carry the agent's name and the request source on every span (v4 reads them per observation); each <code>!&lt;claude&gt;</code>/<code>!&lt;codex&gt;</code>
             step's generation is named after the step's <code>label</code> and carries usage and cost details, priced
             from the CLI's figure (Claude) or your spend endpoint (either); an attempt that ends more than one turn (a
             background subagent finishing after the first <code>result</code>) splits its cost across its generations, so

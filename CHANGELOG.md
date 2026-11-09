@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Changed: a run's Langfuse trace name and tags reach every span it exports** — Langfuse v4 reads both off each observation, so the run's name and subject tags now ride on every span and the exporter declares OTLP ingestion version 4. See [ADR-0050](docs/adr/0050-per-agent-telemetry-block.md).
 - **Fixed: a stalled Kubernetes API server no longer holds a run** — The runner's non-streaming API reads now fail after a fixed 30 s instead of hanging, so the run ends and its runner slot is freed; exec and workspace-sync streams stay open as long as the command needs. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 
 ## [1.41.0] - 2026-11-06

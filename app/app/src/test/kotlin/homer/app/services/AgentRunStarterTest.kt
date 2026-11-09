@@ -78,9 +78,11 @@ class AgentRunStarterTest {
 
         runBlocking { starter.start(agent, emptyList(), "dispatch") { resolved } }
 
-        val attributes = slot<Attributes>()
-        verify { span.setAllAttributes(capture(attributes)) }
-        return attributes.captured.get(tagsKey) ?: emptyList()
+        // The tags are stamped on the root before `execute`, not folded into the attributes set
+        // after it, so a child span started inside the run inherits them. See ADR-0050.
+        val tags = slot<List<String>>()
+        verify { span.setAttribute(tagsKey, capture(tags)) }
+        return tags.captured
     }
 
     @Test

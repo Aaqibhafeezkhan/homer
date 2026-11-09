@@ -153,4 +153,50 @@ only one of several records such a principal could already influence.
   the check is load-bearing — deleting it re-introduces silent drift.
 - Bad: tag *cardinality* is still unbounded (only length is capped at 128). The
   cost lands in the collector, which Homer cannot see, so it is documented as an
-  authoring rule rather than enforced.
+  authoring rule rather than enforced. *(Amended 2026-11-09: bounded after all —
+  a v4 trace copies the list onto every span of the run, so `MAX_TRACE_TAGS`
+  caps it where it is stamped. See the amendment below.)*
+
+## Amendment (2026-11-09): the trace name and tags ride on every observation
+
+Langfuse **v4 keeps no separate trace record**: it derives a trace from the
+observations it receives, reading `langfuse.trace.name` and
+`langfuse.trace.tags` off each one. The 1.16.0 naming that this ADR built put
+both on the root span only, which a v4 server cannot turn into a named, tagged
+trace — and a filter on either finds nothing.
+
+Two changes follow from that, and they are the whole amendment:
+
+- **Both attributes go on every span of a run, not only the root.**
+  `Span.stampLangfuseTrace(agent, tags)` writes them on the root before
+  `processExecutor.execute`, and `LangfuseTraceAttributesSpanProcessor` copies
+  exactly those two keys from a span's parent at `onStart`, so the whole
+  subtree carries them as it starts. Copying "the parent's attributes" instead
+  would export the run's request and process metadata onto every generation;
+  copying anything other than those two keys is a defect, not a convenience.
+  The hook swallows any failure — it runs inside the SDK's span-start path,
+  where a throw surfaces in whichever caller happened to start a span — and a
+  parent that is not a `ReadableSpan` (a muted run's wrapped context) copies
+  nothing. A start path that stamped its root *after* `execute` would leave the
+  run's first spans untagged, so the stamp precedes the call on every path.
+- **The exporter declares OTLP ingestion version 4**, with
+  `x-langfuse-ingestion-version: 4` beside the `Authorization` header. Without
+  it a v4 server ingests a batch within minutes rather than seconds; a v3
+  server ignores the unknown header, so one value serves both.
+
+Tag cardinality is no longer unbounded. The list is copied onto every span of
+the run, so it is capped at `MAX_TRACE_TAGS` (20) at the point it is stamped —
+the bound has to live where the multiplication happens, and a bound in the
+collector is not a bound (root §12 rule 4). It truncates rather than refusing,
+with a WARN naming the agent: the run matters more than its last tag. This is a
+bound on the payload a caller can multiply by span count
+(denial_of_service / CWE-400); the per-tag length cap (`VALUE_PATTERN`, 128)
+still applies to each tag that survives.
+
+The `telemetry.export: OFF` mechanism is untouched by this amendment and still
+holds for the new attributes: a muted run's root is a wrapped, non-recording
+span, its children are unsampled, and no `onStart` copy runs for them — the
+processor is registered server-wide at SDK init, not per run, so there is
+nothing to unregister. That is asserted, not assumed: the muted case is a test
+in `AgentRunStarterTelemetryTest`, `RetryTraceAttributesTest` and
+`LangfuseTraceAttributesSpanProcessorTest`.

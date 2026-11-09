@@ -6,16 +6,24 @@ import homer.app.executors.ProcessFactory
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.AgentInputResolver
+import homer.app.infra.LANGFUSE_TRACE_NAME
+import homer.app.infra.LANGFUSE_TRACE_TAGS
+import homer.app.infra.LangfuseTraceAttributesSpanProcessor
+import homer.app.infra.TelemetryService
 import homer.app.models.AgentTelemetry
 import homer.app.models.Param
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.Tags
 import homer.app.models.TelemetryExport
 import homer.app.services.Authorizer
 import homer.app.services.ProcessManager
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
@@ -24,14 +32,23 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.context.Context
+import io.opentelemetry.sdk.common.CompletableResultCode
+import io.opentelemetry.sdk.trace.SdkTracerProvider
+import io.opentelemetry.sdk.trace.data.SpanData
+import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor
+import io.opentelemetry.sdk.trace.export.SpanExporter
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Retry builds its own root span outside AgentRunStarter, so it has to stamp
@@ -87,13 +104,12 @@ class RetryTraceAttributesTest {
             val response = client.post("/api/v1/processes/42/retry")
 
             assertEquals(HttpStatusCode.OK, response.status)
-            val attributes = slot<Attributes>()
-            verify { span.setAllAttributes(capture(attributes)) }
-            assertEquals("triage-decision", attributes.captured.get(AttributeKey.stringKey("langfuse.trace.name")))
-            assertEquals(
-                listOf("retry", "mr:4211"),
-                attributes.captured.get(AttributeKey.stringArrayKey("langfuse.trace.tags")),
-            )
+            val name = slot<String>()
+            val tags = slot<List<String>>()
+            verify { span.setAttribute(AttributeKey.stringKey("langfuse.trace.name"), capture(name)) }
+            verify { span.setAttribute(AttributeKey.stringArrayKey("langfuse.trace.tags"), capture(tags)) }
+            assertEquals("triage-decision", name.captured)
+            assertEquals(listOf("retry", "mr:4211"), tags.captured)
         }
 
     @Test
@@ -205,11 +221,11 @@ class RetryTraceAttributesTest {
             val response = client.post("/api/v1/processes/42/retry")
 
             assertEquals(HttpStatusCode.OK, response.status)
-            val attributes = slot<Attributes>()
-            verify { span.setAllAttributes(capture(attributes)) }
+            val tags = slot<List<String>>()
+            verify { span.setAttribute(AttributeKey.stringArrayKey("langfuse.trace.tags"), capture(tags)) }
             assertEquals(
                 listOf("retry"),
-                attributes.captured.get(AttributeKey.stringArrayKey("langfuse.trace.tags")),
+                tags.captured,
                 "a value that was secret for the source run must not become a tag",
             )
             // The same union also rides onto the new row, so the retried run's own
@@ -651,5 +667,329 @@ class RetryTraceAttributesTest {
             val attributes = slot<Attributes>()
             verify { span.setAllAttributes(capture(attributes)) }
             assertEquals(null, attributes.captured.get(AttributeKey.longKey("root.process.id")))
+        }
+
+    // ========== the stamp lands before the run starts, on all three paths (ADR-0050) ==========
+
+    /**
+     * A provider wired the way `OtelTelemetryService` wires one — the copy processor ahead of the
+     * exporter — so a span the run itself starts can be inspected as Langfuse would see it.
+     */
+    private class CollectingExporter : SpanExporter {
+        val spans = mutableListOf<SpanData>()
+
+        override fun export(spans: Collection<SpanData>): CompletableResultCode {
+            this.spans.addAll(spans)
+            return CompletableResultCode.ofSuccess()
+        }
+
+        override fun flush(): CompletableResultCode = CompletableResultCode.ofSuccess()
+
+        override fun shutdown(): CompletableResultCode = CompletableResultCode.ofSuccess()
+    }
+
+    private fun realTelemetry(exporter: CollectingExporter): TelemetryService {
+        val provider =
+            SdkTracerProvider
+                .builder()
+                .addSpanProcessor(LangfuseTraceAttributesSpanProcessor())
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                .build()
+        return object : TelemetryService {
+            override val tracer: Tracer = provider.get("test")
+        }
+    }
+
+    /** An executor standing in for the run: it starts one command step under the run's context. */
+    private fun executorStartingAChildSpan(
+        telemetry: TelemetryService,
+        spanName: String = "command_execution_1",
+    ): ProcessExecutor {
+        val executor = mockk<ProcessExecutor>()
+        coEvery { executor.execute(any(), any()) } answers {
+            telemetry.tracer
+                .spanBuilder(spanName)
+                .setParent(secondArg<Context>())
+                .startSpan()
+                .end()
+            ProcessCreationResult(processId = 99)
+        }
+        return executor
+    }
+
+    private fun retryAgent() =
+        AgentFixtures
+            .simpleAgent(name = "triage-decision")
+            .copy(
+                inputs = listOf(Param(paramName = "mr", envName = "MR_IID")),
+                tags = Tags(fromInputs = listOf("mr")),
+            )
+
+    @Test
+    fun `retry stamps the trace name and tags before the run starts`() =
+        testApplication {
+            val span = TestFixtures.mockSpan()
+            val mockProcessExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { mockProcessExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 99)
+            val sourceProcess =
+                ProcessInfo(
+                    id = 42,
+                    status = ProcessStatus.FAILED,
+                    agentName = "triage-decision",
+                    inputParams = mapOf("MR_IID" to "4211"),
+                )
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/processes/{id}/retry") {
+                        handleRetry(
+                            serverId = "test-server",
+                            call = call,
+                            sourceProcess = sourceProcess,
+                            agent = retryAgent(),
+                            authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+                            processManager = mockk(relaxed = true),
+                            processExecutor = mockProcessExecutor,
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = TestFixtures.mockTelemetryService(span),
+                            costMeter = mockk(relaxed = true),
+                            agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, client.post("/api/v1/processes/42/retry").status)
+
+            coVerifyOrder {
+                span.setAttribute(AttributeKey.stringKey("langfuse.trace.name"), "triage-decision")
+                span.setAttribute(AttributeKey.stringArrayKey("langfuse.trace.tags"), listOf("retry", "mr:4211"))
+                mockProcessExecutor.execute(any(), any())
+            }
+        }
+
+    @Test
+    fun `resume stamps the trace name and tags before the run starts`() =
+        testApplication {
+            val span = TestFixtures.mockSpan()
+            val mockProcessExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { mockProcessExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 99)
+            val sourceProcess =
+                ProcessInfo(
+                    id = 42,
+                    status = ProcessStatus.FAILED,
+                    agentName = "triage-decision",
+                    inputParams = mapOf("MR_IID" to "4211"),
+                )
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/processes/{id}/resume") {
+                        handleResume(
+                            serverId = "test-server",
+                            call = call,
+                            sourceProcess = sourceProcess,
+                            agent = retryAgent(),
+                            threadId = "thread-1",
+                            authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+                            processManager = mockk(relaxed = true),
+                            processExecutor = mockProcessExecutor,
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = TestFixtures.mockTelemetryService(span),
+                            costMeter = mockk(relaxed = true),
+                            agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, client.post("/api/v1/processes/42/resume").status)
+
+            coVerifyOrder {
+                span.setAttribute(AttributeKey.stringKey("langfuse.trace.name"), "triage-decision")
+                span.setAttribute(AttributeKey.stringArrayKey("langfuse.trace.tags"), listOf("resume", "mr:4211"))
+                mockProcessExecutor.execute(any(), any())
+            }
+        }
+
+    @Test
+    fun `debug stamps the trace name and tags before the run starts`() =
+        testApplication {
+            val span = TestFixtures.mockSpan()
+            val mockProcessExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { mockProcessExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 99)
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/agents/{name}/debug") {
+                        handleAgentDebug(
+                            serverId = "test-server",
+                            call = call,
+                            agent = retryAgent(),
+                            agentInputResolver = AgentInputResolver(),
+                            processExecutor = mockProcessExecutor,
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = TestFixtures.mockTelemetryService(span),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            val response =
+                client.post("/api/v1/agents/triage-decision/debug") {
+                    contentType(ContentType.Application.Json)
+                    // Debug inputs are keyed by paramName, not envName (`AgentInputResolver`).
+                    setBody("""{"commandIndex":0,"queryParams":{"mr":"4211"}}""")
+                }
+            assertEquals(HttpStatusCode.OK, response.status)
+
+            coVerifyOrder {
+                span.setAttribute(AttributeKey.stringKey("langfuse.trace.name"), "triage-decision")
+                span.setAttribute(AttributeKey.stringArrayKey("langfuse.trace.tags"), listOf("debug", "mr:4211"))
+                mockProcessExecutor.execute(any(), any())
+            }
+        }
+
+    @Test
+    fun `a command step started inside the retried run inherits the name and tags`() =
+        testApplication {
+            // The acceptance criterion the mock-based call-order tests cannot reach: a span
+            // started inside `execute` picks both attributes up at its own start, which is what
+            // puts a command step or an LLM generation inside a Langfuse v4 name/tags filter.
+            val exporter = CollectingExporter()
+            val telemetry = realTelemetry(exporter)
+            val sourceProcess =
+                ProcessInfo(
+                    id = 42,
+                    status = ProcessStatus.FAILED,
+                    agentName = "triage-decision",
+                    inputParams = mapOf("MR_IID" to "4211"),
+                )
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/processes/{id}/retry") {
+                        handleRetry(
+                            serverId = "test-server",
+                            call = call,
+                            sourceProcess = sourceProcess,
+                            agent = retryAgent(),
+                            authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+                            processManager = mockk(relaxed = true),
+                            processExecutor = executorStartingAChildSpan(telemetry),
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = telemetry,
+                            costMeter = mockk(relaxed = true),
+                            agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, client.post("/api/v1/processes/42/retry").status)
+
+            val root = exporter.spans.single { it.name == "agent_retry_request" }
+            val child = exporter.spans.single { it.name == "command_execution_1" }
+            assertEquals("triage-decision", root.attributes.get(LANGFUSE_TRACE_NAME))
+            assertEquals(listOf("retry", "mr:4211"), child.attributes.get(LANGFUSE_TRACE_TAGS))
+            assertEquals("triage-decision", child.attributes.get(LANGFUSE_TRACE_NAME))
+        }
+
+    @Test
+    fun `a value secret for the source run stays off the tags of the retried run and its spans`() =
+        testApplication {
+            // Drift: MR_IID was secret when process 42 ran and has since been flipped to
+            // `secret: false` and added to tags.fromInputs. The union with the source run's
+            // snapshot has to hold on every span the replay exports, not only on the root.
+            val exporter = CollectingExporter()
+            val telemetry = realTelemetry(exporter)
+            val sourceProcess =
+                ProcessInfo(
+                    id = 42,
+                    status = ProcessStatus.FAILED,
+                    agentName = "triage-decision",
+                    inputParams = mapOf("MR_IID" to "tok-historical-secret"),
+                    secretInputKeys = setOf("MR_IID"),
+                )
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/processes/{id}/retry") {
+                        handleRetry(
+                            serverId = "test-server",
+                            call = call,
+                            sourceProcess = sourceProcess,
+                            agent = retryAgent(),
+                            authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+                            processManager = mockk(relaxed = true),
+                            processExecutor = executorStartingAChildSpan(telemetry),
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = telemetry,
+                            costMeter = mockk(relaxed = true),
+                            agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, client.post("/api/v1/processes/42/retry").status)
+
+            val exported = exporter.spans.associateBy { it.name }
+            for (name in listOf("agent_retry_request", "command_execution_1")) {
+                assertEquals(
+                    listOf("retry"),
+                    exported.getValue(name).attributes.get(LANGFUSE_TRACE_TAGS),
+                    "a historical secret leaked into the tags of $name",
+                )
+            }
+        }
+
+    @Test
+    fun `a muted agent's replay exports neither a span nor a header`() =
+        testApplication {
+            val exporter = CollectingExporter()
+            val telemetry = realTelemetry(exporter)
+            val agent =
+                AgentFixtures
+                    .simpleAgent(name = "triage-decision")
+                    .copy(telemetry = AgentTelemetry(export = TelemetryExport.OFF))
+            val sourceProcess =
+                ProcessInfo(id = 42, status = ProcessStatus.FAILED, agentName = "triage-decision")
+
+            application {
+                install(ContentNegotiation) { json(apiJson) }
+                routing {
+                    post("/api/v1/processes/{id}/retry") {
+                        handleRetry(
+                            serverId = "test-server",
+                            call = call,
+                            sourceProcess = sourceProcess,
+                            agent = agent,
+                            authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+                            processManager = mockk(relaxed = true),
+                            processExecutor = executorStartingAChildSpan(telemetry),
+                            processFactory = mockk<ProcessFactory>(relaxed = true),
+                            telemetryService = telemetry,
+                            costMeter = mockk(relaxed = true),
+                            agentInputResolver = AgentInputResolver(),
+                            maintenanceGate = mockk(relaxed = true),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(HttpStatusCode.OK, client.post("/api/v1/processes/42/retry").status)
+
+            assertTrue(exporter.spans.isEmpty(), "exported: ${exporter.spans.map { it.name }}")
         }
 }
