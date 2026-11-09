@@ -197,8 +197,7 @@ class AgentTracingTest {
 
     @Test
     fun `an over-count list on a muted run truncates without a WARN`() {
-        // Nothing is exported under `telemetry.export: OFF`, so a WARN about a truncated
-        // export would send an operator hunting a payload that was never sent.
+        // Muted (`telemetry.export: OFF`) — see ADR-0050.
         val span = TestFixtures.mockSpan()
         val over = (1..TagValidation.MAX_TRACE_TAGS + 5).map { "tag$it" }
         val muted =

@@ -72,12 +72,8 @@ internal val LANGFUSE_TRACE_TAGS: AttributeKey<List<String>> = AttributeKey.stri
  * [LangfuseTraceAttributesSpanProcessor], which is what keeps a child observation inside a v4
  * name/tags filter. See ADR-0050.
  *
- * [tags] is truncated at [TagValidation.MAX_TRACE_TAGS]: the list is copied onto every span of
- * the run, so an unbounded one would multiply the exported payload by the span count
- * (denial_of_service / CWE-400). Truncated rather than refused — the run is more important than
- * its last tag, and a WARN names the agent. The WARN is silent for a muted run: with
- * `telemetry.export: OFF` nothing is exported, so a warning about a truncated export
- * would send an operator hunting a payload that was never sent.
+ * [tags] is truncated at [TagValidation.MAX_TRACE_TAGS]; the truncation WARN names the agent and
+ * stays silent for a muted run (`telemetry.export: OFF` exports nothing). See ADR-0050.
  */
 internal fun Span.stampLangfuseTrace(
     agent: Agent,

@@ -3095,7 +3095,8 @@ langfuse:
             cardinality is unbounded, so tag ticket ids and numeric ids, never free text. The list a run exports as
             trace tags — its source followed by the <code>fromInputs</code> values — is capped at 20 per span: it is
             copied onto every span of the run, so an uncapped list would multiply the exported payload by the span
-            count. The cap truncates and warns rather than refusing the run.
+            count. The cap truncates rather than refusing the run, warning unless the agent's
+            export is muted (<code>telemetry.export: OFF</code> exports nothing to warn about).
             (<code>telemetry.traceTags</code> is the deprecated alias for <code>tags.fromInputs</code>.) The bundled
             <code>example/agents/tagged-run/</code> agent is the worked example: <code>projectId</code> and
             <code>mr</code> resolved from its inputs, and <code>decision</code> declared mid-run with

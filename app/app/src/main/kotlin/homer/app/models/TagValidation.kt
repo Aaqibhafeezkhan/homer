@@ -31,13 +31,9 @@ internal object TagValidation {
 
     /**
      * Per-span ceiling on the run's trace tags, bound to [MAX_RUNTIME_TAGS_PER_RUN] so the two
-     * caps cannot drift: a run's `?tag=` rows and its exported trace tags come from one
-     * derivation, and past this ceiling the exported list truncates while the stored rows keep
-     * every tag (the divergence ADR-0060 records). The run's tags are stamped on the root span
-     * and copied onto **every** span of the run, so without a local cap the exported payload
-     * grows with span count × declared inputs (denial_of_service / CWE-400). A list over the
-     * ceiling is truncated at the stamping site, which keeps the tag list a property of the run
-     * rather than of how long it ran. §12 rule 4.
+     * caps cannot drift: past this ceiling the exported list truncates while the stored `?tag=`
+     * rows keep every tag — truncation is export-only, as the tags ride every span (CWE-400).
+     * See ADR-0050 and ADR-0060.
      */
     const val MAX_TRACE_TAGS = MAX_RUNTIME_TAGS_PER_RUN
 
