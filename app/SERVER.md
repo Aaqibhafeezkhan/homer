@@ -1720,7 +1720,7 @@ egress note above.
 | Span | Attribute | Value |
 |---|---|---|
 | Every span of a run | `langfuse.trace.name` | The run's trace name — the agent name. Langfuse v4 keeps no separate trace record and reads this off each observation, so it is on every span, not only the root |
-| Every span of a run | `langfuse.trace.tags` | The run's subject tags — the request source (`http`, `mcp`, `cron`, `dispatch`, `hop`, `retry`, `resume`, `debug`) followed by the agent's declared tag subjects, truncated at 20 tags. Same reason as the name. See [ADR-0050](../docs/adr/0050-per-agent-telemetry-block.md) |
+| Every span of a run | `langfuse.trace.tags` | The run's subject tags — the request source (`http`, `mcp`, `cron`, `dispatch`, `continuation`, `agent`, `retry`, `resume`, `debug`) followed by the agent's declared tag subjects, truncated at 20 tags. Same reason as the name. See [ADR-0050](../docs/adr/0050-per-agent-telemetry-block.md) |
 | Process | `process.id` | The run's process id |
 | Process | `process.status` | `CREATED`, then the terminal status (`FINISHED`, `FAILED`, `KILLED`) |
 | Command (any type) | `cmd.type` | Command class: `Cmd`, `Script`, `Claude`, `Codex`, `Opencode`, `RunAgent`, `LangGraph`, `RunnerCmd` |

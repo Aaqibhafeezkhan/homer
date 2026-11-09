@@ -4,9 +4,12 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.sun.net.httpserver.Headers
 import com.sun.net.httpserver.HttpServer
+import homer.app.models.Agent
+import homer.app.models.Command
 import homer.app.models.LangfuseConfig
 import homer.app.models.OpenTelemetryExport
 import io.mockk.mockk
+import io.opentelemetry.context.Context
 import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
@@ -21,6 +24,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import ch.qos.logback.classic.Level as LogbackLevel
 import ch.qos.logback.classic.Logger as LogbackLogger
+import java.util.logging.Handler as JulHandler
+import java.util.logging.LogRecord as JulLogRecord
+import java.util.logging.Logger as JulLogger
 
 class OtelTelemetryServiceTest {
     private val langfuseConfig =
@@ -122,6 +128,70 @@ class OtelTelemetryServiceTest {
         override fun flush(): CompletableResultCode = CompletableResultCode.ofSuccess()
 
         override fun shutdown(): CompletableResultCode = CompletableResultCode.ofSuccess()
+    }
+
+    // ========== The copy processor as wired in the service ==========
+
+    /**
+     * The wiring only the real service has: [LangfuseTraceAttributesSpanProcessor] registered
+     * ahead of the batch processor in the service's own tracer provider. Deleting the
+     * registration — or moving it after the batch processor — must fail here, on what the
+     * exporter actually receives: a stamped root, a child started under it from the service's
+     * tracer, and the exported child carrying both keys. The batch processor is driven with the
+     * logging exporter (as the `LOG` export config builds it), whose output this captures.
+     */
+    @Test
+    fun `a child span of a stamped root is exported with the trace name and tags`() {
+        val lines = mutableListOf<String>()
+        val exporterLogger = JulLogger.getLogger("io.opentelemetry.exporter.logging.LoggingSpanExporter")
+        val handler =
+            object : JulHandler() {
+                override fun publish(record: JulLogRecord) {
+                    lines += record.message
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        exporterLogger.addHandler(handler)
+        try {
+            val service = OtelTelemetryService(langfuseConfig, OpenTelemetryExport.LOG)
+            val agent =
+                Agent(
+                    name = "wired_agent",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo", "hi"), timeout = 60)),
+                )
+            val root = service.tracer.spanBuilder("otel-wired-root").startSpan()
+            root.stampLangfuseTrace(agent, listOf("http", "mr:15"))
+            val child =
+                service.tracer
+                    .spanBuilder("otel-wired-child")
+                    .setParent(root.storeInContext(Context.current()))
+                    .startSpan()
+            child.end()
+            root.end()
+            forceFlush(service)
+
+            val childLine = lines.single { it.contains("otel-wired-child") }
+            assertTrue(
+                childLine.contains("langfuse.trace.name") && childLine.contains("wired_agent"),
+                "the exported child must carry the trace name: $childLine",
+            )
+            assertTrue(
+                childLine.contains("langfuse.trace.tags") && childLine.contains("mr:15"),
+                "the exported child must carry the trace tags: $childLine",
+            )
+        } finally {
+            exporterLogger.removeHandler(handler)
+        }
+    }
+
+    /** The reflection reaches the private SDK handle; the stub tests flush the same way. */
+    private fun forceFlush(service: OtelTelemetryService) {
+        val field = OtelTelemetryService::class.java.getDeclaredField("openTelemetry")
+        field.isAccessible = true
+        (field.get(service) as OpenTelemetrySdk).sdkTracerProvider.forceFlush()
     }
 
     // ========== Endpoint sanitization before logging ==========
@@ -239,9 +309,7 @@ class OtelTelemetryServiceTest {
             .spanBuilder("test-span")
             .startSpan()
             .end()
-        val field = OtelTelemetryService::class.java.getDeclaredField("openTelemetry")
-        field.isAccessible = true
-        (field.get(service) as OpenTelemetrySdk).sdkTracerProvider.forceFlush()
+        forceFlush(service)
     }
 
     /** The exporter sends on its own thread, so the request can land after `forceFlush` returns. */

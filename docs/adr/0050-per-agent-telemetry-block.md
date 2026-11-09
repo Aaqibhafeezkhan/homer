@@ -193,10 +193,24 @@ bound on the payload a caller can multiply by span count
 (denial_of_service / CWE-400); the per-tag length cap (`VALUE_PATTERN`, 128)
 still applies to each tag that survives.
 
+**The stored run tags and the exported trace tags can disagree past the
+ceiling.** One derivation feeds both (ADR-0060), but the truncation is
+export-only: the `?tag=` rows keep every derived tag, while the list Langfuse
+sees stops at 20. An operator filtering Langfuse by a 21st subject tag finds
+nothing where `?tag=` on the same value still returns the run. That is accepted:
+`tags.fromInputs` is author-declared and static per agent, checked at load, so
+the stored set is bounded without a cap of its own and a run cannot add to it —
+the truncation exists only to bound per-span payload, which the stored set does
+not multiply. `MAX_TRACE_TAGS` is bound to ADR-0060's
+`MAX_RUNTIME_TAGS_PER_RUN` rather than restating the number, so the two
+ceilings cannot drift.
+
 The `telemetry.export: OFF` mechanism is untouched by this amendment and still
 holds for the new attributes: a muted run's root is a wrapped, non-recording
 span, its children are unsampled, and no `onStart` copy runs for them — the
 processor is registered server-wide at SDK init, not per run, so there is
-nothing to unregister. That is asserted, not assumed: the muted case is a test
-in `AgentRunStarterTelemetryTest`, `RetryTraceAttributesTest` and
+nothing to unregister. The truncation WARN is silent there too: nothing is
+exported, so a warning about a truncated export would send an operator hunting
+a payload that was never sent. That is asserted, not assumed: the muted case is
+a test in `AgentRunStarterTelemetryTest`, `RetryTraceAttributesTest` and
 `LangfuseTraceAttributesSpanProcessorTest`.

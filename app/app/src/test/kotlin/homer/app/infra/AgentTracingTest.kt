@@ -4,10 +4,12 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import homer.app.fixtures.TestFixtures
 import homer.app.models.Agent
+import homer.app.models.AgentTelemetry
 import homer.app.models.Command
 import homer.app.models.Param
 import homer.app.models.TagValidation
 import homer.app.models.Tags
+import homer.app.models.TelemetryExport
 import io.mockk.slot
 import io.mockk.verify
 import io.opentelemetry.api.trace.Span
@@ -191,6 +193,25 @@ class AgentTracingTest {
             warnings().any { it.contains("over the ${TagValidation.MAX_TRACE_TAGS}-tag per-span limit") },
             "a truncated list must log a WARN naming the ceiling: ${warnings()}",
         )
+    }
+
+    @Test
+    fun `an over-count list on a muted run truncates without a WARN`() {
+        // Nothing is exported under `telemetry.export: OFF`, so a WARN about a truncated
+        // export would send an operator hunting a payload that was never sent.
+        val span = TestFixtures.mockSpan()
+        val over = (1..TagValidation.MAX_TRACE_TAGS + 5).map { "tag$it" }
+        val muted =
+            Agent(
+                name = "muted_agent",
+                commands = listOf(Command.Cmd(cmd = listOf("echo", "hi"), timeout = 60)),
+                telemetry = AgentTelemetry(export = TelemetryExport.OFF),
+            )
+
+        span.stampLangfuseTrace(muted, over)
+
+        assertEquals(over.take(TagValidation.MAX_TRACE_TAGS), stampedTags(span))
+        assertTrue(warnings().isEmpty(), "a muted run's truncation must not warn: ${warnings()}")
     }
 
     @Test

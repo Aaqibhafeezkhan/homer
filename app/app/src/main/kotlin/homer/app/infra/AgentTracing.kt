@@ -75,14 +75,16 @@ internal val LANGFUSE_TRACE_TAGS: AttributeKey<List<String>> = AttributeKey.stri
  * [tags] is truncated at [TagValidation.MAX_TRACE_TAGS]: the list is copied onto every span of
  * the run, so an unbounded one would multiply the exported payload by the span count
  * (denial_of_service / CWE-400). Truncated rather than refused — the run is more important than
- * its last tag, and a WARN names the agent.
+ * its last tag, and a WARN names the agent. The WARN is silent for a muted run: with
+ * `telemetry.export: OFF` nothing is exported, so a warning about a truncated export
+ * would send an operator hunting a payload that was never sent.
  */
 internal fun Span.stampLangfuseTrace(
     agent: Agent,
     tags: List<String>,
 ) {
     val capped = tags.take(TagValidation.MAX_TRACE_TAGS)
-    if (capped.size < tags.size) {
+    if (capped.size < tags.size && agent.telemetry.export != TelemetryExport.OFF) {
         logger.warn(
             "Agent '{}': {} trace tags over the {}-tag per-span limit; exporting the first {}",
             agent.name,
