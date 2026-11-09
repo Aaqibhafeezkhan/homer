@@ -2,19 +2,31 @@ package homer.app.infra
 
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.sun.net.httpserver.Headers
+import com.sun.net.httpserver.HttpServer
+import homer.app.models.Agent
+import homer.app.models.Command
 import homer.app.models.LangfuseConfig
 import homer.app.models.OpenTelemetryExport
 import io.mockk.mockk
+import io.opentelemetry.context.Context
+import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.common.CompletableResultCode
 import io.opentelemetry.sdk.trace.data.SpanData
 import io.opentelemetry.sdk.trace.export.SpanExporter
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
+import java.net.InetSocketAddress
+import java.util.Base64
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import ch.qos.logback.classic.Level as LogbackLevel
 import ch.qos.logback.classic.Logger as LogbackLogger
+import java.util.logging.Handler as JulHandler
+import java.util.logging.LogRecord as JulLogRecord
+import java.util.logging.Logger as JulLogger
 
 class OtelTelemetryServiceTest {
     private val langfuseConfig =
@@ -118,6 +130,70 @@ class OtelTelemetryServiceTest {
         override fun shutdown(): CompletableResultCode = CompletableResultCode.ofSuccess()
     }
 
+    // ========== The copy processor as wired in the service ==========
+
+    /**
+     * The wiring only the real service has: [LangfuseTraceAttributesSpanProcessor] registered
+     * ahead of the batch processor in the service's own tracer provider. Deleting the
+     * registration — or moving it after the batch processor — must fail here, on what the
+     * exporter actually receives: a stamped root, a child started under it from the service's
+     * tracer, and the exported child carrying both keys. The batch processor is driven with the
+     * logging exporter (as the `LOG` export config builds it), whose output this captures.
+     */
+    @Test
+    fun `a child span of a stamped root is exported with the trace name and tags`() {
+        val lines = mutableListOf<String>()
+        val exporterLogger = JulLogger.getLogger("io.opentelemetry.exporter.logging.LoggingSpanExporter")
+        val handler =
+            object : JulHandler() {
+                override fun publish(record: JulLogRecord) {
+                    lines += record.message
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        exporterLogger.addHandler(handler)
+        try {
+            val service = OtelTelemetryService(langfuseConfig, OpenTelemetryExport.LOG)
+            val agent =
+                Agent(
+                    name = "wired_agent",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo", "hi"), timeout = 60)),
+                )
+            val root = service.tracer.spanBuilder("otel-wired-root").startSpan()
+            root.stampLangfuseTrace(agent, listOf("http", "mr:15"))
+            val child =
+                service.tracer
+                    .spanBuilder("otel-wired-child")
+                    .setParent(root.storeInContext(Context.current()))
+                    .startSpan()
+            child.end()
+            root.end()
+            forceFlush(service)
+
+            val childLine = lines.single { it.contains("otel-wired-child") }
+            assertTrue(
+                childLine.contains("langfuse.trace.name") && childLine.contains("wired_agent"),
+                "the exported child must carry the trace name: $childLine",
+            )
+            assertTrue(
+                childLine.contains("langfuse.trace.tags") && childLine.contains("mr:15"),
+                "the exported child must carry the trace tags: $childLine",
+            )
+        } finally {
+            exporterLogger.removeHandler(handler)
+        }
+    }
+
+    /** The reflection reaches the private SDK handle; the stub tests flush the same way. */
+    private fun forceFlush(service: OtelTelemetryService) {
+        val field = OtelTelemetryService::class.java.getDeclaredField("openTelemetry")
+        field.isAccessible = true
+        (field.get(service) as OpenTelemetrySdk).sdkTracerProvider.forceFlush()
+    }
+
     // ========== Endpoint sanitization before logging ==========
 
     @Test
@@ -178,4 +254,93 @@ class OtelTelemetryServiceTest {
     fun `redactUrls reports a null message rather than printing null`() {
         assertEquals("<no message>", redactUrls(null))
     }
+
+    // ========== OTLP export against a local stand-in for the Langfuse collector ==========
+
+    /**
+     * What actually leaves the process. The ingestion header is the difference between Langfuse
+     * v4 showing a span within seconds and within minutes, and a collector is the only place it
+     * can be observed — it reaches no log and no span. Same stub pattern as
+     * `DefaultLangfuseClientTest`.
+     */
+    @Test
+    fun `an exported batch carries the ingestion version and the Basic authorization header`() =
+        withCollectorStub { server, requests ->
+            exportOneSpan(
+                OtelTelemetryService(
+                    langfuseConfig.copy(serverUrl = "http://127.0.0.1:${server.address.port}"),
+                    OpenTelemetryExport.LANGFUSE,
+                ),
+            )
+
+            val request = awaitRequests(requests).single()
+            assertEquals("/api/public/otel/v1/traces", request.path)
+            assertEquals("4", request.headers.getFirst(LANGFUSE_INGESTION_VERSION_HEADER))
+            val authorization = request.headers.getFirst("Authorization")
+            assertTrue(
+                authorization != null && authorization.startsWith("Basic "),
+                "the OTLP request must be authenticated",
+            )
+            // Decoded rather than compared as text, so a failure message never echoes the header.
+            assertEquals(
+                "pk-test:sk-test",
+                String(Base64.getDecoder().decode(authorization.removePrefix("Basic "))),
+                "the Basic credentials must be the configured public:secret pair",
+            )
+        }
+
+    /**
+     * The denial half: a span must not reach a collector the configuration did not select. A
+     * `serverUrl` in the config is not on its own a licence to export to it.
+     */
+    @Test
+    fun `a logging export and a blank serverUrl both leave the collector untouched`() =
+        withCollectorStub { server, requests ->
+            val url = "http://127.0.0.1:${server.address.port}"
+            exportOneSpan(OtelTelemetryService(langfuseConfig.copy(serverUrl = url), OpenTelemetryExport.LOG))
+            exportOneSpan(OtelTelemetryService(LangfuseConfig(), OpenTelemetryExport.LANGFUSE))
+
+            assertEquals(emptyList(), requests, "no collector may be called")
+        }
+
+    /** Ends one span and flushes the batch processor, whose schedule delay is otherwise 5 s. */
+    private fun exportOneSpan(service: OtelTelemetryService) {
+        service.tracer
+            .spanBuilder("test-span")
+            .startSpan()
+            .end()
+        forceFlush(service)
+    }
+
+    /** The exporter sends on its own thread, so the request can land after `forceFlush` returns. */
+    private fun awaitRequests(requests: List<CapturedRequest>): List<CapturedRequest> {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (requests.isEmpty() && System.nanoTime() < deadline) {
+            Thread.sleep(20)
+        }
+        return requests
+    }
+
+    /** A local stand-in for the Langfuse OTLP collector: records each request and answers 200. */
+    private fun <T> withCollectorStub(block: (HttpServer, List<CapturedRequest>) -> T): T {
+        val requests = java.util.Collections.synchronizedList(mutableListOf<CapturedRequest>())
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            requests += CapturedRequest(exchange.requestURI.toString(), exchange.requestHeaders)
+            exchange.requestBody.use { it.readBytes() }
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            return block(server, requests)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    private class CapturedRequest(
+        val path: String,
+        val headers: Headers,
+    )
 }

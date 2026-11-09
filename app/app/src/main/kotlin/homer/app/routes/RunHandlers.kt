@@ -8,6 +8,7 @@ import homer.app.infra.AgentInputResolver
 import homer.app.infra.ReservedEnvNames
 import homer.app.infra.TelemetryService
 import homer.app.infra.langfuseTraceTags
+import homer.app.infra.stampLangfuseTrace
 import homer.app.infra.startAgentRootSpan
 import homer.app.models.Agent
 import homer.app.models.Command
@@ -30,8 +31,8 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
-import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.context.Context
 
@@ -156,7 +157,7 @@ internal suspend fun handleAgentDebug(
                 reservedOverrides.joinToString(", "),
         )
     }
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_debug_request", maintenanceGate) { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_debug_request", maintenanceGate) { context, span ->
         // Manual recovery is not gated by `afterFailure`; `minInterval` still holds. See ADR-0051.
         val debugAgent = agent.copy(env = agent.env + req.env).withoutFailureBackoff()
         val queryParamsBuilder = ParametersBuilder()
@@ -169,6 +170,13 @@ internal suspend fun handleAgentDebug(
                 agent = debugAgent,
                 enforceRequired = false,
             )
+        // Before `execute`, so the command steps and generations the run emits inherit both
+        // attributes as they start. Debug params come from this request, not from storage, so
+        // there is no historical value that could have been secret under an older definition.
+        span.stampLangfuseTrace(
+            agent,
+            listOf("debug") + langfuseTraceTags(agent, resolvedQueryParams, agent.secretEnvNames),
+        )
         val result =
             processExecutor.execute(
                 processFactory.create(
@@ -188,13 +196,7 @@ internal suspend fun handleAgentDebug(
                 .put("agent.name", agent.name)
                 .put("debug.command_index", req.commandIndex.toLong())
                 .put("request.source", "debug")
-                .put("langfuse.trace.name", agent.name)
-                .put(
-                    AttributeKey.stringArrayKey("langfuse.trace.tags"),
-                    // Debug params come from this request, not from storage, so there is
-                    // no historical value that could have been secret under an older definition.
-                    listOf("debug") + langfuseTraceTags(agent, resolvedQueryParams, agent.secretEnvNames),
-                ).build()
+                .build()
     }
 }
 
@@ -212,7 +214,7 @@ internal suspend fun handleRetry(
     agentInputResolver: AgentInputResolver,
     maintenanceGate: MaintenanceModeService,
 ) {
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_retry_request", maintenanceGate) { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_retry_request", maintenanceGate) { context, span ->
         // Re-validate the stored inputs against the CURRENT agent definition (a fresh
         // request would); retry must not replay values the current input policy rejects.
         val retryParams = agentInputResolver.resolveRetryParams(agent, sourceProcess.inputParams)
@@ -229,6 +231,10 @@ internal suspend fun handleRetry(
         // when they can. See ADR-0058.
         val retryRootProcessId =
             processManager.visibleRootProcessId(call.principalName(), authorizer, sourceProcess.rootProcessId)
+        // Union, not the current definition alone: these values were collected under the source
+        // run's flags, and an input flipped to `secret: false` since would otherwise be tagged in
+        // the clear. Stamped before `execute` so the run's own spans inherit it. See ADR-0052.
+        span.stampLangfuseTrace(agent, listOf("retry") + langfuseTraceTags(agent, retryParams, retrySecretEnvNames))
 
         val result =
             processExecutor.execute(
@@ -256,14 +262,7 @@ internal suspend fun handleRetry(
                 .put("request.source", "retry")
                 .apply { sourceProcess.parentProcessId?.let { put("parent.process.id", it.toLong()) } }
                 .apply { retryRootProcessId?.let { put("root.process.id", it.toLong()) } }
-                .put("langfuse.trace.name", agent.name)
-                .put(
-                    AttributeKey.stringArrayKey("langfuse.trace.tags"),
-                    // Union, not the current definition alone: these values were collected
-                    // under the source run's flags, and an input flipped to `secret: false`
-                    // since would otherwise be tagged in the clear. See ADR-0052.
-                    listOf("retry") + langfuseTraceTags(agent, retryParams, retrySecretEnvNames),
-                ).build()
+                .build()
     }
 }
 
@@ -282,7 +281,7 @@ internal suspend fun handleResume(
     agentInputResolver: AgentInputResolver,
     maintenanceGate: MaintenanceModeService,
 ) {
-    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_resume_request", maintenanceGate) { context ->
+    respondStartedUnderRootSpan(call, telemetryService, agent, "agent_resume_request", maintenanceGate) { context, span ->
         // Same re-validation as retry, plus the recover markers. A stored
         // HMR_LG_RESUME survives resolveRetryParams' reserved-name passthrough
         // and wins over recover in the runtime -- the correct replay for a
@@ -303,6 +302,9 @@ internal suspend fun handleResume(
         // run without being able to see the flow root it points at. See ADR-0058.
         val resumeRootProcessId =
             processManager.visibleRootProcessId(call.principalName(), authorizer, sourceProcess.rootProcessId)
+        // Same as retry: the stored inputs carry the source run's secrecy, and the stamp has to
+        // land before `execute` for the run's own spans to inherit it.
+        span.stampLangfuseTrace(agent, listOf("resume") + langfuseTraceTags(agent, resumeParams, resumeSecretEnvNames))
 
         val result =
             processExecutor.execute(
@@ -329,21 +331,18 @@ internal suspend fun handleResume(
                 .put("request.source", "resume")
                 .apply { sourceProcess.parentProcessId?.let { put("parent.process.id", it.toLong()) } }
                 .apply { resumeRootProcessId?.let { put("root.process.id", it.toLong()) } }
-                .put("langfuse.trace.name", agent.name)
-                .put(
-                    AttributeKey.stringArrayKey("langfuse.trace.tags"),
-                    // Same as retry: the stored inputs carry the source run's secrecy.
-                    listOf("resume") + langfuseTraceTags(agent, resumeParams, resumeSecretEnvNames),
-                ).build()
+                .build()
     }
 }
 
 /**
  * Starts a run under a fresh root span [spanName] and answers its process id. [start] gets the
- * span's context and returns the started process id with the span's attributes; a failure marks
- * the span ERROR and propagates. Via startAgentRootSpan, not spanBuilder: debug, retry and resume
- * build their own root span outside AgentRunStarter, so anything that gates run tracing has to be
- * applied here too — `telemetry.export: OFF` included. See ADR-0050.
+ * span's context and the span itself — it stamps the Langfuse trace name and tags with
+ * [stampLangfuseTrace] before it calls `processExecutor.execute` — and returns the started process
+ * id with the span's remaining attributes; a failure marks the span ERROR and propagates. Via
+ * startAgentRootSpan, not spanBuilder: debug, retry and resume build their own root span outside
+ * AgentRunStarter, so anything that gates run tracing has to be applied here too —
+ * `telemetry.export: OFF` included. See ADR-0050.
  *
  * [maintenanceGate] parks [start] while maintenance mode is on, in the span and before [start]
  * runs, exactly as [AgentRunStarter.start] does: these three are the starts that do not go through
@@ -356,12 +355,12 @@ private suspend fun respondStartedUnderRootSpan(
     agent: Agent,
     spanName: String,
     maintenanceGate: MaintenanceModeService,
-    start: suspend (Context) -> Pair<Int, Attributes>,
+    start: suspend (Context, Span) -> Pair<Int, Attributes>,
 ) {
     val span = telemetryService.tracer.startAgentRootSpan(agent, spanName)
     try {
         val (processId, attributes) =
-            maintenanceGate.gated(call.principalName()) { start(Context.current().with(span)) }
+            maintenanceGate.gated(call.principalName()) { start(Context.current().with(span), span) }
         span.setAllAttributes(attributes)
         span.setStatus(StatusCode.OK)
         call.respond(ExecuteResponse(processId = processId))

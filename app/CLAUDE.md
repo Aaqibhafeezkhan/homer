@@ -167,7 +167,19 @@ marked `Constraint:`.
     concurrent `AgentsService.reload()` would otherwise lose the reference or
     misdirect the decrement.
 - **`OtelTelemetryService`** — thin wrapper over OpenTelemetry. Exposes the
-  `TelemetryService` interface — depend on that in DI.
+  `TelemetryService` interface — depend on that in DI. The Langfuse exporter
+  declares OTLP ingestion version 4 (`x-langfuse-ingestion-version`), and
+  `LangfuseTraceAttributesSpanProcessor` is registered ahead of the batch
+  processor to copy the run's `langfuse.trace.name` / `langfuse.trace.tags`
+  from each span's parent at `onStart` — Langfuse v4 keeps no trace record and
+  reads both off every observation. See ADR-0050.
+  - **Constraint:** the processor copies **only** those two keys, never the
+    parent's attributes as a whole (that would put the run's request and
+    process metadata on every generation), and `onStart` must not throw — it
+    runs inside the SDK's span-start path, so a failure there surfaces in
+    whichever caller started a span. It also has to stay **before** the
+    `BatchSpanProcessor`: after it, a span could be queued before its
+    attributes are copied.
 - **`ArtifactService`** — streams files from the process artifacts directory;
   rejects `..` paths; tails files still being written by active processes.
 - **`LogTailService`** — resolves and tails the stdout/stderr file for a

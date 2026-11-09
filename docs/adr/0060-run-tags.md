@@ -163,7 +163,12 @@ token, post-run `secret` flip).
 - Good: "find runs by subject" is answered by Homer's own API and console, for every
   run including telemetry-`OFF` ones, with no external dependency.
 - Good: one derivation feeds both trace tags and run tags; the deprecated alias funnels
-  through `effectiveFromInputTags`, so the two cannot disagree.
+  through `effectiveFromInputTags`, so the two cannot disagree. *(Amended
+  2026-11-09: below the ceiling they still cannot — past it, the exported trace
+  tags truncate at `MAX_TRACE_TAGS` while these stored `?tag=` rows keep every
+  tag. Export-only, to bound per-span payload; see the ADR-0050 amendment.
+  `MAX_TRACE_TAGS` is bound to `MAX_RUNTIME_TAGS_PER_RUN`, so the two ceilings
+  cannot drift.)*
 - Good: a run can only tag itself, and only with keys its author allowed; the cap and
   charset bound what it can write.
 - Neutral: tags are `key:value` strings — a numeric `mr:4211` is the string `"4211"`,

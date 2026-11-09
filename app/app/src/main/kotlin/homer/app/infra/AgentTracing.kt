@@ -3,6 +3,7 @@ package homer.app.infra
 import homer.app.models.Agent
 import homer.app.models.TagValidation
 import homer.app.models.TelemetryExport
+import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanContext
 import io.opentelemetry.api.trace.SpanId
@@ -50,6 +51,47 @@ internal fun Tracer.startAgentRootSpan(
     } else {
         spanBuilder(spanName).startSpan()
     }
+
+/**
+ * The trace name Langfuse shows for a run. Langfuse v4 keeps no separate trace record and reads
+ * a trace's name off each observation, so this has to be on every span, not only the root. See
+ * ADR-0050.
+ */
+internal val LANGFUSE_TRACE_NAME: AttributeKey<String> = AttributeKey.stringKey("langfuse.trace.name")
+
+/**
+ * The run's subject tags as Langfuse sees them — the same list the run stores as `?tag=` tags.
+ * Like [LANGFUSE_TRACE_NAME] it has to be on every observation for a v4 filter to find the run.
+ * See ADR-0050.
+ */
+internal val LANGFUSE_TRACE_TAGS: AttributeKey<List<String>> = AttributeKey.stringArrayKey("langfuse.trace.tags")
+
+/**
+ * Puts this run's Langfuse trace name and tags on [this] span. Called on the root span **before**
+ * `processExecutor.execute`, on every start path: a span started under it inherits both through
+ * [LangfuseTraceAttributesSpanProcessor], which is what keeps a child observation inside a v4
+ * name/tags filter. See ADR-0050.
+ *
+ * [tags] is truncated at [TagValidation.MAX_TRACE_TAGS]; the truncation WARN names the agent and
+ * stays silent for a muted run (`telemetry.export: OFF` exports nothing). See ADR-0050.
+ */
+internal fun Span.stampLangfuseTrace(
+    agent: Agent,
+    tags: List<String>,
+) {
+    val capped = tags.take(TagValidation.MAX_TRACE_TAGS)
+    if (capped.size < tags.size && agent.telemetry.export != TelemetryExport.OFF) {
+        logger.warn(
+            "Agent '{}': {} trace tags over the {}-tag per-span limit; exporting the first {}",
+            agent.name,
+            tags.size,
+            TagValidation.MAX_TRACE_TAGS,
+            TagValidation.MAX_TRACE_TAGS,
+        )
+    }
+    setAttribute(LANGFUSE_TRACE_NAME, agent.name)
+    setAttribute(LANGFUSE_TRACE_TAGS, capped)
+}
 
 /**
  * `paramName:value` tags for the inputs named in the run's effective `fromInputs`

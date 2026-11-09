@@ -1678,8 +1678,9 @@ langfuse:
 
 - **Trace Creation**: Each agent execution creates a Langfuse trace
 - **Span Generation**: Each command creates a span with timing data
+- **Trace Name and Tags on Every Span**: The run's name (its agent name) and its subject tags are set on every span it exports, because Langfuse v4 keeps no separate trace record and reads both off each observation
 - **Prompt Management**: Claude agents can reference Langfuse-managed prompts
-- **OpenTelemetry Export**: Homer exports OTLP data to Langfuse
+- **OpenTelemetry Export**: Homer exports OTLP data to Langfuse, declaring OTLP ingestion version 4 (`x-langfuse-ingestion-version: 4`) so a v4 server ingests a batch within seconds; a v3 server ignores the header
 
 > **Content egress:** exported spans include the compiled prompt and command
 > input/output. Read this before deciding what may reach your collector:
@@ -1718,6 +1719,8 @@ egress note above.
 
 | Span | Attribute | Value |
 |---|---|---|
+| Every span of a run | `langfuse.trace.name` | The run's trace name — the agent name. Langfuse v4 keeps no separate trace record and reads this off each observation, so it is on every span, not only the root |
+| Every span of a run | `langfuse.trace.tags` | The run's subject tags — the request source (`http`, `mcp`, `cron`, `dispatch`, `continuation`, `agent`, `retry`, `resume`, `debug`) followed by the agent's declared tag subjects, truncated at 20 tags. Same reason as the name. See [ADR-0050](../docs/adr/0050-per-agent-telemetry-block.md) |
 | Process | `process.id` | The run's process id |
 | Process | `process.status` | `CREATED`, then the terminal status (`FINISHED`, `FAILED`, `KILLED`) |
 | Command (any type) | `cmd.type` | Command class: `Cmd`, `Script`, `Claude`, `Codex`, `Opencode`, `RunAgent`, `LangGraph`, `RunnerCmd` |
@@ -1939,6 +1942,7 @@ openTelemetryExport: LANGFUSE
 
 **LANGFUSE Export:**
 - Sends OTLP data to `{langfuse.serverUrl}/api/public/otel/v1/traces`
+- Declares OTLP ingestion version 4 with the `x-langfuse-ingestion-version: 4` header; a Langfuse v4 server ingests a batch within seconds rather than minutes, and a v3 server ignores the unknown header
 - Requires valid `langfuse` configuration
 - Enables full observability in Langfuse UI
 - If `langfuse.serverUrl` is blank, Homer logs a warning and falls back to the `LOG` exporter
