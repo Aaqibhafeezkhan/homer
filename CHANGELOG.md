@@ -5,8 +5,10 @@
 ### Homer
 
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.
+- **Added: a load-time warning for a Claude step that limits tools only with `allowedTools`** — A step that skips permissions and sets neither `tools` nor `disallowedTools` restricts nothing; Homer warns at agent load and `agentdebug validate` reports it on the command's line.
 - **Changed: a run's Langfuse trace name and tags reach every span it exports** — Langfuse v4 reads both off each observation, so the run's name and subject tags now ride on every span and the exporter declares OTLP ingestion version 4. See [ADR-0050](docs/adr/0050-per-agent-telemetry-block.md).
 - **Fixed: a stalled Kubernetes API server no longer holds a run** — The runner's non-streaming API reads now fail after a fixed 30 s instead of hanging, so the run ends and its runner slot is freed; exec and workspace-sync streams stay open as long as the command needs. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **Added: `continuation.inheritInputs` on the agent definition** — A continuation or dispatch fired back to the same agent can carry the registering run's inputs, so a resumed segment keeps its lock key's subject and its `tags.fromInputs` tags. See [ADR-0101](docs/adr/0101-continuation-inherits-origin-run-inputs.md).
 - **Fixed: a `!<claude>` result flagged `is_error` fails the step** — Runs that reported `subtype: "success"` while the CLI flagged an error (a refusal, an unavailable deferred tool, an API error) now fail instead of finishing green, so their `retry` and `escalate` tiers run and their `afterFailure` cooldowns arm.
 
 ## [1.41.0] - 2026-11-06

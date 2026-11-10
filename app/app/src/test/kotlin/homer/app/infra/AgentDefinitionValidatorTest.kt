@@ -2,8 +2,10 @@ package homer.app.infra
 
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.models.ClaudeCmdOptions
 import homer.app.models.CronConfig
 import homer.app.models.Param
+import io.mockk.verify
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -48,5 +50,18 @@ class AgentDefinitionValidatorTest {
         val agent = AgentFixtures.simpleAgent(name = "a").copy(cron = CronConfig("0 * * * *"), inputs = listOf(Param(paramName = "q")))
         assertEquals(true, validator.checkDefinition(agent, "dir", errors))
         assertEquals(1, errors.size)
+    }
+
+    @Test
+    fun `a claude step that skips permissions with only allowedTools warns and still loads`() {
+        val agent =
+            AgentFixtures.claudeAgent(
+                name = "a",
+                options = ClaudeCmdOptions(dangerouslySkipPermissions = true, allowedTools = listOf("Read", "Grep")),
+            )
+
+        assertEquals(false, validator.checkDefinition(agent, "dir", errors))
+        assertEquals(emptyList(), errors)
+        verify { logger.warn(match<String> { it.contains("allowedTools") }, "a", "claude") }
     }
 }
