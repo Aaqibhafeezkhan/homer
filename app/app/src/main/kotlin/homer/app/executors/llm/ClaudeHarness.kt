@@ -3,6 +3,7 @@ package homer.app.executors.llm
 import homer.app.exceptions.ClaudeCliVersionMismatchException
 import homer.app.exceptions.ValidationException
 import homer.app.executors.ClaudeArgvBuilder
+import homer.app.executors.PreStartFailureReason
 import homer.app.infra.DefaultTextCompiler
 import homer.app.infra.LlmOutputJson
 import homer.app.infra.TextCompiler
@@ -18,6 +19,7 @@ import homer.app.models.UserContentBlock
 import homer.app.models.gateSessionId
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -101,16 +103,22 @@ class ClaudeHarness(
 
                 is TurnStatus.Stopped -> {
                     command.options.maxTurnsExitCode?.let { Inspection.Terminal(it) }
-                        ?: Inspection.Malformed("result event has subtype '${s.reason}' (expected 'success')")
+                        ?: Inspection.Malformed(notSuccess(s.reason))
                 }
 
                 is TurnStatus.Failed -> {
-                    Inspection.Malformed("result event has subtype '${s.reason}' (expected 'success')")
+                    Inspection.Malformed(notSuccess(s.reason))
                 }
             }
         if (verdict is Inspection.Success) checkVersionPin(raw)
         return verdict
     }
+
+    /**
+     * The malformed reason for a zero-exit attempt whose result event is not a success: [reason] is
+     * the CLI's own — a subtype, or an `is_error` diagnosis — so the message never calls it one.
+     */
+    private fun notSuccess(reason: String): String = "result event is not a successful turn: $reason"
 
     private fun checkVersionPin(raw: List<JsonObject>) {
         val pinned = requireClaudeCodeVersion ?: return
@@ -176,8 +184,12 @@ class ClaudeHarness(
         LlmEvent.TurnEnd(
             status =
                 when (r.subtype) {
-                    "success" -> TurnStatus.Success
+                    // `is_error` is the CLI's own verdict that a `success` subtype ended on an
+                    // error (a refusal, a missing deferred tool, a terminal API error). See ADR-0070.
+                    "success" -> if (r.isError) TurnStatus.Failed(isErrorReason(r)) else TurnStatus.Success
+
                     "error_max_turns" -> TurnStatus.Stopped(r.subtype)
+
                     else -> TurnStatus.Failed(r.subtype.ifBlank { "<missing>" })
                 },
             usage =
@@ -201,6 +213,27 @@ class ClaudeHarness(
             resultText = r.result,
         )
 
+    /**
+     * The reason for an `is_error` turn, from the CLI's own diagnosis fields only. The `result`
+     * text is an error string the CLI may echo from an API response, so it never enters the
+     * reason, the step error or a log line (§12 rule 7); the fields are CLI-written, so the
+     * reason is stripped of control characters and capped like any stored one. See ADR-0047.
+     */
+    private fun isErrorReason(r: ClaudeEvent.Result): String {
+        val details =
+            listOfNotNull(
+                r.stopReason.detail("stop_reason"),
+                r.terminalReason.detail("terminal_reason"),
+                r.apiErrorStatus.detail("api_error_status"),
+            )
+        val reason = if (details.isEmpty()) IS_ERROR else "$IS_ERROR (${details.joinToString(", ")})"
+        return PreStartFailureReason.sanitize(reason)
+    }
+
+    /** `key=value` for a field the CLI wrote as a JSON primitive; any other shape names no value. */
+    private fun JsonElement?.detail(key: String): String? =
+        (this as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { "$key=$it" }
+
     private inline fun <reified T> decode(
         line: JsonObject,
         then: (T) -> Translation,
@@ -221,5 +254,6 @@ class ClaudeHarness(
 
     private companion object {
         const val COST_FIELD = "total_cost_usd"
+        const val IS_ERROR = "is_error"
     }
 }

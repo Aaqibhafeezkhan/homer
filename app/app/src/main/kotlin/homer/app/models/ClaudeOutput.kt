@@ -46,6 +46,18 @@ sealed interface ClaudeEvent {
     data class Result(
         override val type: String = "result",
         val subtype: String = "",
+        // The CLI's own verdict that it ended the turn on an error — a refusal, an unavailable
+        // deferred tool, an API error — even when the subtype reads `success`. See ADR-0057.
+        @SerialName("is_error")
+        val isError: Boolean = false,
+        // The CLI's diagnosis of such a turn. Kept untyped: a shape Homer does not expect costs
+        // the reason a field, never the event and the cost/usage riding on it. See ADR-0057.
+        @SerialName("stop_reason")
+        val stopReason: JsonElement? = null,
+        @SerialName("terminal_reason")
+        val terminalReason: JsonElement? = null,
+        @SerialName("api_error_status")
+        val apiErrorStatus: JsonElement? = null,
         @SerialName("duration_ms")
         val durationMs: Long = 0,
         @SerialName("duration_api_ms")

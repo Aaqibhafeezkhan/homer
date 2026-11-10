@@ -1764,6 +1764,62 @@ class LlmHarnessExecutorTest {
             coVerify(exactly = 1) { processManager.addCost(7, 1.5, CostSource.CLI) }
         }
 
+    @Test
+    fun `a persistently is_error stream stops at the retry cap and rethrows the reason`() =
+        runTest {
+            // The step is judged by the CLI's own verdict: retry runs, but it is bounded by the
+            // configured attempts and adds no path of its own (ADR-0047 §12 rule 4).
+            var attempt = 0
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any())
+            } answers {
+                attempt += 1
+                stdOut.writeText("""{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal"}""" + "\n")
+                TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOut, stdErr = stdErr)
+            }
+
+            val e =
+                assertThrows<MalformedLlmOutputException> {
+                    newExecutor(ClaudeHarness())
+                        .execute(claude(retry = LlmRetry(attempts = 2, baseDelayMs = 0, maxDelayMs = 0)), context, span)
+                }
+
+            assertEquals(2, attempt)
+            assertEquals("result event is not a successful turn: is_error (stop_reason=refusal)", e.reason)
+        }
+
+    @Test
+    fun `an is_error reason names the CLI's fields and never the result text`() =
+        runTest {
+            // The `result` of an is_error turn is an error string the CLI may echo from an API
+            // response, so no part of it may reach the step error (§12 rule 7).
+            stdOut.writeText(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal",""" +
+                    """"result":"API error: sk-ant-oat01-not-a-real-token"}""" + "\n",
+            )
+            stubShellExit(0)
+
+            val e = assertThrows<MalformedLlmOutputException> { newExecutor(ClaudeHarness()).execute(claude(), context, span) }
+
+            assertContains(e.reason, "is_error (stop_reason=refusal)")
+            assertFalse(e.message.orEmpty().contains("sk-ant-oat01-not-a-real-token"))
+        }
+
+    @Test
+    fun `an is_error result still charges its cost to both sinks`() =
+        runTest {
+            stdOut.writeText(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal","total_cost_usd":1.25}""" + "\n",
+            )
+            stubShellExit(0)
+
+            assertThrows<MalformedLlmOutputException> {
+                newExecutor(ClaudeHarness()).execute(claude(), context.copy(agentName = "demo", processId = 7), span)
+            }
+            coVerify(exactly = 1) { processManager.addCost(7, 1.25, CostSource.CLI) }
+            coVerify(exactly = 1) { costMeter.recordCost("demo", 1.25) }
+        }
+
     // ========== env / span ==========
 
     @Test
@@ -2142,6 +2198,27 @@ class LlmHarnessExecutorTest {
             assertThrows<MalformedLlmOutputException> {
                 executor.execute(claudeWithTiers(tier("strong", "false")), context, span)
             }
+        }
+
+    @Test
+    fun `an is_error result escalates as malformed with exit -1`() =
+        runTest {
+            val predicateCalls = mutableListOf<Call>()
+            scriptShell(
+                llm =
+                    listOf(
+                        """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal"}""" to 0,
+                        """{"type":"result","subtype":"success","total_cost_usd":0.0}""" to 0,
+                    ),
+                predicateExits = listOf(0),
+                predicateCalls = predicateCalls,
+            )
+
+            val result = newExecutor(ClaudeHarness()).execute(claudeWithTiers(tier("strong", "true")), context, span)
+
+            assertEquals(0, result.exitCode)
+            assertEquals("malformed", predicateCalls.single().env[EnvConstants.LLM_OUTCOME])
+            assertEquals("-1", predicateCalls.single().env[EnvConstants.LLM_EXIT_CODE])
         }
 
     @Test

@@ -984,9 +984,10 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
 
         <article class="f">
           <h3><code>!&lt;claude&gt;</code> — Claude Code CLI <span class="where">command</span></h3>
-          <p>Pipes a prompt into the <code>claude</code> CLI headlessly and captures its NDJSON event stream. Cost is
-            metered per attempt — one charge, split across its generations when it ends more than one turn — from your
-            spend API when <code>llmPrice.sessionSpend</code> is configured, else from the CLI's own estimate.</p>
+          <p>Pipes a prompt into the <code>claude</code> CLI headlessly and captures its NDJSON event stream. Validated
+            fail-closed: needs a <code>result</code> event with <code>subtype: "success"</code> and no <code>is_error</code>.
+            Cost is metered per attempt — one charge, split across its generations when it ends more than one turn — from
+            your spend API when <code>llmPrice.sessionSpend</code> is configured, else from the CLI's own estimate.</p>
           <pre><code>- !&lt;claude&gt;
   prompt: !&lt;prompt&gt; { prompt: "Review {{FILE}} for bugs" }
   options: { model: sonnet, allowedTools: [Read, Grep] }
