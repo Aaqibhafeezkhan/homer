@@ -292,7 +292,10 @@ Editor-facing constraints the row's ADR does not state:
   the write, so its bound holds whatever the caller passes. The write trails the
   terminal-status commit in a second transaction and emits no event of its own, so a
   client refetching on the `FAILED` event reads the reason on its next poll, not
-  immediately — an accepted trade, recorded in ADR-0098.
+  immediately — an accepted trade, recorded in ADR-0098. A non-null value also keeps
+  the row out of `cooldown.afterFailure`'s latest-failure lookup
+  (`latestFailureEndedAtTx`): only a run that failed while executing arms the window,
+  so a refusal that never ran does not back the agent off.
 
 `transitionStatus` and `killTransition` project `status`, `history` and
 `agent_name` instead of `selectAll()`: they run under the write lock, and pulling

@@ -259,7 +259,11 @@ class ProcessRepository(
      */
     suspend fun latestRunStartedAt(agentName: String): Long? = db.read { latestRunStartedAtTx(agentName) }
 
-    /** Terminal time (last history entry) of the most recent FAILED run of [agentName], or null. */
+    /**
+     * Terminal time (last history entry) of the most recent FAILED run of [agentName] that
+     * actually ran, or null. A run refused before it started carries a `failure_reason` and
+     * is not a failure of the agent's work, so it does not arm the window. See ADR-0098.
+     */
     suspend fun latestFailureEndedAt(agentName: String): Long? = db.read { latestFailureEndedAtTx(agentName) }
 
     /**
@@ -288,10 +292,20 @@ class ProcessRepository(
     // one. Ordering by id then picked the newer row's EARLIER failure and let a
     // start through inside the afterFailure window. Rows from before v14 have a
     // null ended_at and are skipped by MAX. See ADR-0051.
+    //
+    // Only a run that failed while executing a command arms the window: a run refused
+    // before it started (a SKIP_CURRENT lock skip, a REJECT, a full queue, a claim
+    // timeout) ends FAILED without ever running and carries a `failure_reason`, written
+    // only in that case (ADR-0098). A duplicate trigger correctly dropped by the lock
+    // must not back the agent off, for itself or for another subject.
     private fun latestFailureEndedAtTx(agentName: String): Long? =
         Processes
             .select(Processes.endedAt)
-            .where { (Processes.agentName eq agentName) and (Processes.status eq ProcessStatus.FAILED.name) }
+            .where {
+                (Processes.agentName eq agentName) and
+                    (Processes.status eq ProcessStatus.FAILED.name) and
+                    Processes.failureReason.isNull()
+            }
             // Ordered by ended_at, not id. SQLite sorts NULLs last under DESC, so a
             // pre-v14 row without a recorded terminal time never masks a real one.
             .orderBy(Processes.endedAt, SortOrder.DESC)
