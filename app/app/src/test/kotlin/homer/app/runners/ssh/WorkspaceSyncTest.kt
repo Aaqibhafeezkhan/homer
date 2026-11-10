@@ -761,18 +761,64 @@ class WorkspaceSyncTest {
         assertEquals(local.toAbsolutePath().normalize().resolve("out.bin"), resolved)
     }
 
+    // One case per unsafe name, each pinned to the name guard's own message: the
+    // composed check refuses them too, so only the message tells the two
+    // defence-in-depth layers apart (ADR-0047).
+
     @Test
-    fun `containedChild rejects traversal, absolute, and multi-segment names`(
+    fun `containedChild rejects an empty name as not a plain file name`(
         @TempDir local: Path,
     ) = runBlocking {
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "../evil.sh") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "/etc/cron.d/x") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "sub/child.txt") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "evil\\..\\x") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "..") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, ".") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "nul\u0000l") }
+        assertRefusedByName(local, "")
+    }
+
+    @Test
+    fun `containedChild rejects a dot name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, ".")
+    }
+
+    @Test
+    fun `containedChild rejects a dotdot name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "..")
+    }
+
+    @Test
+    fun `containedChild rejects a name with a slash as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "a/b")
+    }
+
+    @Test
+    fun `containedChild rejects a name with a backslash as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "a\\b")
+    }
+
+    @Test
+    fun `containedChild rejects a name with NUL as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        // The only listed name the containment check cannot catch on its own:
+        // Path.resolve would throw InvalidPathException instead of a refusal.
+        assertRefusedByName(local, "a\u0000b")
+    }
+
+    /** [name] must be refused by the name guard itself — the message, not just the throw, is the seam. */
+    private fun assertRefusedByName(
+        local: Path,
+        name: String,
+    ) {
+        val refusal = assertThrows<SecurityException> { WorkspaceSync.containedChild(local, name) }
+        assertTrue(
+            refusal.message.orEmpty().contains("is not a plain file name"),
+            "expected the name guard to refuse '$name', got: ${refusal.message}",
+        )
     }
 
     // ===== Pre-existing local symlinks must not redirect writes =====

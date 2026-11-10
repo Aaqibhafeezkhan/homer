@@ -1,5 +1,7 @@
 package homer.app.runners.ssh
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import homer.app.EnvConstants
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.infra.ShellExecutor
@@ -15,11 +17,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.apache.sshd.client.session.ClientSession
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import ch.qos.logback.classic.Level as LogbackLevel
+import ch.qos.logback.classic.Logger as LogbackLogger
 
 class SshRunnerSessionTest {
     private val clientSession = mockk<ClientSession>(relaxed = true)
@@ -104,6 +111,19 @@ class SshRunnerSessionTest {
         return shell
     }
 
+    /** Like [shellExiting], but leaves [stderr] in the stdErr file the session passes in, as a real `rm` would. */
+    private fun shellExitingWithStderr(
+        code: Int,
+        stderr: String,
+    ): ShellExecutor {
+        val shell = mockk<ShellExecutor>()
+        coEvery { shell.cmd(any(), any(), any(), any(), any(), any(), any()) } answers {
+            Files.writeString(arg(2), stderr)
+            CommandResult(exitCode = code, stdOut = arg(1), stdErr = arg(2))
+        }
+        return shell
+    }
+
     @Test
     fun `cleanWorkspace removes the remote root with one rm -rf and skips the SFTP walk`() =
         runTest {
@@ -152,6 +172,51 @@ class SshRunnerSessionTest {
                 OutputCapExceededException("Output cap exceeded: 10 bytes.")
             session(sync, shell = shell).cleanWorkspace()
             coVerify { sync.removeRecursively("/remote/p1") }
+        }
+
+    @Test
+    fun `cleanWorkspace warns with the root, the exit code and the stderr tail when rm exits non-zero`() =
+        runTest {
+            val sync = mockk<WorkspaceSync>(relaxed = true)
+            val shell = shellExitingWithStderr(2, "rm: cannot remove '/remote/p1/x': Permission denied\n")
+
+            val warnings = captureWarnings { session(sync, shell = shell).cleanWorkspace() }
+
+            coVerify { sync.removeRecursively("/remote/p1") }
+            val warn = warnings.single { it.formattedMessage.contains("falling back to the SFTP walk") }
+            assertTrue(warn.formattedMessage.contains("/remote/p1"), "the warning must name the root: ${warn.formattedMessage}")
+            assertTrue(warn.formattedMessage.contains("exited 2"), "the warning must carry the exit code: ${warn.formattedMessage}")
+            assertTrue(
+                warn.formattedMessage.contains("Permission denied"),
+                "the warning must carry the stderr tail: ${warn.formattedMessage}",
+            )
+        }
+
+    @Test
+    fun `cleanWorkspace does not warn about a fallback when rm exits zero`() =
+        runTest {
+            val sync = mockk<WorkspaceSync>(relaxed = true)
+
+            val warnings = captureWarnings { session(sync, shell = shellExiting(0)).cleanWorkspace() }
+
+            assertTrue(
+                warnings.none { it.formattedMessage.contains("falling back to the SFTP walk") },
+                "a clean rm must not report a fallback; got $warnings",
+            )
+            coVerify(exactly = 0) { sync.removeRecursively(any()) }
+        }
+
+    @Test
+    fun `cleanWorkspace cuts the stderr tail in the warning at 500 characters`() =
+        runTest {
+            val sync = mockk<WorkspaceSync>(relaxed = true)
+            val shell = shellExitingWithStderr(1, "e".repeat(600) + "TAIL")
+
+            val warnings = captureWarnings { session(sync, shell = shell).cleanWorkspace() }
+
+            val warn = warnings.single { it.formattedMessage.contains("falling back to the SFTP walk") }.formattedMessage
+            val tail = warn.substringAfter("falling back to the SFTP walk: ")
+            assertEquals(500, tail.length, "the stderr tail must be cut at 500 characters: '$tail'")
         }
 
     @Test
@@ -231,5 +296,21 @@ class SshRunnerSessionTest {
     fun `session without extraUploads exposes an empty list`() {
         val sync = mockk<WorkspaceSync>(relaxed = true)
         assertEquals(emptyList(), session(sync).extraUploads)
+    }
+
+    /** Run [body] with SshRunnerSession's WARN output captured. */
+    private suspend fun captureWarnings(body: suspend () -> Unit): List<ILoggingEvent> {
+        val appender = ListAppender<ILoggingEvent>().also { it.start() }
+        val logback = LoggerFactory.getLogger(SshRunnerSession::class.java) as LogbackLogger
+        val level = logback.level
+        logback.level = LogbackLevel.WARN
+        logback.addAppender(appender)
+        try {
+            body()
+        } finally {
+            logback.detachAppender(appender)
+            logback.level = level
+        }
+        return appender.list
     }
 }
