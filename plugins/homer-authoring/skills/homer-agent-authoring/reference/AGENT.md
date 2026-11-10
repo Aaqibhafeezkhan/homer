@@ -3566,8 +3566,10 @@ win on conflict. The rest is bounded on purpose:
   dropped, and the reserved `HMR_*` markers (`HMR_LG_THREAD`, `HMR_LG_RESUME`)
   never ride along — so the inherited set is bounded by the agent's own `inputs:`.
 - **Re-validated, not trusted.** Every inherited value passes the same
-  type/`pattern`/`inputSchema` check a caller's value would; a value the agent has
-  since tightened fails the fire instead of running with it.
+  type/`pattern`/`inputSchema` check a caller's value would — a value the agent has
+  since tightened fails the fire rather than being run with. A stored value was
+  already transformed when its run resolved it, so its `transformer:` is not
+  applied a second time.
 - **Secrets stay masked.** A `secret: true` input is inherited as a value, and the
   fired run's API responses mask it exactly as the registering run's do (ADR-0052).
 - **Registration counts them.** A `required: true` input that only the

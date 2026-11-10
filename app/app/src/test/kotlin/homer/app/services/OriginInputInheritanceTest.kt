@@ -53,63 +53,71 @@ class OriginInputInheritanceTest {
         secretInputKeys = secretInputKeys,
     )
 
-    private fun inherit(
+    private suspend fun inherit(
         origin: ProcessInfo? = origin(),
         originAgentName: String = "graph",
         originOwner: String? = "alice",
         target: Agent = agent(),
-    ) = inheritedOriginInputs(origin, originAgentName, originOwner, target, logger)
+    ) = inheritedOriginInputs({ origin }, originAgentName, originOwner, target, "Continuation", logger)
 
     @Test
-    fun `the flag off inherits nothing`() {
-        assertEquals(InheritedOriginInputs.NONE, inherit(target = agent(inherit = false)))
-    }
+    fun `the flag off inherits nothing`() =
+        runTest {
+            assertEquals(InheritedOriginInputs.NONE, inherit(target = agent(inherit = false)))
+        }
 
     @Test
-    fun `a continuation to another agent inherits nothing`() {
-        assertEquals(InheritedOriginInputs.NONE, inherit(originAgentName = "other"))
-    }
+    fun `a continuation to another agent inherits nothing`() =
+        runTest {
+            assertEquals(InheritedOriginInputs.NONE, inherit(originAgentName = "other"))
+        }
 
     @Test
-    fun `an owner mismatch inherits nothing`() {
-        assertEquals(InheritedOriginInputs.NONE, inherit(origin = origin(owner = "bob")))
-    }
+    fun `an owner mismatch inherits nothing`() =
+        runTest {
+            assertEquals(InheritedOriginInputs.NONE, inherit(origin = origin(owner = "bob")))
+        }
 
     @Test
-    fun `an absent origin row inherits nothing`() {
-        assertEquals(InheritedOriginInputs.NONE, inherit(origin = null))
-    }
+    fun `an absent origin row inherits nothing`() =
+        runTest {
+            assertEquals(InheritedOriginInputs.NONE, inherit(origin = null))
+        }
 
     @Test
-    fun `the origin run's stored inputs come back keyed by paramName with its secret snapshot`() {
-        val inherited = inherit()
+    fun `the origin run's stored inputs come back keyed by paramName with its secret snapshot`() =
+        runTest {
+            val inherited = inherit()
 
-        assertEquals(mapOf("ticket" to "123", "svc" to "checkout"), inherited.params)
-        assertEquals(setOf("SVC_ID"), inherited.secretInputKeys)
-    }
-
-    @Test
-    fun `an envName the agent no longer declares is dropped`() {
-        val inherited = inherit(origin = origin(inputParams = mapOf("TICKET_ID" to "123", "GONE" to "x")))
-
-        assertEquals(mapOf("ticket" to "123"), inherited.params)
-    }
+            assertEquals(mapOf("ticket" to "123", "svc" to "checkout"), inherited.params)
+            assertEquals(setOf("SVC_ID"), inherited.secretInputKeys)
+        }
 
     @Test
-    fun `a reserved envName is dropped even when declared`() {
-        val inherited =
-            inherit(
-                origin = origin(inputParams = mapOf("TICKET_ID" to "123", "HMR_LEGACY" to "x", "HMR_LG_THREAD" to "t-1")),
-                target = agent(inputs = listOf(ticket, reserved)),
-            )
+    fun `an envName the agent no longer declares is dropped`() =
+        runTest {
+            val inherited = inherit(origin = origin(inputParams = mapOf("TICKET_ID" to "123", "GONE" to "x")))
 
-        assertEquals(mapOf("ticket" to "123"), inherited.params)
-    }
+            assertEquals(mapOf("ticket" to "123"), inherited.params)
+        }
 
     @Test
-    fun `a row with no secret snapshot inherits an empty secret set`() {
-        assertEquals(emptySet(), inherit(origin = origin(secretInputKeys = null)).secretInputKeys)
-    }
+    fun `a reserved envName is dropped even when declared`() =
+        runTest {
+            val inherited =
+                inherit(
+                    origin = origin(inputParams = mapOf("TICKET_ID" to "123", "HMR_LEGACY" to "x", "HMR_LG_THREAD" to "t-1")),
+                    target = agent(inputs = listOf(ticket, reserved)),
+                )
+
+            assertEquals(mapOf("ticket" to "123"), inherited.params)
+        }
+
+    @Test
+    fun `a row with no secret snapshot inherits an empty secret set`() =
+        runTest {
+            assertEquals(emptySet(), inherit(origin = origin(secretInputKeys = null)).secretInputKeys)
+        }
 
     /**
      * §6: security-relevant input handling gets a property test. Whatever the origin

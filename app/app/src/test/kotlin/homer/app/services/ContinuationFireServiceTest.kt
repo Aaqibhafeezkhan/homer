@@ -11,6 +11,7 @@ import homer.app.models.ParamSource
 import homer.app.models.ParamType
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.Transformer
 import homer.app.services.persistence.ContinuationRepository
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
@@ -99,7 +100,7 @@ class ContinuationFireServiceTest {
                 99
             }
         val params = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(params), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(params), any(), any(), any()) } returns emptyMap()
         return params
     }
 
@@ -235,6 +236,7 @@ class ContinuationFireServiceTest {
             )
 
             assertEquals("123", params.captured["ticket"])
+            assertEquals(setOf("SECRET_TOKEN"), secretKeys.captured)
         }
 
     @Test
@@ -271,11 +273,15 @@ class ContinuationFireServiceTest {
             resolvedParams(inheritingAgent())
             coEvery { processManager.getProcessInfo(7) } returns originInfo()
 
-            fires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+            // The union is what the fired run must honour: the continuation's own
+            // registration snapshot and the origin run's, either alone would drop the
+            // other half's masking. ADR-0052, ADR-0101.
+            fires.fire(
+                pending().copy(originAgentName = "h", secretInputKeys = setOf("OWN_SECRET")),
+                ProcessStatus.FINISHED,
+            )
 
-            // ADR-0052: the origin run's `secret: true` flags travel with the values, so a
-            // later definition edit cannot expose them in status, logs or tags.
-            assertEquals(setOf("SECRET_TOKEN"), secretKeys.captured)
+            assertEquals(setOf("OWN_SECRET", "SECRET_TOKEN"), secretKeys.captured)
         }
 
     @Test
@@ -313,6 +319,49 @@ class ContinuationFireServiceTest {
             // The reason names the paramName and never the value, and no run was started.
             coVerify { repo.markFailed(5, match { it.contains("'ticket'") && !it.contains("not-a-number") }, 1000L) }
             coVerify(exactly = 0) { repo.markDispatched(5, any(), any()) }
+        }
+
+    @Test
+    fun `an inherited stored value is validated without running its transformer a second time`() =
+        runTest {
+            // The origin run stored SUMMARY already post-transformer — its JsonPath
+            // transformer extracted `$.summary` when it resolved its inputs. Running the
+            // transformer over the extracted string again would reject the param and fail
+            // every fire that inherits it. ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            resolvedParams(graph)
+            coEvery { processManager.getProcessInfo(7) } returns originInfo(mapOf("SUMMARY" to "the subject"))
+            val realFires =
+                ContinuationFireService(
+                    repo,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    mockk(relaxed = true),
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+
+            realFires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+
+            coVerify { repo.markDispatched(5, 99, 1000L) }
         }
 
     @Test

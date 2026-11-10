@@ -100,7 +100,7 @@ internal class DispatchService(
         val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
         // An inheriting dispatch to the same agent counts the origin run's stored inputs
         // as provided, so a `required: true` subject input registers. See ADR-0101.
-        val inherited = inheritedOriginInputs(origin, registration.agentName, owner, target, logger)
+        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, target, "Dispatch", logger)
         agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         if (effectiveTtl != null && effectiveTtl <= 0) {
@@ -206,20 +206,22 @@ internal class DispatchService(
         agent: Agent,
         answer: String,
         now: Long,
-    ): Dispatch {
-        // With `continuation.inheritInputs` on the target, the origin run's stored inputs
-        // ride under the dispatch's own params and the operator's answer, so an
-        // ask-and-dispatch back to the same agent keeps its subject inputs. See ADR-0101.
-        val inherited =
-            inheritedOriginInputs(
-                processManager.getProcessInfo(dispatch.originProcessId),
-                dispatch.originAgentName,
-                dispatch.owner,
-                agent,
-                logger,
-            )
-        val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
-        return try {
+    ): Dispatch =
+        try {
+            // The origin run's stored inputs ride under the dispatch's own params and the
+            // operator's answer (ADR-0101). The read sits inside the try like the
+            // continuation fire's: the claim already happened, so a failure of this
+            // suspend read must settle the dispatch FAILED, not escape `fire`.
+            val inherited =
+                inheritedOriginInputs(
+                    { processManager.getProcessInfo(dispatch.originProcessId) },
+                    dispatch.originAgentName,
+                    dispatch.owner,
+                    agent,
+                    "Dispatch",
+                    logger,
+                )
+            val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
             val processId =
                 agentRunStarter.start(
                     agent,
@@ -242,7 +244,12 @@ internal class DispatchService(
                     // maintenance gate. An origin that ended parks as before. ADR-0092.
                     serverDerivedParent = true,
                 ) {
-                    agentInputResolver.resolveFromParams(inputParams, agent) + reservedControlParams(inputParams)
+                    // Stored inherited values are already transformed — validate, never re-transform.
+                    agentInputResolver.resolveFromParams(
+                        inputParams,
+                        agent,
+                        skipTransformFor = inherited.storedParamNames(dispatch.params.keys + dispatch.answerParam),
+                    ) + reservedControlParams(inputParams)
                 }
             repository.markDispatched(dispatch.id, processId, now)
             logger.info("Dispatch {} fired -> run {}", dispatch.id, processId)
@@ -259,7 +266,6 @@ internal class DispatchService(
             logger.warn("Dispatch {} failed to fire (unexpected): {}", dispatch.id, msg, e)
             dispatch.copy(status = DispatchStatus.FAILED, error = msg, dispatchedAt = now)
         }
-    }
 
     /**
      * Starts [agent] immediately — no operator question, no dispatch row — and returns the

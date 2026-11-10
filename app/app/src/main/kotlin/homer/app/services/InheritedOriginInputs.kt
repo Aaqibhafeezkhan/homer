@@ -21,13 +21,9 @@ internal data class InheritedOriginInputs(
 }
 
 /**
- * The origin run's inputs a fire to [target] inherits, or [InheritedOriginInputs.NONE].
+ * Why: a resumed segment would otherwise lose its subject inputs — see ADR-0101.
  *
- * A LangGraph segment — and any continuation or dispatch a run registers for its own
- * agent — is a new run whose inputs are only what the continuation carries, so the
- * origin's subject inputs (`TICKET_ID`) are gone and with them the lock key's subject
- * and every `tags.fromInputs` tag. With `continuation.inheritInputs: true` on [target]
- * the fire merges the origin run's stored inputs under the continuation's own params.
+ * The origin run's inputs a fire to [target] inherits, or [InheritedOriginInputs.NONE].
  *
  * Every gate below fails closed to [InheritedOriginInputs.NONE] — an ineligible
  * continuation fires exactly as it did before this existed:
@@ -37,10 +33,11 @@ internal data class InheritedOriginInputs(
  *  - [originAgentName] must equal `target.name`: the LangGraph segment case. A
  *    continuation to a *different* agent inherits nothing, so a hop can never read
  *    another agent's inputs through this path.
- *  - [origin] (the origin run's row, which the caller already read) must exist and its
- *    owner must equal [originOwner], the owner the continuation/dispatch row carries.
- *    A purged row or an owner mismatch inherits nothing and logs; it does not fail the
- *    fire. Both sides are server-derived columns, never agent-written data.
+ *  - [origin] (the origin run's row, supplied as a supplier so a fire that inherits
+ *    nothing — the flag-off default — reads no row) must exist and its owner must equal
+ *    [originOwner], the owner the continuation/dispatch row carries. A purged row or an
+ *    owner mismatch inherits nothing and logs; it does not fail the fire. Both sides are
+ *    server-derived columns, never agent-written data.
  *
  * The values returned are the origin run's **stored** inputs, re-validated by the
  * caller's existing `AgentInputResolver` path at fire time — never trusted as "already
@@ -50,32 +47,43 @@ internal data class InheritedOriginInputs(
  * `HMR_LG_RESUME`) that a previous segment stored, and bounds the map by the declared
  * input set so inheritance cannot grow from segment to segment.
  */
-internal fun inheritedOriginInputs(
-    origin: ProcessInfo?,
+internal suspend fun inheritedOriginInputs(
+    origin: suspend () -> ProcessInfo?,
     originAgentName: String,
     originOwner: String?,
     target: Agent,
+    label: String,
     logger: Logger,
 ): InheritedOriginInputs {
     if (target.continuation?.inheritInputs != true) return InheritedOriginInputs.NONE
     if (originAgentName != target.name) return InheritedOriginInputs.NONE
-    if (origin == null) {
-        logger.warn("Continuation to agent '{}': origin run row is gone, inheriting no inputs", target.name)
+    val originInfo = origin()
+    if (originInfo == null) {
+        logger.warn("$label to agent '{}': origin run row is gone, inheriting no inputs", target.name)
         return InheritedOriginInputs.NONE
     }
-    if (origin.owner != originOwner) {
+    if (originInfo.owner != originOwner) {
         logger.warn(
-            "Continuation to agent '{}': origin run {} belongs to another owner, inheriting no inputs",
+            "$label to agent '{}': origin run {} belongs to another owner, inheriting no inputs",
             target.name,
-            origin.id,
+            originInfo.id,
         )
         return InheritedOriginInputs.NONE
     }
     return InheritedOriginInputs(
-        params = declaredParams(target, origin.inputParams),
-        secretInputKeys = origin.secretInputKeys.orEmpty(),
+        params = declaredParams(target, originInfo.inputParams),
+        secretInputKeys = originInfo.secretInputKeys.orEmpty(),
     )
 }
+
+/**
+ * The inherited map's paramNames whose value survives the fire's merge — those values
+ * are the origin run's **stored**, already-transformed ones, so the fire's
+ * `AgentInputResolver.resolveFromParams` must validate but never transform them a
+ * second time. An own param or the resume/answer value of the same name wins and is
+ * transformed as caller-supplied input. See [inheritedOriginInputs], ADR-0101.
+ */
+internal fun InheritedOriginInputs.storedParamNames(ownParamNames: Set<String>): Set<String> = params.keys - ownParamNames
 
 /**
  * The origin run's envName-keyed stored inputs as paramName-keyed params on [target],

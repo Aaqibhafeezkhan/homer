@@ -105,10 +105,11 @@ internal class ContinuationFireService(
             // See ADR-0101.
             val inherited =
                 inheritedOriginInputs(
-                    processManager.getProcessInfo(continuation.originProcessId),
+                    { processManager.getProcessInfo(continuation.originProcessId) },
                     continuation.originAgentName,
                     continuation.owner,
                     agent,
+                    label,
                     logger,
                 )
             val inputParams = inherited.params + continuation.params + (continuation.resumeParam to payload())
@@ -134,7 +135,13 @@ internal class ContinuationFireService(
                     // parked. A fire for an origin that already ended parks as before. ADR-0092.
                     serverDerivedParent = true,
                 ) {
-                    agentInputResolver.resolveFromParams(inputParams, agent) + reservedControlParams(inputParams)
+                    // The inherited values are the origin run's stored, already-transformed
+                    // ones — validate them, but never run the transformer a second time.
+                    agentInputResolver.resolveFromParams(
+                        inputParams,
+                        agent,
+                        skipTransformFor = inherited.storedParamNames(continuation.params.keys + continuation.resumeParam),
+                    ) + reservedControlParams(inputParams)
                 }
             repository.markDispatched(continuation.id, processId, now)
             logger.info("$label {} fired -> run {}", continuation.id, processId)

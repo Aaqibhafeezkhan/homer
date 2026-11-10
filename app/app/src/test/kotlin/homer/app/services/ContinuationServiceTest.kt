@@ -702,6 +702,7 @@ class ContinuationServiceTest {
                     },
                     any(),
                     true,
+                    any(),
                 )
             }
         }
@@ -790,7 +791,7 @@ class ContinuationServiceTest {
             val continuation = pending().copy(params = emptyMap(), resumeParam = "WORKER_RESULT")
             stubFireable(continuation)
             // The declared input resolves WORKER_RESULT from the appended resume payload.
-            every { inputResolver.resolveFromParams(any(), any(), any()) } returns
+            every { inputResolver.resolveFromParams(any(), any(), any(), any()) } returns
                 mapOf("WORKER_RESULT" to "the-result")
             val resolve = slot<suspend () -> Map<String, String>>()
             coEvery {
@@ -881,6 +882,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -936,6 +938,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -988,6 +991,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -1617,7 +1621,7 @@ class ContinuationServiceTest {
         } returns
             99
         val captured = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
         service().onProcessTerminal(11, ProcessStatus.FINISHED)
         resolve.captured.invoke()
@@ -1666,7 +1670,7 @@ class ContinuationServiceTest {
         } returns
             99
         val captured = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
         service().onProcessTerminal(10, ProcessStatus.FINISHED)
         resolve.captured.invoke()
@@ -1703,7 +1707,7 @@ class ContinuationServiceTest {
                 )
             } returns
                 99
-            every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+            every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
             service().onProcessTerminal(11, ProcessStatus.FAILED)
             resolve.captured.invoke()
@@ -1823,7 +1827,7 @@ class ContinuationServiceTest {
             } returns
                 99
             val captured = slot<Map<String, String>>()
-            every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+            every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
             service().onProcessTerminal(42, ProcessStatus.KILLED)
             resolve.captured.invoke()

@@ -289,7 +289,7 @@ class DispatchServiceTest {
                     99
                 }
             val params = slot<Map<String, String>>()
-            every { inputResolver.resolveFromParams(capture(params), any(), any()) } returns emptyMap()
+            every { inputResolver.resolveFromParams(capture(params), any(), any(), any()) } returns emptyMap()
 
             service().fire(questionId = "q1", answer = "us-east")
 
@@ -298,6 +298,103 @@ class DispatchServiceTest {
             assertEquals("eu", params.captured["region"])
             assertEquals("own", params.captured["ticket"])
             assertEquals("us-east", params.captured["reply"])
+        }
+
+    @Test
+    fun `fire unions the origin run's inherited secret keys into the starter's secret snapshot`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.name } returns "h"
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agent.continuation } returns AgentContinuationConfig(inheritInputs = true)
+            every { agent.effectiveInputs } returns listOf(Param(paramName = "ticket", envName = "TICKET_ID"))
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "reply", emptyMap(), 7, "h", null, 1)
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.WORKING,
+                    agentName = "h",
+                    inputParams = mapOf("TICKET_ID" to "123"),
+                    secretInputKeys = setOf("SECRET_TOKEN"),
+                )
+            val secretKeys = slot<Set<String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), capture(secretKeys), any(), any(), any(), any())
+            } returns 99
+
+            service().fire(questionId = "q1", answer = "us-east")
+
+            // Without this union an inherited `secret: true` value reaches the fired run's
+            // status, logs and tags unmasked. ADR-0052, ADR-0101.
+            assertEquals(setOf("SECRET_TOKEN"), secretKeys.captured)
+
+            // The flag off inherits nothing: the snapshot is the dispatch's own (none here).
+            every { agent.continuation } returns null
+            service().fire(questionId = "q1", answer = "us-east")
+
+            assertEquals(emptySet(), secretKeys.captured)
+        }
+
+    @Test
+    fun `fire fails the dispatch naming the param when the target rejects an inherited value`() =
+        runTest {
+            // A real resolver, so the merged map really goes through ParamValidator at fire
+            // time: the origin run accepted `TICKET_ID` as ANY, the target now declares it
+            // integer. The operator's answer is lost — the dispatch settles FAILED, naming
+            // the param and never the value. ADR-0101.
+            val strict =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(paramName = "ticket", envName = "TICKET_ID", src = ParamSource.QUERY, type = ParamType.INT),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            every { agents.agents } returns mapOf("h" to strict)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "reply", emptyMap(), 7, "h", null, 1)
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.FINISHED,
+                    agentName = "h",
+                    inputParams = mapOf("TICKET_ID" to "not-a-number"),
+                )
+            val strictService =
+                DispatchService(
+                    repo,
+                    questions,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    broadcaster,
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+            // The mocked starter invokes the fire's input resolution, so the real resolver
+            // really rejects the inherited value.
+            val resolve = slot<suspend () -> Map<String, String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    resolve.captured.invoke()
+                    99
+                }
+
+            val result = strictService.fire(questionId = "q1", answer = "us-east")
+
+            coVerify { repo.markFailed(5, match { it.contains("'ticket'") && !it.contains("not-a-number") }, 1000L) }
+            coVerify(exactly = 0) { repo.markDispatched(5, any(), any()) }
+            assertEquals(DispatchStatus.FAILED, result?.status)
         }
 
     @Test

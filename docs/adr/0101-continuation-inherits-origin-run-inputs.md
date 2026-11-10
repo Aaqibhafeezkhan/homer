@@ -47,10 +47,26 @@ the value in hand.
   back as `--continue-param` on every dispatch.
 - **A new `POST /api/v1/processes/{id}/resume`-style endpoint** the runtime calls
   itself.
+- **A `dispatch.inheritInputs` sibling flag** — one flag per fire path, so a
+  dispatch could opt in independently of continuations.
+- **A top-level `inheritOriginInputs` flag** — detached from any fire-path group.
 
 ## Decision Outcome
 
 Chosen option: **"Server-side inheritance behind an opt-in agent flag"**.
+
+The flag lives under `continuation` — `continuation: { inheritInputs: true }` — even
+though it changes ask-and-dispatch fires too. The decision is deliberate: the
+mechanism is one merge of a registering run's inputs into a fire back to the same
+agent, and the LangGraph segment is the case that motivates it, so it sits beside
+the only continuation configuration the agent format already groups. A
+`dispatch.inheritInputs` sibling was rejected because it lets the two halves of one
+behaviour disagree — an agent inheriting on continuations but not dispatches, or the
+reverse, is a state with no use case and one more combination to test; a top-level
+`inheritOriginInputs` was rejected because it hides the same behaviour behind a name
+that says nothing about which fires it reaches. An ask-and-dispatch author who reads
+the field table and misses that the flag covers dispatches loses nothing: the
+`continuation` row states it in one sentence.
 
 One internal helper (`inheritedOriginInputs`) computes what a fire inherits, and
 both fire paths (`ContinuationFireService`, `DispatchService`) and both
@@ -86,11 +102,25 @@ helper:
 
 Values are re-validated at fire time by the same `AgentInputResolver` /
 `ParamValidator` / `inputSchema` path a caller's value takes — never trusted as
-"already validated". They are merged **in memory only**: no `continuations` or
+"already validated". Because a stored input was resolved once already, the
+transformer is **not** applied a second time: re-running e.g. a `jsonPath`
+transformer over the already-extracted value would reject every inherited value of
+such an input. They are merged **in memory only**: no `continuations` or
 `dispatches` column is added or written, so no row that holds no secrets today
 gains one. Redaction rides the existing `extraSecretInputKeys` union of the
 target's current flags and the origin's snapshot, which is also what keeps a
 secret value out of `langfuseTraceTags` and `?tag=`.
+
+This is the second mechanism that replays a run's stored inputs against the
+current definition — the other is `AgentInputResolver.resolveRetryParams`, which
+retry uses. The divergence is deliberate. Retry validates **eagerly** and throws
+on a required input the original run does not show, because a retry reruns the
+same agent with nothing else to supply; a fire's own params, resume payload or
+operator answer can supply a required input the registering run lacked, so
+inheritance soft-drops what is absent and defers validation to the fire's merged
+resolution, where the whole param map is checked together. Retry also keys by
+`envName` end to end, while inheritance bridges to the continuation's
+paramName-keyed params.
 
 ### Consequences
 

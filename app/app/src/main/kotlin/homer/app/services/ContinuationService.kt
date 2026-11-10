@@ -139,7 +139,7 @@ internal class ContinuationService(
         val agent = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, target)
         // An inheriting continuation to the same agent counts the origin run's stored
         // inputs as provided, so a `required: true` subject input registers. See ADR-0101.
-        val inherited = inheritedOriginInputs(origin, registration.agentName, owner, agent, logger)
+        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, agent, "Continuation", logger)
         agentInputResolver.validateSatisfiable(agent, params.keys + resumeParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         if (effectiveTtl != null && effectiveTtl <= 0) {
