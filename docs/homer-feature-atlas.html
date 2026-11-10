@@ -1114,7 +1114,7 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
 
         <article class="f">
           <h3>Tool allow/deny lists <span class="where">claude</span></h3>
-          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code>.</p>
+          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code> — Homer warns at load for a step that sets neither.</p>
           <pre><code>options:
   allowedTools: [Read, Grep, Glob]
   disallowedTools: [Bash, Write]</code></pre>

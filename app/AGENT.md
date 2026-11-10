@@ -1532,7 +1532,7 @@ options:
 | `maxBudgetUsd` | `Double` | No | `null` | Upper bound on spend for this run |
 | `sessionId` | `String` | No | `null` | UUID identifying the session |
 | `addDir` | `String \| List<String>` | No | `null` | Additional director(y/ies) to add to context. A bare string adds one; a list adds several (emitted as `--add-dir a b`). |
-| `allowedTools` | `List<String>` | No | `null` | Tools that run without a permission prompt. Not a restriction on its own: with `dangerouslySkipPermissions` (or `permissionMode: bypassPermissions`) every tool runs anyway. See [Tool Allowlisting/Denylisting](#tool-allowlistingdenylisting) |
+| `allowedTools` | `List<String>` | No | `null` | Tools that run without a permission prompt. Not a restriction on its own: with `dangerouslySkipPermissions` (or `permissionMode: bypassPermissions`) every tool runs anyway, and a step that sets neither `tools` nor `disallowedTools` logs a WARN at load. See [Tool Allowlisting/Denylisting](#tool-allowlistingdenylisting) |
 | `disallowedTools` | `List<String>` | No | `null` | Tools removed from the session; holds under every permission setting |
 | `mcpConfig` | `String \| List<String>` | No | `null` | MCP configuration file path(s). A bare string loads one; a list loads several (emitted as `--mcp-config a b`). |
 | `strictMcpConfig` | `Boolean` | No | `false` | Only use MCP servers from `mcpConfig`, ignoring all other MCP configurations |
@@ -1644,7 +1644,7 @@ options:
     - Edit
 ```
 
-**Note:** A step that skips permissions is contained by `disallowedTools` (or `tools`), not by `allowedTools`. See the case study [Containing a Claude step](../docs/case-studies/claude-tool-limits.md).
+**Note:** A step that skips permissions is contained by `disallowedTools` (or `tools`), not by `allowedTools`. Homer warns at load for each such step that sets `allowedTools` and neither `tools` nor `disallowedTools`, naming the command and pointing at both containment options; `agentdebug validate` reports the same warning on the command's line. See the case study [Containing a Claude step](../docs/case-studies/claude-tool-limits.md).
 
 ### MCP Configuration
 
