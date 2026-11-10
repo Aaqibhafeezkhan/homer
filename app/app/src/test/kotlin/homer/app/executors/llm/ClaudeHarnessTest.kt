@@ -552,6 +552,83 @@ class ClaudeHarnessTest {
     }
 
     @Test
+    fun `a success result with is_error fails the turn and names the refusal`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal","result":"I cannot help with that."}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (stop_reason=refusal)"), e.status)
+
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertContains(malformed.reason, "is_error (stop_reason=refusal)")
+    }
+
+    @Test
+    fun `a success result with is_error on an API error names the terminal reason and status`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":529}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (terminal_reason=api_error, api_error_status=529)"), e.status)
+
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertContains(malformed.reason, "is_error (terminal_reason=api_error, api_error_status=529)")
+    }
+
+    @Test
+    fun `a success result with is_error and no diagnosis field still fails on the flag alone`() {
+        val e = events("""{"type":"result","subtype":"success","is_error":true}""").single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), e.status)
+    }
+
+    @Test
+    fun `is_error false and a result without is_error stay successful`() {
+        assertEquals(
+            TurnStatus.Success,
+            (
+                events(
+                    """{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}""",
+                ).single() as LlmEvent.TurnEnd
+            ).status,
+        )
+        // Older CLI output carries no `is_error` at all.
+        assertEquals(
+            TurnStatus.Success,
+            (events("""{"type":"result","subtype":"success","result":"done"}""").single() as LlmEvent.TurnEnd).status,
+        )
+    }
+
+    @Test
+    fun `an is_error turn end still carries usage cost model and durations`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal","duration_ms":10,"duration_api_ms":5,"num_turns":2,"total_cost_usd":0.5,"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4},"modelUsage":{"b":{},"a":{}}}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (stop_reason=refusal)"), e.status)
+        assertEquals(0.5, e.costUsd)
+        assertEquals(1L, e.usage.input)
+        assertEquals(2L, e.usage.output)
+        assertEquals(3L, e.usage.cacheRead)
+        assertEquals(4L, e.usage.cacheWrite)
+        assertEquals("a+b", e.model)
+        assertEquals(10L, e.durationMs)
+        assertEquals(5L, e.durationApiMs)
+        assertEquals(2, e.numTurns)
+    }
+
+    @Test
+    fun `a diagnosis field of an unexpected shape degrades instead of failing the event`() {
+        // An object where a string is expected and an array where the status is: neither can be
+        // quoted, so each names no value — and the turn still fails on the flag, with its cost.
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":{"why":"refusal"},"terminal_reason":[1],"api_error_status":{"code":529},"total_cost_usd":0.25}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), e.status)
+        assertEquals(0.25, e.costUsd)
+    }
+
+    @Test
     fun `a retyped known field is Malformed not a throw`() {
         val t = harness.translate(line("""{"type":"assistant","message":{"content":"not-a-list"}}"""))
         assertIs<Translation.Malformed>(t)
