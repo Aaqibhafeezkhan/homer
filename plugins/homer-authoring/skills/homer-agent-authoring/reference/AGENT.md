@@ -714,6 +714,28 @@ To extract several fields, add one `resultEnvParam` entry per field.
 
 Note: this is the Claude CLI's own estimate. The cost Homer charges may differ when `llmPrice.sessionSpend` is configured (see `SERVER.md → LLM price`); the charged figure is on the status API as `llmAccounting.costUsd`.
 
+#### Claude result judgement
+
+A `!<claude>` step succeeds only when the CLI's `result` event carries `subtype: "success"` **and** no
+`is_error: true`. The CLI reports `is_error: true` together with `subtype: "success"` when the turn ended
+on an error it reported in place of a model response: a model refusal (`stop_reason: "refusal"`), a
+deferred tool that was unavailable on resume, or a terminal API error (`terminal_reason`,
+`api_error_status`).
+
+Such a result fails the step, with the CLI's own diagnosis as the reason — for example
+`is_error (stop_reason=refusal)` or `is_error (terminal_reason=api_error, api_error_status=529)`. The
+`result` text of such a turn is an error string and never enters that reason.
+
+- `retry` retries the attempt like any other failed one, and `escalate` judges it `malformed` with
+  `HMR_LLM_EXIT_CODE` `-1`, so a stronger tier can take the step over.
+- Cost and usage from the result are still recorded, and the step is charged as usual.
+- `continueIfFail` does **not** catch it: the malformed verdict fails the run before that flag is
+  consulted, so `retry` and `escalate` are the only levers. An agent that treats a refusal as a valid
+  answer (a classifier, say) has to escalate to a model that answers instead.
+
+Results without `is_error` (older CLI releases) are unchanged, as are every `error_*` subtype, a
+non-zero exit and a stdout without a `result` event.
+
 ### Command.Codex - OpenAI Codex CLI Execution
 
 Executes the OpenAI Codex CLI (`codex exec`) with the same interface shape as
