@@ -552,6 +552,103 @@ class ClaudeHarnessTest {
     }
 
     @Test
+    fun `a success result with is_error fails the turn and names the refusal`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal","result":"I cannot help with that."}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (stop_reason=refusal)"), e.status)
+
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertContains(malformed.reason, "is_error (stop_reason=refusal)")
+    }
+
+    @Test
+    fun `a success result with is_error on an API error names the terminal reason and status`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":529}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (terminal_reason=api_error, api_error_status=529)"), e.status)
+
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertContains(malformed.reason, "is_error (terminal_reason=api_error, api_error_status=529)")
+    }
+
+    @Test
+    fun `a success result with is_error and no diagnosis field still fails on the flag alone`() {
+        val e = events("""{"type":"result","subtype":"success","is_error":true}""").single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), e.status)
+    }
+
+    @Test
+    fun `is_error false and a result without is_error stay successful`() {
+        assertEquals(
+            TurnStatus.Success,
+            (
+                events(
+                    """{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}""",
+                ).single() as LlmEvent.TurnEnd
+            ).status,
+        )
+        // Older CLI output carries no `is_error` at all.
+        assertEquals(
+            TurnStatus.Success,
+            (events("""{"type":"result","subtype":"success","result":"done"}""").single() as LlmEvent.TurnEnd).status,
+        )
+    }
+
+    @Test
+    fun `an is_error turn end still carries usage cost model and durations`() {
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal","duration_ms":10,"duration_api_ms":5,"num_turns":2,"total_cost_usd":0.5,"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4},"modelUsage":{"b":{},"a":{}}}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error (stop_reason=refusal)"), e.status)
+        assertEquals(0.5, e.costUsd)
+        assertEquals(1L, e.usage.input)
+        assertEquals(2L, e.usage.output)
+        assertEquals(3L, e.usage.cacheRead)
+        assertEquals(4L, e.usage.cacheWrite)
+        assertEquals("a+b", e.model)
+        assertEquals(10L, e.durationMs)
+        assertEquals(5L, e.durationApiMs)
+        assertEquals(2, e.numTurns)
+    }
+
+    @Test
+    fun `a diagnosis field of an unexpected shape degrades instead of failing the event`() {
+        // An object where a string is expected and an array where the status is: neither can be
+        // quoted, so each names no value — and the turn still fails on the flag, with its cost.
+        val e =
+            events(
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":{"why":"refusal"},"terminal_reason":[1],"api_error_status":{"code":529},"total_cost_usd":0.25}""",
+            ).single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), e.status)
+        assertEquals(0.25, e.costUsd)
+    }
+
+    @Test
+    fun `an is_error flag of an unexpected shape is pinned — a quoted boolean decodes, a number or null fails the whole event`() {
+        // The flag stays a strict Boolean. kotlinx accepts a quoted `"true"`, so the string form
+        // still fails the turn on the flag and keeps its cost. A number or an explicit null is not
+        // a boolean at all: the result line is Malformed and the cost/usage riding on it never
+        // reach a TurnEnd — the fail-closed trade-off the untyped diagnosis fields do not take.
+        val quoted =
+            events("""{"type":"result","subtype":"success","is_error":"true","total_cost_usd":0.25}""")
+                .single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), quoted.status)
+        assertEquals(0.25, quoted.costUsd)
+
+        listOf(
+            """{"type":"result","subtype":"success","is_error":1,"total_cost_usd":0.25}""",
+            """{"type":"result","subtype":"success","is_error":null,"total_cost_usd":0.25}""",
+        ).forEach { json ->
+            assertIs<Translation.Malformed>(harness.translate(line(json)), "a non-boolean is_error must fail the whole event: $json")
+        }
+    }
+
+    @Test
     fun `a retyped known field is Malformed not a throw`() {
         val t = harness.translate(line("""{"type":"assistant","message":{"content":"not-a-list"}}"""))
         assertIs<Translation.Malformed>(t)
@@ -576,7 +673,8 @@ class ClaudeHarnessTest {
     @Test
     fun `a Stopped turn end is Terminal only when maxTurnsExitCode is set`() {
         val stopped = listOf(LlmEvent.TurnEnd(TurnStatus.Stopped("error_max_turns")))
-        assertIs<Inspection.Malformed>(harness.inspect(stopped, emptyList(), command))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(stopped, emptyList(), command))
+        assertEquals("result event is not a successful turn: error_max_turns", malformed.reason)
         val opted = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 7))
         assertEquals(Inspection.Terminal(7), harness.inspect(stopped, emptyList(), opted))
     }
@@ -585,14 +683,16 @@ class ClaudeHarnessTest {
     fun `a result with a missing subtype translates to a Failed turn end and is Malformed`() {
         val e = events("""{"type":"result"}""").single() as LlmEvent.TurnEnd
         assertEquals(TurnStatus.Failed("<missing>"), e.status)
-        assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertEquals("result event is not a successful turn: <missing>", malformed.reason)
     }
 
     @Test
     fun `a Failed turn end is Malformed even when maxTurnsExitCode is set — only Stopped becomes Terminal`() {
         val failed = listOf(LlmEvent.TurnEnd(TurnStatus.Failed("error_during_execution")))
         val opted = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 7))
-        assertIs<Inspection.Malformed>(harness.inspect(failed, emptyList(), opted))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(failed, emptyList(), opted))
+        assertEquals("result event is not a successful turn: error_during_execution", malformed.reason)
     }
 
     @Test

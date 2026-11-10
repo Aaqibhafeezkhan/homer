@@ -41,6 +41,31 @@ class LlmAttemptOutputTest {
     }
 
     @Test
+    fun `an exit-0 attempt whose only result is an is_error is a malformed failure`(
+        @TempDir dir: Path,
+    ) {
+        // The real ClaudeHarness, so the exit-0-but-error result reaches the retry/escalate
+        // machinery as malformed rather than as a success. See ADR-0079.
+        val claude = LlmAttemptOutput(ClaudeHarness(), LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
+        val out =
+            dir.resolve("out").also {
+                it.writeText(
+                    """{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":529}""" + "\n",
+                )
+            }
+        val result = TestFixtures.mockCommandResult(exitCode = 0, stdOut = out)
+
+        val failure =
+            assertIs<RetryOutcome.MalformedFailure>(
+                claude.exitZeroOutcome(command, result, accounting, out, attemptIndex = 0, span = TestFixtures.mockSpan()),
+            )
+        assertEquals(
+            "result event is not a successful turn: is_error (terminal_reason=api_error, api_error_status=529)",
+            failure.exception.reason,
+        )
+    }
+
+    @Test
     fun `the lenient read skips unparseable lines and counts them as malformed`(
         @TempDir dir: Path,
     ) {
