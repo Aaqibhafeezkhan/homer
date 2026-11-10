@@ -95,9 +95,13 @@ internal class DispatchService(
         // reservedControlParams merge was narrowed, into the target's PATH.
         validatePayloadParam(answerParam, "answerParam", params)
         questionsService.validateQuestionInput(text, options)
-        val owner = processManager.getProcessInfo(originProcessId)?.owner
+        val origin = processManager.getProcessInfo(originProcessId)
+        val owner = origin?.owner
         val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
-        agentInputResolver.validateSatisfiable(target, params.keys + answerParam)
+        // An inheriting dispatch to the same agent counts the origin run's stored inputs
+        // as provided, so a `required: true` subject input registers. See ADR-0101.
+        val inherited = inheritedOriginInputs(origin, registration.agentName, owner, target, logger)
+        agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         if (effectiveTtl != null && effectiveTtl <= 0) {
             throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")
@@ -203,7 +207,18 @@ internal class DispatchService(
         answer: String,
         now: Long,
     ): Dispatch {
-        val inputParams = dispatch.params + (dispatch.answerParam to answer)
+        // With `continuation.inheritInputs` on the target, the origin run's stored inputs
+        // ride under the dispatch's own params and the operator's answer, so an
+        // ask-and-dispatch back to the same agent keeps its subject inputs. See ADR-0101.
+        val inherited =
+            inheritedOriginInputs(
+                processManager.getProcessInfo(dispatch.originProcessId),
+                dispatch.originAgentName,
+                dispatch.owner,
+                agent,
+                logger,
+            )
+        val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
         return try {
             val processId =
                 agentRunStarter.start(
@@ -211,7 +226,7 @@ internal class DispatchService(
                     emptyList(),
                     "dispatch",
                     owner = dispatch.owner,
-                    extraSecretInputKeys = dispatch.secretInputKeys.orEmpty(),
+                    extraSecretInputKeys = dispatch.secretInputKeys.orEmpty() + inherited.secretInputKeys,
                     parentProcessId = dispatch.originProcessId,
                     // [information_disclosure / CWE-200] The fired run is attributed to the
                     // dispatch's owner, so the root it inherits is gated on that owner's

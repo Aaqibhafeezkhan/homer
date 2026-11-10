@@ -99,14 +99,26 @@ internal class ContinuationFireService(
         payload: suspend () -> String,
     ) {
         try {
-            val inputParams = continuation.params + (continuation.resumeParam to payload())
+            // With `continuation.inheritInputs` on the target, the origin run's stored
+            // inputs ride under the continuation's own params and the resume payload, so
+            // a resumed segment keeps its lock key's subject and its fromInputs tags.
+            // See ADR-0101.
+            val inherited =
+                inheritedOriginInputs(
+                    processManager.getProcessInfo(continuation.originProcessId),
+                    continuation.originAgentName,
+                    continuation.owner,
+                    agent,
+                    logger,
+                )
+            val inputParams = inherited.params + continuation.params + (continuation.resumeParam to payload())
             val processId =
                 agentRunStarter.start(
                     agent,
                     emptyList(),
                     "continuation",
                     owner = continuation.owner,
-                    extraSecretInputKeys = continuation.secretInputKeys.orEmpty(),
+                    extraSecretInputKeys = continuation.secretInputKeys.orEmpty() + inherited.secretInputKeys,
                     parentProcessId = continuation.originProcessId,
                     // [information_disclosure / CWE-200] The fired run is attributed to the
                     // continuation's owner, so the root it inherits is gated on that owner's

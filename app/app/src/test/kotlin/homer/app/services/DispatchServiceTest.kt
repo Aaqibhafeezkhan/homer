@@ -9,6 +9,7 @@ import homer.app.exceptions.TooManyPendingDispatchesException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
+import homer.app.models.AgentContinuationConfig
 import homer.app.models.AgentDispatchConfig
 import homer.app.models.Command
 import homer.app.models.DispatchConfig
@@ -195,6 +196,108 @@ class DispatchServiceTest {
                 service.create(7, "q", emptyList(), "h", answerParam = "answer", params = mapOf("other" to "x"), ttlSec = null)
             }
             coVerify(exactly = 0) { repo.create(any(), any(), any()) }
+        }
+
+    @Test
+    fun `create counts the origin run's stored inputs for an inheriting same-agent target, and not without the flag`() =
+        runTest {
+            every { questions.registrationFor(7) } returns
+                QuestionsService.Registration("h", closed = false)
+            val inheriting =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo"))),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                    inputs = listOf(Param(paramName = "ticket", envName = "TICKET_ID", required = true)),
+                )
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.WORKING,
+                    agentName = "h",
+                    inputParams = mapOf("TICKET_ID" to "123"),
+                )
+            coEvery { repo.create(any(), any(), any()) } returns 5
+            // A real AgentInputResolver: the point is registration-time satisfiability.
+            val service =
+                DispatchService(
+                    repo,
+                    questions,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    broadcaster,
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+
+            // The origin run already carries TICKET_ID, so the required input is satisfiable
+            // without the caller passing it. ADR-0101.
+            every { agents.agents } returns mapOf("h" to inheriting)
+            service.create(7, "q", emptyList(), "h", "answer", emptyMap(), null)
+            coVerify(exactly = 1) { repo.create(any(), any(), any()) }
+
+            // The same target with the flag off is unsatisfiable, exactly as before.
+            every { agents.agents } returns mapOf("h" to inheriting.copy(continuation = null))
+            assertFailsWith<ValidationException> {
+                service.create(7, "q", emptyList(), "h", "answer", emptyMap(), null)
+            }
+        }
+
+    @Test
+    fun `fire inherits the origin run's inputs, and the dispatch's own params and answer win`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.name } returns "h"
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agent.continuation } returns AgentContinuationConfig(inheritInputs = true)
+            every { agent.effectiveInputs } returns
+                listOf(
+                    Param(paramName = "ticket", envName = "TICKET_ID"),
+                    Param(paramName = "region", envName = "REGION"),
+                )
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(
+                    id = 5,
+                    questionId = "q1",
+                    status = DispatchStatus.PENDING,
+                    agentName = "h",
+                    answerParam = "reply",
+                    params = mapOf("ticket" to "own"),
+                    originProcessId = 7,
+                    originAgentName = "h",
+                    expiresAt = null,
+                    createdAt = 1,
+                )
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.WORKING,
+                    agentName = "h",
+                    inputParams = mapOf("TICKET_ID" to "123", "REGION" to "eu"),
+                )
+            val resolve = slot<suspend () -> Map<String, String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    resolve.captured.invoke()
+                    99
+                }
+            val params = slot<Map<String, String>>()
+            every { inputResolver.resolveFromParams(capture(params), any(), any()) } returns emptyMap()
+
+            service().fire(questionId = "q1", answer = "us-east")
+
+            // The origin run's stored REGION rides in keyed by its paramName; the dispatch's
+            // own `ticket` and the operator's answer both win over the stored values. ADR-0101.
+            assertEquals("eu", params.captured["region"])
+            assertEquals("own", params.captured["ticket"])
+            assertEquals("us-east", params.captured["reply"])
         }
 
     @Test
