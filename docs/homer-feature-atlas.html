@@ -1114,7 +1114,7 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
 
         <article class="f">
           <h3>Tool allow/deny lists <span class="where">claude</span></h3>
-          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code>.</p>
+          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code> — Homer warns at load for a step that sets neither.</p>
           <pre><code>options:
   allowedTools: [Read, Grep, Glob]
   disallowedTools: [Bash, Write]</code></pre>
@@ -1870,6 +1870,13 @@ homer-inbox</code></pre>
           <code>homer-dispatch</code>, <code>ask-and-dispatch</code> and <code>homer-join</code>, and every continuation
           target (<code>--continue-agent</code> / <code>continueAgent</code>), must additionally opt in with
           <code>dispatch: { enabled: true }</code>; the in-chain <code>!&lt;agent&gt;</code> command needs no opt-in.</p>
+        <p>A fired run starts empty: it carries only what the dispatch or continuation passes, not the inputs the
+          registering run resolved. An agent that resumes <em>itself</em> can opt in with
+          <code>continuation: { inheritInputs: true }</code> to keep them, merged under the fire's own params and
+          resume payload — so a resumed segment renders its lock key with the real subject and keeps its
+          <code>tags.fromInputs</code> tags. The fire must target the same agent, the registering run must belong to
+          the same owner, only declared inputs are inherited (reserved <code>HMR_*</code> markers never ride along),
+          and every inherited value is re-validated and its secrets masked exactly as before.</p>
       </div>
 
       <figure class="diagram">

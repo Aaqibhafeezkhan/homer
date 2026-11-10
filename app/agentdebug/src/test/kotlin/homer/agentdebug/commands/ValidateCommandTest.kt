@@ -191,6 +191,52 @@ class ValidateCommandTest {
     }
 
     @Test
+    fun `a claude step that skips permissions with only allowedTools is flagged, a contained one is not`(
+        @TempDir tempDir: Path,
+    ) {
+        val agentDir = tempDir.resolve("tool-limits").createDirectories()
+        agentDir.resolve("agent.yaml").writeText(
+            """
+            name: tool-limits
+            commands:
+              - !<claude>
+                label: "verify"
+                prompt: !<prompt>
+                  prompt: "loose"
+                options:
+                  dangerouslySkipPermissions: true
+                  allowedTools: [Read, Grep, Glob]
+              - !<claude>
+                label: "ship"
+                prompt: !<prompt>
+                  prompt: "tight"
+                options:
+                  dangerouslySkipPermissions: true
+                  allowedTools: [Read]
+                  disallowedTools: [Agent, Task]
+            """.trimIndent(),
+        )
+        val appConfig =
+            AppConfig(
+                agentsSearchPath = tempDir.toString(),
+                workspaceRootPath = tempDir.resolve("workspace").toString(),
+                databasePath = tempDir.resolve("db.sqlite").toString(),
+            )
+
+        val out =
+            capture {
+                assertDoesNotThrow { ValidateCommand(appConfig, "tool-limits", "config.yaml").run() }
+            }
+
+        assertContains(
+            out,
+            "✓ Command[0] claude: valid (warning: skips permissions, so 'allowedTools' restricts nothing",
+        )
+        assertContains(out, "✓ Command[1] claude: valid\n")
+        assertContains(out, "Validation passed.")
+    }
+
+    @Test
     fun `an unknown agent is reported with the available names`(
         @TempDir tempDir: Path,
     ) {

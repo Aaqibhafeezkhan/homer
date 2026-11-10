@@ -95,9 +95,13 @@ internal class DispatchService(
         // reservedControlParams merge was narrowed, into the target's PATH.
         validatePayloadParam(answerParam, "answerParam", params)
         questionsService.validateQuestionInput(text, options)
-        val owner = processManager.getProcessInfo(originProcessId)?.owner
+        val origin = processManager.getProcessInfo(originProcessId)
+        val owner = origin?.owner
         val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
-        agentInputResolver.validateSatisfiable(target, params.keys + answerParam)
+        // An inheriting dispatch to the same agent counts the origin run's stored inputs
+        // as provided, so a `required: true` subject input registers. See ADR-0101.
+        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, target, "Dispatch", logger)
+        agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         if (effectiveTtl != null && effectiveTtl <= 0) {
             throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")
@@ -202,16 +206,29 @@ internal class DispatchService(
         agent: Agent,
         answer: String,
         now: Long,
-    ): Dispatch {
-        val inputParams = dispatch.params + (dispatch.answerParam to answer)
-        return try {
+    ): Dispatch =
+        try {
+            // The origin run's stored inputs ride under the dispatch's own params and the
+            // operator's answer (ADR-0101). The read sits inside the try like the
+            // continuation fire's: the claim already happened, so a failure of this
+            // suspend read must settle the dispatch FAILED, not escape `fire`.
+            val inherited =
+                inheritedOriginInputs(
+                    { processManager.getProcessInfo(dispatch.originProcessId) },
+                    dispatch.originAgentName,
+                    dispatch.owner,
+                    agent,
+                    "Dispatch",
+                    logger,
+                )
+            val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
             val processId =
                 agentRunStarter.start(
                     agent,
                     emptyList(),
                     "dispatch",
                     owner = dispatch.owner,
-                    extraSecretInputKeys = dispatch.secretInputKeys.orEmpty(),
+                    extraSecretInputKeys = dispatch.secretInputKeys.orEmpty() + inherited.secretInputKeys,
                     parentProcessId = dispatch.originProcessId,
                     // [information_disclosure / CWE-200] The fired run is attributed to the
                     // dispatch's owner, so the root it inherits is gated on that owner's
@@ -227,7 +244,12 @@ internal class DispatchService(
                     // maintenance gate. An origin that ended parks as before. ADR-0092.
                     serverDerivedParent = true,
                 ) {
-                    agentInputResolver.resolveFromParams(inputParams, agent) + reservedControlParams(inputParams)
+                    // Stored inherited values are already transformed — validate, never re-transform.
+                    agentInputResolver.resolveFromParams(
+                        inputParams,
+                        agent,
+                        skipTransformFor = inherited.storedParamNames(dispatch.params.keys + dispatch.answerParam),
+                    ) + reservedControlParams(inputParams)
                 }
             repository.markDispatched(dispatch.id, processId, now)
             logger.info("Dispatch {} fired -> run {}", dispatch.id, processId)
@@ -244,7 +266,6 @@ internal class DispatchService(
             logger.warn("Dispatch {} failed to fire (unexpected): {}", dispatch.id, msg, e)
             dispatch.copy(status = DispatchStatus.FAILED, error = msg, dispatchedAt = now)
         }
-    }
 
     /**
      * Starts [agent] immediately — no operator question, no dispatch row — and returns the

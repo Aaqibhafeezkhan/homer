@@ -99,6 +99,7 @@
     },
     "mcp": { "$ref": "#/$defs/AgentMcpConfig" },
     "dispatch": { "$ref": "#/$defs/AgentDispatchConfig" },
+    "continuation": { "$ref": "#/$defs/AgentContinuationConfig" },
     "cooldown": { "$ref": "#/$defs/Cooldown" },
     "telemetry": { "$ref": "#/$defs/AgentTelemetry" },
     "tags": { "$ref": "#/$defs/Tags" },
@@ -188,6 +189,18 @@
           "type": "boolean",
           "default": false,
           "description": "Allow this agent to be started by ask-and-dispatch."
+        }
+      }
+    },
+    "AgentContinuationConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Opt-in: a continuation fired to this agent from a run of the same agent inherits that run's resolved inputs.",
+      "properties": {
+        "inheritInputs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Merge the origin run's stored inputs under the continuation's own params and resume payload, so a resumed segment keeps a real lock key and its tags.fromInputs tags. The continuation's own params and the resume/answer param win on conflict; a continuation to a different agent inherits nothing."
         }
       }
     },

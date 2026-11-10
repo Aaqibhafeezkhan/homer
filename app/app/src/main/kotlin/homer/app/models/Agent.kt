@@ -61,6 +61,10 @@ data class Agent(
     // Opt-in: may this agent be the TARGET of an ask-and-dispatch dispatch?
     // Null or enabled=false = cannot be dispatched. See the ask-and-dispatch ADR.
     val dispatch: AgentDispatchConfig? = null,
+    // Opt-in: a continuation fired to THIS agent from a run of the same agent
+    // inherits that run's resolved inputs, so the resumed segment's lock key and
+    // `tags.fromInputs` tags keep their subject. See ADR-0101.
+    val continuation: AgentContinuationConfig? = null,
     /** How this agent's runs appear in the OTel collector. See [AgentTelemetry]. */
     val telemetry: AgentTelemetry = AgentTelemetry(),
     /** The run's subject tags: what it runs over, and how they are declared. See [Tags]. */
@@ -270,6 +274,17 @@ data class AgentMcpConfig(
 @Serializable
 data class AgentDispatchConfig(
     val enabled: Boolean = false,
+)
+
+/**
+ * Opt-in inheritance of the registering run's inputs by a continuation fired to the
+ * same agent. `inheritInputs: true` merges the origin run's stored inputs under the
+ * continuation's own params and resume payload, so a resumed LangGraph segment keeps
+ * a real lock key and its `tags.fromInputs` tags. Default off. See ADR-0101.
+ */
+@Serializable
+data class AgentContinuationConfig(
+    val inheritInputs: Boolean = false,
 )
 
 @Serializable

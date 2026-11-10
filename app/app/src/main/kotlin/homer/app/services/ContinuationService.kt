@@ -132,11 +132,15 @@ internal class ContinuationService(
         ttlSec: Int?,
     ) {
         val registration = questionsService.liveRegistration(originProcessId)
-        val owner = processManager.getProcessInfo(originProcessId)?.owner
+        val origin = processManager.getProcessInfo(originProcessId)
+        val owner = origin?.owner
         if (!authorizer.canDispatchHop(owner, registration.agentName, target)) throw DispatchAgentNotFoundException(target)
         validatePayloadParam(resumeParam, "resumeParam", params)
         val agent = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, target)
-        agentInputResolver.validateSatisfiable(agent, params.keys + resumeParam)
+        // An inheriting continuation to the same agent counts the origin run's stored
+        // inputs as provided, so a `required: true` subject input registers. See ADR-0101.
+        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, agent, "Continuation", logger)
+        agentInputResolver.validateSatisfiable(agent, params.keys + resumeParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         if (effectiveTtl != null && effectiveTtl <= 0) {
             throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")

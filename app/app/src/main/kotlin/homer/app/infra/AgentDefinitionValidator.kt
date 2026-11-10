@@ -56,6 +56,7 @@ internal class AgentDefinitionValidator(
     ): Boolean? {
         if (!passesShapeChecks(agent, rel, errors)) return null
         inputChecks.warnOnDeprecatedInputs(agent)
+        inputChecks.warnOnUncontainedClaudeTools(agent)
         val cronDisabled = checkCron(agent, rel, errors) ?: return null
         if (!checkInputSchema(agent, rel, errors)) return null
         return cronDisabled

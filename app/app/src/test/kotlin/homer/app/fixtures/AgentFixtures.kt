@@ -67,13 +67,14 @@ object AgentFixtures {
     fun claudeAgent(
         name: String = "claude_agent",
         prompt: String = "Hello Claude",
+        options: ClaudeCmdOptions = ClaudeCmdOptions(maxTurns = 40, model = null),
     ) = Agent(
         name = name,
         commands =
             listOf(
                 Command.Claude(
                     prompt = LlmPrompt.Prompt(prompt),
-                    options = ClaudeCmdOptions(maxTurns = 40, model = null),
+                    options = options,
                 ),
             ),
         env = emptyMap(),
