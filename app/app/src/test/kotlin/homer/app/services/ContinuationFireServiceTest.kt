@@ -3,8 +3,15 @@ package homer.app.services
 import homer.app.exceptions.CostCapExceededException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
+import homer.app.models.AgentContinuationConfig
 import homer.app.models.AgentDispatchConfig
+import homer.app.models.Command
+import homer.app.models.Param
+import homer.app.models.ParamSource
+import homer.app.models.ParamType
+import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.Transformer
 import homer.app.services.persistence.ContinuationRepository
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
@@ -19,6 +26,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class ContinuationFireServiceTest {
     private val repo = mockk<ContinuationRepository>(relaxed = true)
@@ -33,6 +41,9 @@ class ContinuationFireServiceTest {
         }
     private val agent =
         mockk<Agent>(relaxed = true).also { every { it.dispatch } returns AgentDispatchConfig(enabled = true) }
+
+    /** The secret-key set the fire hands the starter; see the ADR-0052 inheritance cases. */
+    private val secretKeys = slot<Set<String>>()
 
     private val fires =
         ContinuationFireService(
@@ -63,8 +74,8 @@ class ContinuationFireServiceTest {
         watches = watches,
     )
 
-    private fun resolvedParams(): CapturingSlot<Map<String, String>> {
-        every { agents.agents } returns mapOf("h" to agent)
+    private fun resolvedParams(target: Agent = agent): CapturingSlot<Map<String, String>> {
+        every { agents.agents } returns mapOf("h" to target)
         coEvery { repo.claim(5) } returns true
         val resolve = slot<suspend () -> Map<String, String>>()
         coEvery {
@@ -75,7 +86,7 @@ class ContinuationFireServiceTest {
                 any(),
                 any(),
                 any(),
-                any(),
+                capture(secretKeys),
                 any(),
                 any(),
                 // The origin link is server-derived: a fire whose origin is still WORKING is
@@ -89,9 +100,39 @@ class ContinuationFireServiceTest {
                 99
             }
         val params = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(params), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(params), any(), any(), any()) } returns emptyMap()
         return params
     }
+
+    /** A target agent that opts into inheriting its own runs' inputs, as the e2e fixture does. */
+    private fun inheritingAgent(): Agent =
+        mockk<Agent>(relaxed = true).also {
+            every { it.name } returns "h"
+            every { it.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { it.continuation } returns AgentContinuationConfig(inheritInputs = true)
+            every { it.effectiveInputs } returns listOf(ticketInput())
+        }
+
+    /** The same target with the flag off: it must fire exactly as it did before the flag existed. */
+    private fun plainAgent(): Agent =
+        mockk<Agent>(relaxed = true).also {
+            every { it.name } returns "h"
+            every { it.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { it.continuation } returns null
+            every { it.effectiveInputs } returns listOf(ticketInput())
+        }
+
+    private fun ticketInput() = Param(paramName = "ticket", envName = "TICKET_ID", src = ParamSource.QUERY, type = ParamType.ANY)
+
+    /** The origin run's stored inputs, as the continuation's `originProcessId` row holds them. */
+    private fun originInfo(inputs: Map<String, String> = mapOf("TICKET_ID" to "123")) =
+        ProcessInfo(
+            id = 7,
+            status = ProcessStatus.FINISHED,
+            agentName = "h",
+            inputParams = inputs,
+            secretInputKeys = setOf("SECRET_TOKEN"),
+        )
 
     @Test
     fun `fire starts the target with the watched status as resume payload and marks it dispatched`() =
@@ -167,6 +208,233 @@ class ContinuationFireServiceTest {
             fires.fire(pending(), ProcessStatus.FINISHED)
 
             coVerify { repo.releaseForRetry(5, any(), 1, 1060L) }
+        }
+
+    @Test
+    fun `an inheriting continuation hands the origin run's stored inputs to the target`() =
+        runTest {
+            val params = resolvedParams(inheritingAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+
+            fires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+
+            // The origin's `TICKET_ID` is what renders the segment's lock key and its
+            // fromInputs tag; the continuation's own control param is untouched. ADR-0101.
+            assertEquals("123", params.captured["ticket"])
+            assertEquals("thread-1", params.captured["HMR_LG_THREAD"])
+        }
+
+    @Test
+    fun `a join continuation inherits the origin run's inputs too`() =
+        runTest {
+            val params = resolvedParams(inheritingAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+            coEvery { processManager.getProcessStatus(10) } returns ProcessStatus.FINISHED
+
+            fires.fireJoin(
+                pending(ContinuationKind.JOIN, listOf(JoinWatch(10, "int-a"))).copy(originAgentName = "h"),
+            )
+
+            assertEquals("123", params.captured["ticket"])
+            assertEquals(setOf("SECRET_TOKEN"), secretKeys.captured)
+        }
+
+    @Test
+    fun `the continuation's own param wins over an inherited value of the same name`() =
+        runTest {
+            val params = resolvedParams(inheritingAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+
+            fires.fire(
+                pending().copy(originAgentName = "h", params = mapOf("ticket" to "own", "HMR_LG_THREAD" to "thread-1")),
+                ProcessStatus.FINISHED,
+            )
+
+            assertEquals("own", params.captured["ticket"])
+        }
+
+    @Test
+    fun `the flag off and a different origin agent both inherit nothing`() =
+        runTest {
+            val params = resolvedParams(plainAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+
+            fires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+            assertNull(params.captured["ticket"], "the flag off must not inherit")
+
+            every { agents.agents } returns mapOf("h" to inheritingAgent())
+            fires.fire(pending().copy(originAgentName = "other"), ProcessStatus.FINISHED)
+            assertNull(params.captured["ticket"], "another origin agent must not inherit")
+        }
+
+    @Test
+    fun `an inherited secret input rides the target's secret snapshot`() =
+        runTest {
+            resolvedParams(inheritingAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+
+            // The union is what the fired run must honour: the continuation's own
+            // registration snapshot and the origin run's, either alone would drop the
+            // other half's masking. ADR-0052, ADR-0101.
+            fires.fire(
+                pending().copy(originAgentName = "h", secretInputKeys = setOf("OWN_SECRET")),
+                ProcessStatus.FINISHED,
+            )
+
+            assertEquals(setOf("OWN_SECRET", "SECRET_TOKEN"), secretKeys.captured)
+        }
+
+    @Test
+    fun `an inherited value the target rejects fails the continuation naming the param, never the value`() =
+        runTest {
+            // A real resolver, so the merged map really goes through ParamValidator: the
+            // origin run accepted `TICKET_ID` as ANY, the target now declares it integer.
+            val strict =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(paramName = "ticket", envName = "TICKET_ID", src = ParamSource.QUERY, type = ParamType.INT),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            resolvedParams(strict)
+            coEvery { processManager.getProcessInfo(7) } returns originInfo(mapOf("TICKET_ID" to "not-a-number"))
+            val strictFires =
+                ContinuationFireService(
+                    repo,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    mockk(relaxed = true),
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+
+            strictFires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+
+            // The reason names the paramName and never the value, and no run was started.
+            coVerify { repo.markFailed(5, match { it.contains("'ticket'") && !it.contains("not-a-number") }, 1000L) }
+            coVerify(exactly = 0) { repo.markDispatched(5, any(), any()) }
+        }
+
+    @Test
+    fun `an inherited stored value is validated without running its transformer a second time`() =
+        runTest {
+            // The origin run stored SUMMARY already post-transformer — its JsonPath
+            // transformer extracted `$.summary` when it resolved its inputs. Running the
+            // transformer over the extracted string again would reject the param and fail
+            // every fire that inherits it. ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            resolvedParams(graph)
+            coEvery { processManager.getProcessInfo(7) } returns originInfo(mapOf("SUMMARY" to "the subject"))
+            val realFires =
+                ContinuationFireService(
+                    repo,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    mockk(relaxed = true),
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+
+            realFires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+        }
+
+    @Test
+    fun `the continuation's own param of an inherited name is transformed as caller-supplied input`() =
+        runTest {
+            // The inherited names whose value survives the merge exclude the continuation's
+            // own params: an own param named like an inherited one wins, and its raw JSON
+            // is transformed as caller-supplied input — never passed through as a stored,
+            // already-transformed value. Real resolver, so the transformer really runs.
+            // ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            every { agents.agents } returns mapOf("h" to graph)
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns originInfo(mapOf("SUMMARY" to "the subject"))
+            val realFires =
+                ContinuationFireService(
+                    repo,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    mockk(relaxed = true),
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+            val resolve = slot<suspend () -> Map<String, String>>()
+            var resolved: Map<String, String>? = null
+            coEvery {
+                runStarter.start(
+                    any(),
+                    any(),
+                    eq("continuation"),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    serverDerivedParent = true,
+                    capture(resolve),
+                )
+            } coAnswers
+                {
+                    resolved = resolve.captured.invoke()
+                    99
+                }
+
+            realFires.fire(
+                pending().copy(
+                    originAgentName = "h",
+                    params = mapOf("summary" to "{\"summary\": \"own raw\"}"),
+                ),
+                ProcessStatus.FINISHED,
+            )
+
+            assertEquals("own raw", resolved?.get("SUMMARY"))
+            coVerify { repo.markDispatched(5, 99, 1000L) }
         }
 
     @Test

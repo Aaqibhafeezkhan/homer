@@ -137,6 +137,7 @@ mcp:
 | `inputSchema` | `object` | No | `null` | JSON Schema (Draft 2020-12) validating the JSON request body of `POST /api/v1/agent/{name}`. A non-conforming payload is rejected with `422` before any process is spawned; a malformed schema skips the agent at load. See [Input Schema](#input-schema-payload-validation). |
 | `mcp` | `AgentMcpConfig` | No | `null` | Opt-in exposure of this agent as an MCP tool on the `/mcp` endpoint (requires `server.mcp.enabled`). `mcp: { enabled: true }` exposes the agent; omitted or `enabled: false` hides it. See [MCP Exposure](#mcp-exposure). |
 | `dispatch` | `AgentDispatchConfig` | No | `null` | Opt-in: allow this agent to be a dispatch target (`ask-and-dispatch` **or** `homer-dispatch`). `dispatch: { enabled: true }` permits it; omitted or `enabled: false` rejects the dispatch with `403` (`404`, identical to an unknown agent, when the run's hop may not reach the target at all). See [Ask and dispatch](#ask-and-dispatch) and [Dispatching another agent](#dispatching-another-agent). |
+| `continuation` | `AgentContinuationConfig` | No | `null` | Opt-in: a continuation or dispatch this agent fires **back to itself** carries the registering run's stored inputs, merged under the fire's own params. `continuation: { inheritInputs: true }` enables it; omitted or `inheritInputs: false` inherits nothing. See [Inheriting the registering run's inputs](#inheriting-the-registering-runs-inputs). |
 | `cooldown` | `Cooldown` | No | `null` | Minimum spacing between runs of this agent. A start inside the window is refused with `429`. See [Cooldown](#cooldown). |
 | `telemetry` | `AgentTelemetry` | No | `{}` | What this agent's runs send to the OTel collector: whether they are exported at all, and which inputs become trace tags. See [Telemetry](#telemetry). |
 | `tags` | `Tags` | No | `{}` | Subject tags a run carries — `key:value` strings describing what it ran over, so operators can find runs by their subject (`?tag=mr:15`) and see them as chips in the console. `fromInputs` resolves tags from declared inputs at start; `runtime` allows the agent to declare more mid-run via `homer-tag`. See [Run tags](#run-tags). |
@@ -1213,6 +1214,8 @@ commands:
 ```
 
 `HMR_LG_THREAD` is reserved — external HTTP/MCP callers and declared inputs cannot set it — and is absent on a fresh run. It is set only when re-entering an existing thread: by a running agent's dispatch/continuation request (`continueThread`, which is how the runtime resumes a parked thread), or by Homer on a recover via the resume endpoint. That is what makes `when: '[ -z "$HMR_LG_THREAD" ]'` a reliable "is this a fresh run, not a resume?" gate.
+
+A resumed segment is a new run, so the graph's own inputs are only what the resume carries. An agent whose lock key, `tags.fromInputs` or command gates read a subject input can keep the registering run's values by setting `continuation: { inheritInputs: true }` — see [Inheriting the registering run's inputs](#inheriting-the-registering-runs-inputs) for the rules and the two compatibility notes that come with it.
 
 #### Multiple simultaneous interrupts
 
@@ -3001,6 +3004,10 @@ detected; see [ADR-0060](../docs/adr/0060-run-tags.md) for why that is accepted.
 - **Child runs do not inherit their parent's tags.** A dispatched or continued
   run is tagged only by its *own* `fromInputs`/`runtime`. To find a whole flow,
   filter by the parent instead: `GET /api/v1/status/all?parentProcessId=<id>`.
+  The one exception is an agent that opted into
+  [`continuation.inheritInputs`](#inheriting-the-registering-runs-inputs) and is
+  fired back to itself: its own `fromInputs` then resolve against the registering
+  run's inputs, so the tag is *its own*, derived from an inherited value.
 - **Tag keys and values are strings.** A numeric input like `mr:4211` is the
   string `"4211"`; `?tag=mr:4211` matches it exactly, there is no numeric range
   matching.
@@ -3407,7 +3414,10 @@ commands:
 
 `--param` values and the answer reach the target only through `inputs` it
 declares with a matching `paramName`; an undeclared name is dropped, and a
-`required` input the call cannot cover is rejected with `400` at registration.
+`required` input the call cannot cover is rejected with `400` at registration —
+unless the target is the asking agent itself and opted into
+[`continuation.inheritInputs`](#inheriting-the-registering-runs-inputs), which
+counts the asking run's stored inputs as covering it.
 
 Output: two lines — `dispatchId` (integer) then `questionId` (string).
 
@@ -3492,6 +3502,112 @@ homer-dispatch --agent research_worker --param topic=pricing \
   --continue-agent planner --continue-thread plan-42 \
   --result-jsonpath '$.summary' --ttl 3600
 ```
+
+#### Inheriting the registering run's inputs
+
+A continuation, a dispatch and a LangGraph resume all start a **new run**: by
+default it carries only what the fire itself supplies, so the registering run's
+own inputs are gone. That is easy to miss for a subject input — a run resumed to
+its own agent loses `TICKET_ID`, and with it the subject of its lock key and every
+`tags.fromInputs` tag derived from it.
+
+An agent can opt in to keeping them:
+
+```yaml
+name: approval_flow
+description: Parks on an interrupt and resumes itself with the registering run's subject intact
+dispatch:
+  enabled: true
+continuation:
+  inheritInputs: true      # a fire back to this agent inherits the registering run's inputs (default: false)
+inputs:
+  - paramName: ticket
+    envName: TICKET_ID
+    type: string
+    required: true
+lockStrategy:
+  key: ticket-{{TICKET_ID}}
+  onCollision: SKIP_CURRENT
+tags:
+  fromInputs: [ticket]
+commands:
+  - !<langgraph>
+    module: my_graphs.approval_flow
+```
+
+<details>
+<summary>JSON format</summary>
+
+```json
+{
+  "name": "approval_flow",
+  "description": "Parks on an interrupt and resumes itself with the registering run's subject intact",
+  "dispatch": {
+    "enabled": true
+  },
+  "continuation": {
+    "inheritInputs": true
+  },
+  "inputs": [
+    {
+      "paramName": "ticket",
+      "envName": "TICKET_ID",
+      "type": "string",
+      "required": true
+    }
+  ],
+  "lockStrategy": {
+    "key": "ticket-{{TICKET_ID}}",
+    "onCollision": "SKIP_CURRENT"
+  },
+  "tags": {
+    "fromInputs": ["ticket"]
+  },
+  "commands": [
+    {
+      "type": "langgraph",
+      "module": "my_graphs.approval_flow"
+    }
+  ]
+}
+```
+</details>
+
+With `inheritInputs: true`, a fire **to the same agent** merges the registering
+run's stored inputs **under** the fire's own params, so the continuation's
+`--continue-param` values, the resume payload, and a dispatch's answer all still
+win on conflict. The rest is bounded on purpose:
+
+- **Same agent only.** The fire must target the agent that registered it. A
+  continuation to a *different* agent inherits nothing, so a hop can never read
+  another agent's inputs through this path.
+- **Same owner only.** The registering run must belong to the same principal as
+  the fire; an owner mismatch, or a registering run whose row is already purged,
+  inherits nothing and is logged.
+- **Declared inputs only.** A stored name the agent no longer declares is
+  dropped, and the reserved `HMR_*` markers (`HMR_LG_THREAD`, `HMR_LG_RESUME`)
+  never ride along — so the inherited set is bounded by the agent's own `inputs:`.
+- **Re-validated, not trusted.** Every inherited value passes the same
+  type/`pattern`/`inputSchema` check a caller's value would — a value the agent has
+  since tightened fails the fire rather than being run with. A stored value was
+  already transformed when its run resolved it, so its `transformer:` is not
+  applied a second time.
+- **Secrets stay masked.** A `secret: true` input is inherited as a value, and the
+  fired run's API responses mask it exactly as the registering run's do (ADR-0052).
+- **Registration counts them.** A `required: true` input that only the
+  registering run's stored inputs can satisfy no longer blocks registering the
+  continuation or dispatch.
+
+Two things change for an agent that turns the flag on, and both are worth a look
+before enabling it. The lock key becomes **real**: a resumed segment now renders
+`ticket-{{TICKET_ID}}` with the inherited subject and holds that key, where
+without the flag it held the literal `ticket-{{TICKET_ID}}` — so it now collides
+with a fresh run for the same subject exactly as `onCollision` says it should.
+And a command gated on an input being *unset* (e.g. `when: '[ -z "${HOLD_SEC:-}" ]'`)
+now sees the registering run's value set, so it may run where it previously did
+not. Gate on the `HMR_LG_THREAD` marker for "is this a fresh run?" instead — it
+is reserved and never inherited. See
+[ADR-0101](../docs/adr/0101-continuation-inherits-origin-run-inputs.md).
 
 #### Large results: `resultRef` and `homer-result`
 

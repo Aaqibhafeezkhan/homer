@@ -54,6 +54,15 @@ A run is a **resume** when `HMR_LG_THREAD` is non-empty *and* `HMR_LG_RESUME`
 is present. It is a **recover** when `HMR_LG_THREAD` is non-empty, `HMR_LG_RECOVER`
 is `"1"`, and no resume value is present; otherwise it is a fresh run.
 
+A segment is a new run, so the agent's own inputs are only what the resume
+carries — the runtime forwards none of the parking segment's. An agent that
+resumes itself can set `continuation: { inheritInputs: true }` and Homer merges
+the registering run's declared inputs under the resume params, so a lock key
+(`ticket-{{TICKET_ID}}`) and the `tags.fromInputs` tags stay real past the first
+segment. The flag lives on the agent definition, not here: no runtime code
+changes. See
+[`app/AGENT.md`](../../../app/AGENT.md#inheriting-the-registering-runs-inputs).
+
 ## Run-identity artifact
 
 Before every invoke, the runtime writes `$HMR_ARTIFACTS_DIR/langgraph.json`

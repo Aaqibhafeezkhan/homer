@@ -12,11 +12,14 @@ import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.SqlStatementRecorder
 import homer.app.fixtures.authorizerFor
 import homer.app.fixtures.installGrantsApp
+import homer.app.infra.AgentInputResolver
 import homer.app.infra.FileOperations
 import homer.app.infra.LocalFileOperations
 import homer.app.infra.SecretRedactor
 import homer.app.infra.matchesTokenConstantTime
 import homer.app.models.Action
+import homer.app.models.AgentContinuationConfig
+import homer.app.models.AgentDispatchConfig
 import homer.app.models.AppConfig
 import homer.app.models.ArtifactListingResponse
 import homer.app.models.AuthConfig
@@ -29,6 +32,7 @@ import homer.app.models.Grant
 import homer.app.models.LangGraphRunIdentity
 import homer.app.models.LangGraphRunStatus
 import homer.app.models.LlmEvent
+import homer.app.models.Param
 import homer.app.models.PodPhase
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessInfo
@@ -40,6 +44,7 @@ import homer.app.models.RunnerConfig
 import homer.app.models.RunnerState
 import homer.app.models.Server
 import homer.app.models.TokenConfig
+import homer.app.services.AgentRunStarter
 import homer.app.services.AgentsService
 import homer.app.services.ArtifactService
 import homer.app.services.Authorizer
@@ -1654,14 +1659,18 @@ class ProcessVisibilityTest {
         id: Int,
         targetAgentName: String,
         owner: String?,
+        watchedProcessId: Int = 1,
+        originProcessId: Int = 1,
+        originAgentName: String = "origin",
+        params: Map<String, String> = emptyMap(),
     ) = Continuation(
         id = id,
-        watchedProcessId = 1,
+        watchedProcessId = watchedProcessId,
         status = ContinuationStatus.PENDING,
         targetAgentName = targetAgentName,
-        params = emptyMap(),
-        originProcessId = 1,
-        originAgentName = "origin",
+        params = params,
+        originProcessId = originProcessId,
+        originAgentName = originAgentName,
         expiresAt = null,
         createdAt = 0L,
         owner = owner,
@@ -1919,6 +1928,128 @@ class ProcessVisibilityTest {
             assertEquals(HttpStatusCode.NotFound, res.status)
             coVerify(exactly = 0) { continuationService.cancel(1) }
         }
+
+    // ---------- Continuation input inheritance across an owner boundary (ADR-0101) ----------
+
+    /**
+     * A continuation inherits its origin run's stored inputs only while the two agree on the
+     * owner. Here the origin row belongs to another principal, so the fired run must carry none
+     * of its inputs — asserted on the fired run's own status response, the surface an operator
+     * reads (§12 rule 3). The same path is then driven with a matching owner, so the denial
+     * assertion cannot pass vacuously.
+     */
+    @Test
+    fun `a continuation whose origin run belongs to another owner inherits none of its inputs`() =
+        testApplication {
+            val subject = "ticket-98765"
+            val tokens = mapOf("alice" to ownerRunToken)
+            val db = PersistenceTestSupport.tempDatabase()
+            val processManager = PersistenceTestSupport.processManager(db = db)
+            // Two origin runs holding the same subject input, one per owner. Process ids are
+            // real rows, so the origin's stored inputs are read exactly as production reads them.
+            val foreignOrigin =
+                processManager.obtainProcessId("deploy", inputParams = mapOf("TICKET_ID" to subject), owner = "bob")
+            val ownOrigin =
+                processManager.obtainProcessId("deploy", inputParams = mapOf("TICKET_ID" to subject), owner = "alice")
+            val repo = ContinuationRepository(db)
+            // The row's owner is copied from its origin at registration, so only a forced
+            // mismatch reaches this state — the gate is defence in depth, and this is its denial path.
+            val foreign =
+                repo.create(
+                    continuation(
+                        0,
+                        targetAgentName = "deploy",
+                        owner = "alice",
+                        watchedProcessId = 9001,
+                        originProcessId = foreignOrigin,
+                        originAgentName = "deploy",
+                        params = mapOf("HMR_LG_THREAD" to "thread-1"),
+                    ),
+                    maxPending = 100,
+                )!!
+            val own =
+                repo.create(
+                    continuation(
+                        0,
+                        targetAgentName = "deploy",
+                        owner = "alice",
+                        watchedProcessId = 9002,
+                        originProcessId = ownOrigin,
+                        originAgentName = "deploy",
+                        params = mapOf("HMR_LG_THREAD" to "thread-1"),
+                    ),
+                    maxPending = 100,
+                )!!
+            // The starter is mocked, but the run it "starts" is a real row holding the env the
+            // fire resolved — so the status route serves exactly what the fired run would receive.
+            val runStarter = mockk<AgentRunStarter>()
+            val resolve = slot<suspend () -> Map<String, String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    processManager.obtainProcessId("deploy", inputParams = resolve.captured.invoke(), owner = "alice")
+                }
+            val agentsService = mockk<AgentsService>(relaxed = true)
+            every { agentsService.agents } returns mapOf("deploy" to inheritAgent)
+            val continuationService =
+                PersistenceTestSupport.continuationService(
+                    db = db,
+                    questionsService = PersistenceTestSupport.questionsService(db = db),
+                    agentsService = agentsService,
+                    runStarter = runStarter,
+                    inputResolver = AgentInputResolver(),
+                    processManager = processManager,
+                    authorizer = authorizerFor(tokens),
+                )
+            application {
+                installGrantsApp(
+                    tokens,
+                    deps(
+                        authorizerFor(tokens),
+                        agents = mapOf("deploy" to inheritAgent),
+                        processManagerOverride = processManager,
+                        continuationService = continuationService,
+                    ),
+                )
+            }
+
+            continuationService.onProcessTerminal(9001, ProcessStatus.FINISHED)
+            continuationService.onProcessTerminal(9002, ProcessStatus.FINISHED)
+
+            val foreignRow = repo.get(foreign)!!
+            val ownRow = repo.get(own)!!
+            val foreignRun = foreignRow.firedProcessId!!
+            val ownRun = ownRow.firedProcessId!!
+            // Both fired (the denial is a silent no-inherit, not a failed fire): the own-owner
+            // run proves the value does ride in when the boundary is respected.
+            assertEquals(HttpStatusCode.OK, status(foreignRun, "owner-run-token").status)
+            assertFalse(
+                status(foreignRun, "owner-run-token").bodyAsText().contains(subject),
+                "a foreign origin run's input must not reach the fired run",
+            )
+            assertTrue(
+                status(ownRun, "owner-run-token").bodyAsText().contains(subject),
+                "the same-owner case must inherit the origin run's input",
+            )
+        }
+
+    private suspend fun ApplicationTestBuilder.status(
+        processId: Int,
+        token: String,
+    ) = client.get("/api/v1/status/$processId") { header(HttpHeaders.Authorization, "Bearer $token") }
+
+    /**
+     * A target that opts into inheriting its own runs' inputs, with the subject declared. The
+     * subject is optional here on purpose: a `required` one would fail the fire for the
+     * boundary-crossing case instead of firing it, and the point is what the fired run carries.
+     */
+    private val inheritAgent =
+        deployAgent.copy(
+            inputs = listOf(Param(paramName = "ticket", envName = "TICKET_ID", required = false)),
+            dispatch = AgentDispatchConfig(enabled = true),
+            continuation = AgentContinuationConfig(inheritInputs = true),
+        )
 
     // ---------- SSE /stream/processes (Task 7: per-connection visibility filter) ----------
 

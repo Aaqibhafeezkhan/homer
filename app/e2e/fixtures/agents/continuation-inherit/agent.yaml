@@ -1,0 +1,93 @@
+name: continuation-inherit
+description: Resumes itself with the registering run's inputs, so the resumed segment keeps the subject's lock key and tag
+# Opt-in: a continuation (or dispatch) fired back to this agent from one of its own
+# runs inherits that run's resolved inputs. See ADR-0101.
+continuation:
+  inheritInputs: true
+dispatch:
+  enabled: true
+# The lock key and the tag both come from the subject input, which a resumed segment
+# only has because it inherits it from the run that registered the continuation.
+lockStrategy:
+  key: ticket-{{TICKET_ID}}
+  onCollision: SKIP_CURRENT
+tags:
+  fromInputs: [ticket]
+inputs:
+  - paramName: ticket
+    envName: TICKET_ID
+    src: query
+    type: string
+    required: true
+  - paramName: token
+    envName: SECRET_TOKEN
+    src: query
+    type: string
+    required: false
+    secret: true
+  - paramName: note
+    envName: NOTE
+    src: query
+    type: string
+    required: false
+  - paramName: holdSec
+    envName: HOLD_SEC
+    src: query
+    type: integer
+    required: false
+  - paramName: dispatchSub
+    envName: DISPATCH_SUB
+    src: query
+    type: string
+    required: false
+    default: "true"
+  - paramName: askDispatch
+    envName: ASK_DISPATCH
+    src: query
+    type: string
+    required: false
+    default: "false"
+commands:
+  # A fresh run fans out to a sub of its own — a different subject, so the two runs never
+  # share a lock key — and resumes itself when that sub ends. A resumed segment must not
+  # fan out, or every resume would register another continuation.
+  - !<script>
+    label: dispatch-sub
+    when:
+      all:
+        - '[ -z "${HMR_LG_THREAD:-}" ]'
+        - '[ "${DISPATCH_SUB:-true}" != "false" ]'
+    content: |
+      sub=$(homer-dispatch --agent continuation-inherit \
+        --param ticket="${TICKET_ID}-sub" \
+        --param dispatchSub=false \
+        --param holdSec=3 \
+        --continue-agent continuation-inherit \
+        --continue-thread thread-inherit \
+        --continue-param dispatchSub=false \
+        --continue-param holdSec=6)
+      echo "sub=$sub ticket=$TICKET_ID"
+  # Holds the subject's lock key for as long as the caller asks, which is how a run proves
+  # which key it rendered.
+  - !<script>
+    label: hold
+    when: '[ -n "${HOLD_SEC:-}" ]'
+    content: |
+      echo "holding ${HOLD_SEC}s for ticket=$TICKET_ID note=${NOTE:-}"
+      sleep "$HOLD_SEC"
+  # The ask-and-dispatch equivalent of the fan-out above: the target is this agent and the
+  # subject reaches it only through inheritance.
+  - !<script>
+    label: ask-dispatch
+    when:
+      all:
+        - '[ -z "${HMR_LG_THREAD:-}" ]'
+        - '[ "${ASK_DISPATCH:-false}" = "true" ]'
+    content: |
+      homer-ask ask-and-dispatch "Which note for $TICKET_ID?" \
+        --agent continuation-inherit \
+        --option alpha --option beta \
+        --answer-param note \
+        --param dispatchSub=false \
+        --param askDispatch=false \
+        --param holdSec=1
