@@ -83,7 +83,7 @@ class RunnerRegistry(
      * The consumer and heartbeat-sweeper jobs [start] launched, so the shutdown drain can
      * exclude them by [Job] identity from what it waits for: their `while (isActive)` loops
      * never complete on their own, and they must keep claiming queued runs until the drain
-     * ends. Empty before [start] and after [stop]. See ADR-0066, ADR-0101.
+     * ends. Empty before [start] and after [stop]. See ADR-0066, ADR-0102.
      */
     fun consumerJobs(): List<Job> = consumerJobs
 

@@ -45,7 +45,7 @@ internal fun interface MaintenanceSlot {
  * A start that is part of already-admitted work — a `!<agent>` hop, a dispatch or a continuation
  * fire made by a run that is still `WORKING` — does not park: it is admitted, not new.
  * The shutdown drain reads the same rule through [isDraining] and refuses everything else
- * outright instead of queueing it. See [gated], ADR-0092 and ADR-0101.
+ * outright instead of queueing it. See [gated], ADR-0092 and ADR-0102.
  */
 internal class MaintenanceModeService(
     private val repository: ServerMetaRepository,
@@ -57,7 +57,7 @@ internal class MaintenanceModeService(
     // The shutdown drain flag (`homer.app.isDraining`), injected as a lambda so this Services
     // layer type stays off the HTTP-layer flag. While it is set a non-admitted start is refused
     // instead of parked: the process is going away, so a parked start could only end `UNKNOWN`.
-    // See ADR-0101.
+    // See ADR-0102.
     isDraining: () -> Boolean = { false },
 ) {
     private val draining = isDraining
@@ -84,7 +84,7 @@ internal class MaintenanceModeService(
     /**
      * The shutdown drain flag, as [gated] and `AgentRunStarter` read it: while it is set, a
      * non-admitted start is refused and a server-derived start is admitted from its live parent.
-     * See ADR-0101.
+     * See ADR-0102.
      */
     fun isDraining(): Boolean = draining()
 
@@ -278,7 +278,7 @@ internal class MaintenanceModeService(
  *
  * A start that is neither admitted nor part of the shutdown drain's work is refused with
  * [ServerDrainingException] as soon as the drain flag is set — shed, never parked, because a
- * start queued behind a process that is going away could only end `UNKNOWN`. See ADR-0101.
+ * start queued behind a process that is going away could only end `UNKNOWN`. See ADR-0102.
  */
 internal suspend fun <T> MaintenanceModeService.gated(
     owner: String?,

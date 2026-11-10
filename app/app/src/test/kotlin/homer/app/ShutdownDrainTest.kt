@@ -35,7 +35,7 @@ import kotlin.time.Duration.Companion.seconds
  * joining the runs those runs start (a `!<agent>` hop's child, a dispatch, a continuation fired
  * by a run that just ended), which one snapshot of the scope would miss and leave `UNKNOWN` at
  * the next boot. The runner-consumer loops are excluded from what it waits for, so a run queued
- * for a static runner can still be claimed while the drain runs. See ADR-0101, ADR-0066.
+ * for a static runner can still be claimed while the drain runs. See ADR-0102, ADR-0066.
  * Audit P0 #3.
  *
  * These tests exercise the production `drainInFlightJobsThenCloseSessions` directly, against
@@ -67,7 +67,7 @@ class ShutdownDrainTest {
     @Test
     fun `a child started by a finishing run is joined`() {
         // The `!<agent>` hop shape: the parent returns as soon as its child is started, so the
-        // child is a fresh scope job the first read of the scope never saw. ADR-0101.
+        // child is a fresh scope job the first read of the scope never saw. ADR-0102.
         val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val parentStarted = CompletableDeferred<Unit>()
         val childFinished = AtomicBoolean(false)
@@ -233,7 +233,7 @@ class ShutdownDrainTest {
     fun `consumer jobs are excluded, so an idle drain returns well under the budget`() {
         // The consumers' `while (isActive)` loops never complete on their own: counted as run
         // jobs they would make every drain burn the full budget. They are excluded by Job
-        // identity and stopped after the drain instead. See ADR-0066, ADR-0101.
+        // identity and stopped after the drain instead. See ADR-0066, ADR-0102.
         val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val registry = RunnerRegistry(listOf(stubRunner("local")))
         registry.start(applicationScope)
@@ -260,7 +260,7 @@ class ShutdownDrainTest {
     fun `a run queued for a static runner is claimed while the drain is running`() =
         runBlocking {
             // A run queued at SIGTERM must still reach a consumer: cancelling them before the
-            // drain is what made such a run burn the window and end UNKNOWN. ADR-0066, ADR-0101.
+            // drain is what made such a run burn the window and end UNKNOWN. ADR-0066, ADR-0102.
             val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val registry = RunnerRegistry(listOf(stubRunner("local")))
             registry.start(applicationScope)

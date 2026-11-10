@@ -378,7 +378,7 @@ class MaintenanceWaitTimeoutException(
  * drain already admitted — a `!<agent>` hop, a dispatch or a continuation fire whose
  * server-derived parent is still `WORKING`. A new top-level start is shed rather than queued:
  * the process is going away, so a parked start could only end `UNKNOWN`. Maps to 503. §12 rule 5,
- * ADR-0047 rule 5, ADR-0101.
+ * ADR-0047 rule 5, ADR-0102.
  */
 class ServerDrainingException : HomerException("Server is shutting down and is not accepting new runs")
 

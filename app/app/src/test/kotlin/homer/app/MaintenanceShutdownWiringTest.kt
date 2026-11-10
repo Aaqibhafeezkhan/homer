@@ -74,7 +74,7 @@ class MaintenanceShutdownWiringTest {
         // run queued at SIGTERM with nobody to claim it, burning the drain window and ending
         // UNKNOWN. The drain's end is observable as `ActiveSessionsRegistry.closeAll`, its last
         // statement. Recorded through `answers` rather than `verifyOrder`, which MockK refuses
-        // to combine with `anyConstructed`. See ADR-0066, ADR-0101.
+        // to combine with `anyConstructed`. See ADR-0066, ADR-0102.
         val order = mutableListOf<String>()
         mockkConstructor(MaintenanceModeService::class)
         every { anyConstructed<MaintenanceModeService>().isEnabled() } returns false

@@ -365,7 +365,7 @@ class AgentRunStarterTest {
     /**
      * A gate with the drain running and the mode off: a start that is not admitted is refused
      * outright, so a start that reaches [MaintenanceModeService.awaitRelease] would hang the test
-     * — and one that does not reach the gate at all proves the drain admitted it. See ADR-0101.
+     * — and one that does not reach the gate at all proves the drain admitted it. See ADR-0102.
      */
     private fun drainingGate(): MaintenanceModeService =
         mockk {
@@ -659,7 +659,7 @@ class AgentRunStarterTest {
             }
         }
 
-    // --- the shutdown drain (ADR-0101) ---
+    // --- the shutdown drain (ADR-0102) ---
 
     @Test
     fun `a server-derived start whose parent is still WORKING runs during the drain`() =
@@ -690,7 +690,7 @@ class AgentRunStarterTest {
     fun `a start whose parent has ended is refused by the drain, never parked`() =
         runBlocking {
             // Shed, not queued: a start parked behind a process that is going away could only
-            // end UNKNOWN at the next boot. ADR-0047 rule 5, ADR-0101.
+            // end UNKNOWN at the next boot. ADR-0047 rule 5, ADR-0102.
             for (status in listOf(ProcessStatus.FINISHED, ProcessStatus.FAILED, ProcessStatus.KILLED, ProcessStatus.UNKNOWN)) {
                 val processExecutor = mockk<ProcessExecutor>(relaxed = true)
                 val gate = drainingGate()

@@ -149,7 +149,7 @@ internal class AgentRunStarter(
      * and probes nothing, so naming a parent cannot turn this into an existence check on a row the caller
      * cannot see (root §12 rule 3). The in-memory mode/drain check runs before the read, so the steady
      * state — neither set, the row's answer discarded anyway — pays no database round-trip.
-     * See ADR-0092, ADR-0101.
+     * See ADR-0092, ADR-0102.
      */
     private suspend fun admittedByLiveParent(
         serverDerivedParent: Boolean,

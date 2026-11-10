@@ -37,7 +37,7 @@ import kotlin.test.assertTrue
 /**
  * The maintenance-mode gate: the durable flag, the bounded FIFO wait queue and the release
  * that drains it — plus the shutdown drain's refusal, which sheds an unadmitted start rather
- * than parking it. See ADR-0092, ADR-0101 and root §12 rules 4–5.
+ * than parking it. See ADR-0092, ADR-0102 and root §12 rules 4–5.
  */
 class MaintenanceModeServiceTest {
     private lateinit var db: DatabaseService
@@ -521,7 +521,7 @@ class MaintenanceModeServiceTest {
             withTimeout(5_000) { parked.await() }
         }
 
-    // --- the shutdown drain (ADR-0101) ---
+    // --- the shutdown drain (ADR-0102) ---
 
     @Test
     fun `gated sheds an unadmitted start while the drain is running instead of parking it`() =

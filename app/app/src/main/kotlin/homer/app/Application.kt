@@ -275,7 +275,7 @@ fun Application.configureServer(config: AppConfig) {
     // `isDraining` is JVM-global and is never cleared on the way out, so clear it here: a freshly
     // configured application is not draining. Without this, a second application configured in
     // the same JVM starts up already draining — `/readyz` answering 503 and every run start
-    // refused with 503. See ADR-0101.
+    // refused with 503. See ADR-0102.
     isDraining.set(false)
     validateStartupConfig(config)
     installKoin(config)
@@ -411,7 +411,7 @@ private class BackgroundServices(
 /**
  * On `ApplicationStopping`: flips the drain flag, stops the [background] services, drains the run
  * jobs within [drainTimeout], stops the runner consumers it kept alive through the drain, and
- * closes [databaseService] last. See ADR-0101.
+ * closes [databaseService] last. See ADR-0102.
  */
 private fun Application.subscribeShutdownDrain(
     databaseService: DatabaseService,
@@ -432,7 +432,7 @@ private fun Application.subscribeShutdownDrain(
         // The claim-queue consumers keep running **through** the drain: a run already queued for
         // a static runner must still be claimed, or it burns the window and ends UNKNOWN. Their
         // `while (isActive)` loops never complete on their own, so the drain excludes them from
-        // what it waits for and they are stopped right after it. See ADR-0066, ADR-0101.
+        // what it waits for and they are stopped right after it. See ADR-0066, ADR-0102.
         val consumerJobs = background.runnerRegistry.consumerJobs()
 
         background.cronSchedulerService.stop()

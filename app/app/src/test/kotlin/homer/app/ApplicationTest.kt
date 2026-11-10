@@ -443,7 +443,7 @@ class ApplicationTest {
             assertEquals(ProcessStatus.WORKING, pm.getProcessInfo(id)?.status)
         }
 
-    // ========== the shutdown drain (ADR-0101) ==========
+    // ========== the shutdown drain (ADR-0102) ==========
 
     /**
      * A real [AgentRunStarter] over [processExecutor] whose gate is a real [MaintenanceModeService]

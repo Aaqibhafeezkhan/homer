@@ -175,7 +175,7 @@ class ContinuationFireServiceTest {
         runTest {
             // The origin run ended and its resume is the only thing the target will ever see:
             // the next boot's sweep must fire it, so the row goes back to PENDING with the
-            // attempt counted rather than to FAILED. See ADR-0023, ADR-0101.
+            // attempt counted rather than to FAILED. See ADR-0023, ADR-0102.
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.claim(5) } returns true
             coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws

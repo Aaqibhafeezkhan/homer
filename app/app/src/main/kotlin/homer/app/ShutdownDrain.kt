@@ -26,7 +26,7 @@ private val logger = LoggerFactory.getLogger("homer.app.Application")
  * fired by the run that just ended — and a single snapshot leaves those to be killed at exit and
  * found `UNKNOWN` at the next boot. [excluded] holds the runner-consumer loops, which never
  * complete on their own and must keep claiming queued runs until the drain ends.
- * See ADR-0101.
+ * See ADR-0102.
  */
 internal fun drainInFlightJobsThenCloseSessions(
     applicationScope: CoroutineScope,

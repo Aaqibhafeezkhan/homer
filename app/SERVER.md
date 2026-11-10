@@ -469,7 +469,7 @@ starts and then drains the work already admitted:
   runs, and so is any start whose parent run has already ended. A start
   that is part of a run the drain is already waiting for is still
   admitted, or the drain would wait on a parent blocked by a child it
-  refused. See [ADR-0101](../docs/adr/0101-shutdown-drain-waits-for-descendant-runs.md).
+  refused. See [ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
 
 The whole drain is bounded by this one value, whatever the shape of the
 run tree: a chain of short-lived runs cannot extend it round by round.
@@ -809,7 +809,7 @@ of it. Keep `terminationGracePeriodSeconds` comfortably above
 `server.shutdownDrainSec`: if the kubelet's grace period expires first,
 the pod is SIGKILLed mid-drain and every run the drain was waiting for
 ends `UNKNOWN`. See
-[ADR-0101](../docs/adr/0101-shutdown-drain-waits-for-descendant-runs.md).
+[ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
 
 For reverse-proxy setups (nginx / Caddy / HAProxy), point the upstream
 health check at `/api/v1/readyz` so the proxy stops sending requests

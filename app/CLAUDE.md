@@ -139,7 +139,7 @@ marked `Constraint:`.
     `ServerDrainingException` (`503`), never parked** — the process is going away, so a parked
     start could only end `UNKNOWN` (ADR-0047 rule 5). `stop()` still runs before the drain, so a
     start parked at the gate when SIGTERM arrives fails with its wait-timeout error. See
-    ADR-0101.
+    ADR-0102.
   - **Constraint:** the gate is called **before** `AgentRunStarter`'s preflight, so a released
     start re-runs the cycle, depth, cost-cap and cooldown checks and resolves its inputs **at
     dequeue, not at enqueue** — moving the call below them starts a run on a decision that was
