@@ -1315,6 +1315,48 @@ class AgentInputResolverTest {
     }
 
     @Test
+    fun `resolveFromParams validates but does not re-transform a stored input named in skipTransformFor`() {
+        // An inherited value is the origin run's already-extracted one (stored
+        // post-transformer): running the JsonPath transformer over "Alice" again would
+        // reject it. A caller-supplied value of the same name is still transformed.
+        val agent =
+            bodyAgent(
+                Param(
+                    paramName = "user",
+                    envName = "USER_NAME",
+                    src = ParamSource.QUERY,
+                    type = ParamType.ANY,
+                    transformer = Transformer.JsonPath("$.name"),
+                ),
+            )
+
+        val stored = resolver.resolveFromParams(mapOf("user" to "Alice"), agent, skipTransformFor = setOf("user"))
+
+        assertEquals(mapOf("USER_NAME" to "Alice"), stored)
+
+        val raw = resolver.resolveFromParams(mapOf("user" to """{"name": "Alice", "age": 30}"""), agent)
+
+        assertEquals(mapOf("USER_NAME" to "Alice"), raw)
+    }
+
+    @Test
+    fun `resolveFromParams still validates a skipTransformFor stored value against the param`() {
+        val agent =
+            bodyAgent(
+                Param(
+                    paramName = "count",
+                    envName = "COUNT",
+                    src = ParamSource.QUERY,
+                    type = ParamType.INT,
+                ),
+            )
+
+        assertThrows<QueryParamValidationException> {
+            resolver.resolveFromParams(mapOf("count" to "not-a-number"), agent, skipTransformFor = setOf("count"))
+        }
+    }
+
+    @Test
     fun `resolveFromParams never satisfies a HEADER input`() {
         val agent =
             bodyAgent(

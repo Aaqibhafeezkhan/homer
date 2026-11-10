@@ -124,6 +124,7 @@ class AgentInputResolver(
         headers: Map<String, String>,
         agent: Agent,
         enforceRequired: Boolean = false,
+        skipTransformFor: Set<String> = emptySet(),
     ): Map<String, String> {
         val inputs = agent.effectiveInputs ?: emptyList()
         applyInputSchema(agent, bodyJson)
@@ -135,6 +136,7 @@ class AgentInputResolver(
             bodyJson = bodyJson,
             headerLookup = { name -> headerIndex[name.lowercase()] },
             enforceRequired = enforceRequired,
+            skipTransformFor = skipTransformFor,
         )
     }
 
@@ -165,6 +167,7 @@ class AgentInputResolver(
         bodyJson: JsonObject?,
         headerLookup: (String) -> String?,
         enforceRequired: Boolean,
+        skipTransformFor: Set<String> = emptySet(),
     ): Map<String, String> {
         val result = mutableMapOf<String, String>()
         inputs.forEach { param ->
@@ -174,7 +177,12 @@ class AgentInputResolver(
                     ParamSource.BODY -> bodyJson?.get(param.paramName)?.let(::stringifyJsonValue)
                     ParamSource.HEADER -> headerLookup(param.paramName)
                 }
-            val resolved = if (raw == null) resolveAbsent(param, enforceRequired) else resolvePresent(param, raw, enforceRequired)
+            val resolved =
+                if (raw == null) {
+                    resolveAbsent(param, enforceRequired)
+                } else {
+                    resolvePresent(param, raw, enforceRequired, param.paramName in skipTransformFor)
+                }
             if (resolved != null) result[param.envName] = resolved
         }
         return result
@@ -208,8 +216,12 @@ class AgentInputResolver(
         param: Param,
         raw: String,
         enforceRequired: Boolean,
+        skipTransform: Boolean = false,
     ): String? {
-        val transformed = transform(param.transformer, raw)
+        // A stored value was transformed when its run resolved it; transforming again would
+        // run e.g. JsonPath over the already-extracted string and reject every inherited
+        // value of such an input. See [resolveFromParams], ADR-0101.
+        val transformed = if (skipTransform) raw else transform(param.transformer, raw)
         val invalidMessage: String =
             if (transformed == null) {
                 "Parameter '${param.paramName}' is not valid ${param.type.wireName}"
@@ -282,11 +294,18 @@ class AgentInputResolver(
     /**
      * Resolves agent inputs from a plain param map (internal callers: RunAgent,
      * dispatch, continuation). Same extraction/validation path as the HTTP route.
+     *
+     * [skipTransformFor] names params whose value is an **already-transformed stored
+     * input** — a fire inheriting the origin run's inputs, which were stored post-transformer.
+     * Those are validated like any other value, but the transformer is not applied a second
+     * time. An own param of the same name wins the merge and is transformed as usual. See
+     * ADR-0101.
      */
     fun resolveFromParams(
         params: Map<String, String>,
         agent: Agent,
         enforceRequired: Boolean = true,
+        skipTransformFor: Set<String> = emptySet(),
     ): Map<String, String> {
         val classified = classifyParams(agent, params)
         return resolveDebug(
@@ -295,6 +314,7 @@ class AgentInputResolver(
             headers = emptyMap(),
             agent = agent,
             enforceRequired = enforceRequired,
+            skipTransformFor = skipTransformFor,
         )
     }
 

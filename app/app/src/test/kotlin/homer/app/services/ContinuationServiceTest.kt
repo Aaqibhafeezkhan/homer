@@ -11,6 +11,7 @@ import homer.app.exceptions.TooManyPendingContinuationsException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
+import homer.app.models.AgentContinuationConfig
 import homer.app.models.AgentDispatchConfig
 import homer.app.models.Command
 import homer.app.models.DispatchConfig
@@ -285,6 +286,88 @@ class ContinuationServiceTest {
                     resultTransformer = null,
                     ttlSec = null,
                 )
+            }
+            coVerify(exactly = 0) { repo.create(any(), any()) }
+        }
+
+    /** A service with the real resolver, so registration-time satisfiability is really exercised. */
+    private fun realResolverService() =
+        ContinuationService(
+            repo,
+            questions,
+            agents,
+            authorizer,
+            runStarter,
+            AgentInputResolver(),
+            processManager,
+            resultTokenService,
+            LoggerFactory.getLogger("t"),
+        ) { 1000L }
+
+    /** A target whose subject input is mandatory, optionally opting into inheriting its own runs' inputs. */
+    private fun requiredTicketAgent(inherit: Boolean) =
+        Agent(
+            name = "h",
+            commands = listOf(Command.Cmd(cmd = listOf("echo"))),
+            dispatch = AgentDispatchConfig(enabled = true),
+            inputs = listOf(Param(paramName = "ticket", envName = "TICKET_ID", required = true)),
+            continuation = if (inherit) AgentContinuationConfig(inheritInputs = true) else null,
+        )
+
+    /** The origin run's stored inputs, as its own row holds them. */
+    private fun originRow(agentName: String = "h") =
+        ProcessInfo(
+            id = 7,
+            status = ProcessStatus.WORKING,
+            agentName = agentName,
+            inputParams = mapOf("TICKET_ID" to "123"),
+            owner = "alice",
+        )
+
+    // ADR-0101: an inheriting continuation to the same agent counts the origin run's stored
+    // inputs as provided, so a `required: true` subject input no longer blocks registration.
+    @Test
+    fun `create registers a required-input target when the origin run's inputs are inherited`() =
+        runTest {
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("h", closed = false)
+            every { agents.agents } returns mapOf("h" to requiredTicketAgent(inherit = true))
+            coEvery { processManager.getProcessInfo(7) } returns originRow()
+            coEvery { processManager.getProcessStatus(42) } returns ProcessStatus.WORKING
+            val stored = slot<Continuation>()
+            coEvery { repo.create(capture(stored), any()) } returns 11
+
+            val id = realResolverService().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, null)
+
+            assertEquals(11, id)
+            // Nothing inherited is persisted: the row keeps the caller's params and the fire
+            // resolves the origin's inputs itself, so a later definition edit is respected.
+            assertEquals(mapOf("HMR_LG_THREAD" to "t"), stored.captured.params)
+        }
+
+    @Test
+    fun `create still rejects the required input with the flag off`() =
+        runTest {
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("h", closed = false)
+            every { agents.agents } returns mapOf("h" to requiredTicketAgent(inherit = false))
+            coEvery { processManager.getProcessInfo(7) } returns originRow()
+
+            assertFailsWith<ValidationException> {
+                realResolverService().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, null)
+            }
+            coVerify(exactly = 0) { repo.create(any(), any()) }
+        }
+
+    // The inheritance is scoped to a continuation back to the *same* agent: another target
+    // agent inherits nothing, so its mandatory input still has to be supplied by the caller.
+    @Test
+    fun `create still rejects the required input when the continuation targets another agent`() =
+        runTest {
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
+            every { agents.agents } returns mapOf("h" to requiredTicketAgent(inherit = true))
+            coEvery { processManager.getProcessInfo(7) } returns originRow(agentName = "asker")
+
+            assertFailsWith<ValidationException> {
+                realResolverService().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, null)
             }
             coVerify(exactly = 0) { repo.create(any(), any()) }
         }
@@ -619,6 +702,7 @@ class ContinuationServiceTest {
                     },
                     any(),
                     true,
+                    any(),
                 )
             }
         }
@@ -707,7 +791,7 @@ class ContinuationServiceTest {
             val continuation = pending().copy(params = emptyMap(), resumeParam = "WORKER_RESULT")
             stubFireable(continuation)
             // The declared input resolves WORKER_RESULT from the appended resume payload.
-            every { inputResolver.resolveFromParams(any(), any(), any()) } returns
+            every { inputResolver.resolveFromParams(any(), any(), any(), any()) } returns
                 mapOf("WORKER_RESULT" to "the-result")
             val resolve = slot<suspend () -> Map<String, String>>()
             coEvery {
@@ -798,6 +882,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -900,6 +985,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -952,6 +1038,7 @@ class ContinuationServiceTest {
                 },
                 any(),
                 true,
+                any(),
             )
         }
     }
@@ -1176,7 +1263,8 @@ class ContinuationServiceTest {
     fun `validateJoin rejects a non-dispatchable sub agent`() =
         runTest {
             every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
-            val target = mockk<Agent>().also { every { it.dispatch } returns AgentDispatchConfig(enabled = true) }
+            val target =
+                mockk<Agent>(relaxed = true).also { every { it.dispatch } returns AgentDispatchConfig(enabled = true) }
             val sub = mockk<Agent>().also { every { it.dispatch } returns null }
             every { agents.agents } returns mapOf("h" to target, "sub" to sub)
             assertFailsWith<AgentNotDispatchableException> {
@@ -1580,7 +1668,7 @@ class ContinuationServiceTest {
         } returns
             99
         val captured = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
         service().onProcessTerminal(11, ProcessStatus.FINISHED)
         resolve.captured.invoke()
@@ -1629,7 +1717,7 @@ class ContinuationServiceTest {
         } returns
             99
         val captured = slot<Map<String, String>>()
-        every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+        every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
         service().onProcessTerminal(10, ProcessStatus.FINISHED)
         resolve.captured.invoke()
@@ -1666,7 +1754,7 @@ class ContinuationServiceTest {
                 )
             } returns
                 99
-            every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+            every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
             service().onProcessTerminal(11, ProcessStatus.FAILED)
             resolve.captured.invoke()
@@ -1786,7 +1874,7 @@ class ContinuationServiceTest {
             } returns
                 99
             val captured = slot<Map<String, String>>()
-            every { inputResolver.resolveFromParams(capture(captured), any(), any()) } returns emptyMap()
+            every { inputResolver.resolveFromParams(capture(captured), any(), any(), any()) } returns emptyMap()
 
             service().onProcessTerminal(42, ProcessStatus.KILLED)
             resolve.captured.invoke()
