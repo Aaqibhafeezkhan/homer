@@ -116,6 +116,30 @@ The rejected options:
   Fixing that means a `polymorphicDefaultDeserializer` on the shared
   `ClaudeOutputJson`, which three readers share; it is a separate decision.
 
+## Amendment (2026-11-10): `JsonElement?` for a read field whose shape must not fail the event
+
+The decision above declares a field typed when Homer reads it, and rejects
+`JsonElement?` for **unread** fields. A third stance is now in force for one class of
+read field, and the rejection above does not apply to it: a field that *is* read, but
+whose value is the CLI's diagnosis of a failure and whose shape Homer must not fail on,
+is declared `JsonElement?` and read through a total accessor.
+
+`ClaudeEvent.Result`'s `stop_reason`, `terminal_reason` and `api_error_status` are the
+instances. They only ever feed the reason of a failed turn, and the failure is already
+established by `is_error`; a CLI that writes an object or an array where Homer expected
+a string must cost that reason one `key=value` detail, never the whole `result` event —
+which carries the run's cost, usage and model, the only priced observation Homer emits.
+A retyped key fails the event at the typed decode, before any handler runs, so `String?`
+here would turn a diagnostic detail into the loss of the run's accounting. The reader
+(`JsonElement?.detail`) quotes only a JSON primitive's content and treats every other
+shape as naming no value.
+
+The typed alternative is not rejected on principle, only where this trade-off holds:
+`is_error`, the flag that decides the turn, stays a strict `Boolean`, because an
+unreadable flag cannot be judged either way and failing closed — a `Malformed` result
+line — is the correct outcome there. The two fields are a deliberate contrast in the
+same event: the flag fails closed, the diagnosis degrades.
+
 ## More Information
 
 - The version pin that does not cover this: `server.requireClaudeCodeVersion`

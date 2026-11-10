@@ -629,6 +629,26 @@ class ClaudeHarnessTest {
     }
 
     @Test
+    fun `an is_error flag of an unexpected shape is pinned — a quoted boolean decodes, a number or null fails the whole event`() {
+        // The flag stays a strict Boolean. kotlinx accepts a quoted `"true"`, so the string form
+        // still fails the turn on the flag and keeps its cost. A number or an explicit null is not
+        // a boolean at all: the result line is Malformed and the cost/usage riding on it never
+        // reach a TurnEnd — the fail-closed trade-off the untyped diagnosis fields do not take.
+        val quoted =
+            events("""{"type":"result","subtype":"success","is_error":"true","total_cost_usd":0.25}""")
+                .single() as LlmEvent.TurnEnd
+        assertEquals(TurnStatus.Failed("is_error"), quoted.status)
+        assertEquals(0.25, quoted.costUsd)
+
+        listOf(
+            """{"type":"result","subtype":"success","is_error":1,"total_cost_usd":0.25}""",
+            """{"type":"result","subtype":"success","is_error":null,"total_cost_usd":0.25}""",
+        ).forEach { json ->
+            assertIs<Translation.Malformed>(harness.translate(line(json)), "a non-boolean is_error must fail the whole event: $json")
+        }
+    }
+
+    @Test
     fun `a retyped known field is Malformed not a throw`() {
         val t = harness.translate(line("""{"type":"assistant","message":{"content":"not-a-list"}}"""))
         assertIs<Translation.Malformed>(t)
@@ -653,7 +673,8 @@ class ClaudeHarnessTest {
     @Test
     fun `a Stopped turn end is Terminal only when maxTurnsExitCode is set`() {
         val stopped = listOf(LlmEvent.TurnEnd(TurnStatus.Stopped("error_max_turns")))
-        assertIs<Inspection.Malformed>(harness.inspect(stopped, emptyList(), command))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(stopped, emptyList(), command))
+        assertEquals("result event is not a successful turn: error_max_turns", malformed.reason)
         val opted = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 7))
         assertEquals(Inspection.Terminal(7), harness.inspect(stopped, emptyList(), opted))
     }
@@ -662,14 +683,16 @@ class ClaudeHarnessTest {
     fun `a result with a missing subtype translates to a Failed turn end and is Malformed`() {
         val e = events("""{"type":"result"}""").single() as LlmEvent.TurnEnd
         assertEquals(TurnStatus.Failed("<missing>"), e.status)
-        assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(listOf(e), emptyList(), command))
+        assertEquals("result event is not a successful turn: <missing>", malformed.reason)
     }
 
     @Test
     fun `a Failed turn end is Malformed even when maxTurnsExitCode is set — only Stopped becomes Terminal`() {
         val failed = listOf(LlmEvent.TurnEnd(TurnStatus.Failed("error_during_execution")))
         val opted = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 7))
-        assertIs<Inspection.Malformed>(harness.inspect(failed, emptyList(), opted))
+        val malformed = assertIs<Inspection.Malformed>(harness.inspect(failed, emptyList(), opted))
+        assertEquals("result event is not a successful turn: error_during_execution", malformed.reason)
     }
 
     @Test
