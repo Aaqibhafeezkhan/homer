@@ -1792,7 +1792,9 @@ resultEnvParam:
 **Value shape:** a path that selects a JSON **object** or **array** yields compact JSON
 (`{"a":1,"b":"x"}`, `[1,2]`) — text a later command can pass to a tool or a graph node
 unchanged. A selected **string** arrives raw, a **number** or **boolean** as its JSON text,
-and a JSON `null` or a path that matches nothing leaves the variable unset.
+and a JSON `null` or a **definite** path that matches nothing leaves the variable unset;
+an **indefinite** path (filter, wildcard) that matches nothing yields `[]` — the variable is
+set to that literal, so an absence guard does not fire.
 
 **JSONPath Syntax Examples:**
 
