@@ -86,6 +86,92 @@ class JsonPathTransformerTest {
         assertEquals(mapOf("USER_NAME" to "Alice"), result)
     }
 
+    // An input transformer shares the JsonPath→text conversion with `resultEnvParam`, so a
+    // selected object or array reaches the env as compact JSON rather than Java map text.
+    @Test
+    fun `resolveDebug serializes a selected object as compact JSON`() {
+        val agent =
+            AgentFixtures.simpleAgent().copy(
+                queryParams =
+                    listOf(
+                        Param(
+                            paramName = "data",
+                            envName = "CONFIG",
+                            type = ParamType.ANY,
+                            transformer = Transformer.JsonPath("$.config"),
+                        ),
+                    ),
+            )
+        val params = createParameters(mapOf("data" to """{"config":{"a":1,"b":"x","c":[true,null]}}"""))
+
+        val result =
+            resolver.resolveDebug(
+                queryParams = params,
+                bodyJson = null,
+                headers = emptyMap(),
+                agent = agent,
+                enforceRequired = true,
+            )
+
+        assertEquals(mapOf("CONFIG" to """{"a":1,"b":"x","c":[true,null]}"""), result)
+    }
+
+    @Test
+    fun `resolveDebug serializes a selected array as compact JSON`() {
+        val agent =
+            AgentFixtures.simpleAgent().copy(
+                queryParams =
+                    listOf(
+                        Param(
+                            paramName = "data",
+                            envName = "ITEMS",
+                            type = ParamType.ANY,
+                            transformer = Transformer.JsonPath("$.items"),
+                        ),
+                    ),
+            )
+        val params = createParameters(mapOf("data" to """{"items":[1,{"a":2}]}"""))
+
+        val result =
+            resolver.resolveDebug(
+                queryParams = params,
+                bodyJson = null,
+                headers = emptyMap(),
+                agent = agent,
+                enforceRequired = true,
+            )
+
+        assertEquals(mapOf("ITEMS" to """[1,{"a":2}]"""), result)
+    }
+
+    @Test
+    fun `resolveDebug serializes an object inside an array as compact JSON`() {
+        val agent =
+            AgentFixtures.simpleAgent().copy(
+                queryParams =
+                    listOf(
+                        Param(
+                            paramName = "data",
+                            envName = "FIRST",
+                            type = ParamType.ANY,
+                            transformer = Transformer.JsonPath("$.items[0]"),
+                        ),
+                    ),
+            )
+        val params = createParameters(mapOf("data" to """{"items":[{"a":2}]}"""))
+
+        val result =
+            resolver.resolveDebug(
+                queryParams = params,
+                bodyJson = null,
+                headers = emptyMap(),
+                agent = agent,
+                enforceRequired = true,
+            )
+
+        assertEquals(mapOf("FIRST" to """{"a":2}"""), result)
+    }
+
     @Test
     fun `resolveDebug uses Pass transformer when not specified`() {
         val agent =

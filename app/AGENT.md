@@ -1767,6 +1767,11 @@ resultEnvParam:
 **Fields:**
 - `path`: JSONPath expression
 
+**Value shape:** a path that selects a JSON **object** or **array** yields compact JSON
+(`{"a":1,"b":"x"}`, `[1,2]`) — text a later command can pass to a tool or a graph node
+unchanged. A selected **string** arrives raw, a **number** or **boolean** as its JSON text,
+and a JSON `null` or a path that matches nothing leaves the variable unset.
+
 **JSONPath Syntax Examples:**
 
 ```yaml
@@ -1991,6 +1996,10 @@ transformer: !<pass> {}
 transformer: !<jsonPath>
   path: "$.id"
 ```
+
+An input `jsonPath` transformer has the same value shape as a `resultEnvParam` one: an object
+or array it selects becomes compact JSON, a string stays raw, and a number or boolean is its
+JSON text.
 
 ### Parameter Examples
 

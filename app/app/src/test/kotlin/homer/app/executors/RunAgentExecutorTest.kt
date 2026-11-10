@@ -389,6 +389,32 @@ class RunAgentExecutorTest {
             assertEquals("val", resolvedParams.captured["version"])
         }
 
+    // The `!<agent>` queryParams copy of the conversion is the same helper as `resultEnvParam`:
+    // an env value holding a JSON object is forwarded as compact JSON, not Java map text.
+    @Test
+    fun `param mapping with JsonPath transformer forwards a selected object as compact JSON`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to """{"obj":{"a":1,"b":[true,null]}}"""))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$.obj"),
+                            ),
+                        ),
+                )
+
+            executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals("""{"a":1,"b":[true,null]}""", resolvedParams.captured["payload"])
+        }
+
     @Test
     fun `param mapping with Regex transformer forwards captured group`() =
         runTest {
