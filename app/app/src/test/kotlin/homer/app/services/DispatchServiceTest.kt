@@ -18,6 +18,7 @@ import homer.app.models.ParamSource
 import homer.app.models.ParamType
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.Transformer
 import homer.app.services.persistence.DispatchRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -395,6 +396,145 @@ class DispatchServiceTest {
             coVerify { repo.markFailed(5, match { it.contains("'ticket'") && !it.contains("not-a-number") }, 1000L) }
             coVerify(exactly = 0) { repo.markDispatched(5, any(), any()) }
             assertEquals(DispatchStatus.FAILED, result?.status)
+        }
+
+    @Test
+    fun `fire validates an inherited stored value without running its transformer a second time`() =
+        runTest {
+            // The origin run stored SUMMARY already post-transformer — its JsonPath
+            // transformer extracted `$.summary` when it resolved its inputs. Running the
+            // transformer over the extracted string again would reject the value and fail
+            // every dispatch that inherits it. Real resolver, mirroring the continuation
+            // fire's case, so dropping the fire's skipTransformFor argument fails here.
+            // ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            every { agents.agents } returns mapOf("h" to graph)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "reply", emptyMap(), 7, "h", null, 1)
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.FINISHED,
+                    agentName = "h",
+                    inputParams = mapOf("SUMMARY" to "the subject"),
+                )
+            val realResolverService =
+                DispatchService(
+                    repo,
+                    questions,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    broadcaster,
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+            val resolve = slot<suspend () -> Map<String, String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    resolve.captured.invoke()
+                    99
+                }
+
+            realResolverService.fire(questionId = "q1", answer = "us-east")
+
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+            coVerify(exactly = 0) { repo.markFailed(5, any(), any()) }
+        }
+
+    @Test
+    fun `fire transforms the dispatch's own param of an inherited name as caller-supplied input`() =
+        runTest {
+            // The inherited names whose value survives the merge exclude the dispatch's own
+            // params: an own param named like an inherited one wins, and its raw JSON is
+            // transformed as caller-supplied input — never passed through as a stored,
+            // already-transformed value. Real resolver, so the transformer really runs.
+            // ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            every { agents.agents } returns mapOf("h" to graph)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(
+                    5,
+                    "q1",
+                    DispatchStatus.PENDING,
+                    "h",
+                    "reply",
+                    params = mapOf("summary" to "{\"summary\": \"own raw\"}"),
+                    originProcessId = 7,
+                    originAgentName = "h",
+                    expiresAt = null,
+                    createdAt = 1,
+                )
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns
+                ProcessInfo(
+                    id = 7,
+                    status = ProcessStatus.FINISHED,
+                    agentName = "h",
+                    inputParams = mapOf("SUMMARY" to "the subject"),
+                )
+            val realResolverService =
+                DispatchService(
+                    repo,
+                    questions,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    broadcaster,
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+            val resolve = slot<suspend () -> Map<String, String>>()
+            var resolved: Map<String, String>? = null
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    resolved = resolve.captured.invoke()
+                    99
+                }
+
+            realResolverService.fire(questionId = "q1", answer = "us-east")
+
+            assertEquals("own raw", resolved?.get("SUMMARY"))
+            coVerify { repo.markDispatched(5, 99, 1000L) }
         }
 
     @Test

@@ -71,9 +71,12 @@ the field table and misses that the flag covers dispatches loses nothing: the
 One internal helper (`inheritedOriginInputs`) computes what a fire inherits, and
 both fire paths (`ContinuationFireService`, `DispatchService`) and both
 registration paths (`ContinuationService.validate`, `DispatchService.create`)
-use it. It reads the origin run's row, which the caller has already fetched, and
-returns the origin's inputs **keyed by paramName** — the keying the fire's own
-params use — plus the origin's `secretInputKeys` snapshot.
+use it. It reads the origin run's row through the suspend supplier the caller
+passes — a read the fire paths defer until the flag and same-agent gates pass,
+so a flag-off fire reads no row, while the registration paths pass an
+already-fetched row — and returns the origin's inputs **keyed by paramName** —
+the keying the fire's own params use — plus the origin's `secretInputKeys`
+snapshot.
 
 The fire merges that map **under** its own params:
 `inherited + continuation.params + (resumeParam to payload)`. An explicit

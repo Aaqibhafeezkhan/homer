@@ -58,30 +58,50 @@ class OriginInputInheritanceTest {
         originAgentName: String = "graph",
         originOwner: String? = "alice",
         target: Agent = agent(),
-    ) = inheritedOriginInputs({ origin }, originAgentName, originOwner, target, "Continuation", logger)
+    ): InheritedOriginInputs {
+        originReads = 0
+        return inheritedOriginInputs(
+            {
+                originReads++
+                origin
+            },
+            originAgentName,
+            originOwner,
+            target,
+            "Continuation",
+            logger,
+        )
+    }
+
+    /** How many times the last [inherit] call read the origin row — 0 means the supplier stayed unread. */
+    private var originReads = 0
 
     @Test
     fun `the flag off inherits nothing`() =
         runTest {
             assertEquals(InheritedOriginInputs.NONE, inherit(target = agent(inherit = false)))
+            assertEquals(0, originReads, "a flag-off fire must not read the origin row")
         }
 
     @Test
     fun `a continuation to another agent inherits nothing`() =
         runTest {
             assertEquals(InheritedOriginInputs.NONE, inherit(originAgentName = "other"))
+            assertEquals(0, originReads, "a different-agent fire must not read the origin row")
         }
 
     @Test
     fun `an owner mismatch inherits nothing`() =
         runTest {
             assertEquals(InheritedOriginInputs.NONE, inherit(origin = origin(owner = "bob")))
+            assertEquals(1, originReads, "the owner gate reads the row once, and only once")
         }
 
     @Test
     fun `an absent origin row inherits nothing`() =
         runTest {
             assertEquals(InheritedOriginInputs.NONE, inherit(origin = null))
+            assertEquals(1, originReads, "the purged-row gate reads the row once, and only once")
         }
 
     @Test
@@ -91,6 +111,7 @@ class OriginInputInheritanceTest {
 
             assertEquals(mapOf("ticket" to "123", "svc" to "checkout"), inherited.params)
             assertEquals(setOf("SVC_ID"), inherited.secretInputKeys)
+            assertEquals(1, originReads, "the eligible fire reads the row exactly once")
         }
 
     @Test

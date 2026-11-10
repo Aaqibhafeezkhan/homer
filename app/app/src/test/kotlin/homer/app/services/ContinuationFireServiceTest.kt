@@ -365,6 +365,79 @@ class ContinuationFireServiceTest {
         }
 
     @Test
+    fun `the continuation's own param of an inherited name is transformed as caller-supplied input`() =
+        runTest {
+            // The inherited names whose value survives the merge exclude the continuation's
+            // own params: an own param named like an inherited one wins, and its raw JSON
+            // is transformed as caller-supplied input — never passed through as a stored,
+            // already-transformed value. Real resolver, so the transformer really runs.
+            // ADR-0101.
+            val graph =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"), timeout = 60)),
+                    inputs =
+                        listOf(
+                            Param(
+                                paramName = "summary",
+                                envName = "SUMMARY",
+                                src = ParamSource.QUERY,
+                                type = ParamType.ANY,
+                                transformer = Transformer.JsonPath("$.summary"),
+                            ),
+                        ),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    continuation = AgentContinuationConfig(inheritInputs = true),
+                )
+            every { agents.agents } returns mapOf("h" to graph)
+            coEvery { repo.claim(5) } returns true
+            coEvery { processManager.getProcessInfo(7) } returns originInfo(mapOf("SUMMARY" to "the subject"))
+            val realFires =
+                ContinuationFireService(
+                    repo,
+                    agents,
+                    authorizer,
+                    runStarter,
+                    AgentInputResolver(),
+                    processManager,
+                    mockk(relaxed = true),
+                    LoggerFactory.getLogger("t"),
+                ) { 1000L }
+            val resolve = slot<suspend () -> Map<String, String>>()
+            var resolved: Map<String, String>? = null
+            coEvery {
+                runStarter.start(
+                    any(),
+                    any(),
+                    eq("continuation"),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    serverDerivedParent = true,
+                    capture(resolve),
+                )
+            } coAnswers
+                {
+                    resolved = resolve.captured.invoke()
+                    99
+                }
+
+            realFires.fire(
+                pending().copy(
+                    originAgentName = "h",
+                    params = mapOf("summary" to "{\"summary\": \"own raw\"}"),
+                ),
+                ProcessStatus.FINISHED,
+            )
+
+            assertEquals("own raw", resolved?.get("SUMMARY"))
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+        }
+
+    @Test
     fun `fireJoin resumes with one entry per watched sub, keyed by interrupt id`() =
         runTest {
             val params = resolvedParams()
