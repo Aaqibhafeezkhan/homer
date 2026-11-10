@@ -2,19 +2,24 @@ package homer.app.infra
 
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.models.Agent
+import homer.app.models.ClaudeCmdOptions
 import homer.app.models.Command
+import homer.app.models.LlmPrompt
 import homer.app.models.Param
 import homer.app.models.ParamSource
 import homer.app.models.ResultEnvParam
 import homer.app.models.SrcType
 import homer.app.models.Tags
+import io.mockk.verify
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AgentInputChecksTest {
-    private val checks = AgentInputChecks(TestFixtures.mockLogger(), ParamValidator())
+    private val logger = TestFixtures.mockLogger()
+    private val checks = AgentInputChecks(logger, ParamValidator())
     private val errors = mutableListOf<String>()
 
     private fun agentWith(vararg inputs: Param) = AgentFixtures.simpleAgent(name = "a").copy(inputs = inputs.toList())
@@ -74,5 +79,65 @@ class AgentInputChecksTest {
             )
         assertFalse(checks.checkCommandBindings(agent, errors))
         assertTrue(checks.checkCommandBindings(AgentFixtures.simpleAgent(name = "a"), mutableListOf()))
+    }
+
+    /** An agent whose commands are the given claude steps. */
+    private fun claudeAgent(vararg commands: Command.Claude) = Agent(name = "a", commands = commands.toList())
+
+    private fun claudeCommand(
+        options: ClaudeCmdOptions,
+        label: String = "claude",
+        prompt: String = "Hello Claude",
+    ) = Command.Claude(prompt = LlmPrompt.Prompt(prompt), options = options, label = label)
+
+    @Test
+    fun `a claude step that skips permissions with only allowedTools warns per command, without echoing the prompt`() {
+        val agent =
+            claudeAgent(
+                claudeCommand(
+                    ClaudeCmdOptions(dangerouslySkipPermissions = true, allowedTools = listOf("ReadOnlyName")),
+                    label = "verify",
+                    prompt = "PROMPT-SHOULD-NOT-LEAK",
+                ),
+                claudeCommand(
+                    ClaudeCmdOptions(permissionMode = "bypassPermissions", allowedTools = listOf("Read")),
+                    label = "ship",
+                ),
+            )
+
+        checks.warnOnUncontainedClaudeTools(agent)
+
+        // The mock records the format and its arguments as passed, so the fields are asserted
+        // on the format and the command on the label argument.
+        val formats = mutableListOf<String>()
+        val names = mutableListOf<String>()
+        val labels = mutableListOf<String>()
+        verify(exactly = 2) { logger.warn(capture(formats), capture(names), capture(labels)) }
+        assertEquals(listOf("a", "a"), names)
+        assertEquals(listOf("verify", "ship"), labels)
+        assertTrue(formats.all { it.contains("allowedTools") && it.contains("disallowedTools: [Agent, Task]") }, formats.toString())
+        // Threat model (Secrets): the message names the command and the fields, never a prompt or option value.
+        assertTrue(
+            (formats + names + labels).none { it.contains("PROMPT-SHOULD-NOT-LEAK") || it.contains("ReadOnlyName") },
+            formats.toString(),
+        )
+    }
+
+    @Test
+    fun `a contained, non-bypassing or tool-unlimited claude step does not warn`() {
+        val bypassing = ClaudeCmdOptions(dangerouslySkipPermissions = true, allowedTools = listOf("Read"))
+        val agent =
+            claudeAgent(
+                claudeCommand(bypassing.copy(tools = listOf("Read", "Grep"))),
+                claudeCommand(bypassing.copy(disallowedTools = listOf("Agent", "Task"))),
+                claudeCommand(ClaudeCmdOptions(dangerouslySkipPermissions = true)),
+                claudeCommand(ClaudeCmdOptions(permissionMode = "plan", allowedTools = listOf("Read"))),
+                claudeCommand(ClaudeCmdOptions(permissionMode = "plan", dangerouslySkipPermissions = true, allowedTools = listOf("Read"))),
+                claudeCommand(ClaudeCmdOptions(allowedTools = listOf("Read"))),
+            )
+
+        checks.warnOnUncontainedClaudeTools(agent)
+
+        verify(exactly = 0) { logger.warn(any<String>(), any<Any>(), any<Any>()) }
     }
 }

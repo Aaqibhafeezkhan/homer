@@ -4,14 +4,15 @@ import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.ParamSource
 import homer.app.models.TagValidation
+import homer.app.models.bypassesPermissionsWithoutToolLimit
 import org.slf4j.Logger
 
 /**
  * The load-time checks `AgentsService` runs on an agent's inputs and on what its commands
  * bind them to: reserved and malformed envNames, tags (ADR-0060), duplicate and invalid
  * input declarations, result-capture envNames and input-chosen executables — plus the
- * warn-only deprecation and run-identity-steering notes. Each `check*` reports its own
- * failure into `errors` and returns `false` to skip the agent.
+ * warn-only deprecation, run-identity-steering and uncontained-tool notes. Each `check*`
+ * reports its own failure into `errors` and returns `false` to skip the agent.
  */
 internal class AgentInputChecks(
     private val logger: Logger,
@@ -369,6 +370,26 @@ internal class AgentInputChecks(
                 agent.name,
                 steered.joinToString("; "),
             )
+        }
+    }
+
+    /**
+     * WARN per Claude command that skips permissions while `allowedTools` is its only
+     * tool setting: the step reads as scoped, but `allowedTools` pre-approves without
+     * removing anything, so it can still write, run commands and spawn subagents.
+     * Warn-only — existing agents keep loading.
+     */
+    fun warnOnUncontainedClaudeTools(agent: Agent) {
+        agent.commands.filterIsInstance<Command.Claude>().forEach { cmd ->
+            if (cmd.options.bypassesPermissionsWithoutToolLimit()) {
+                logger.warn(
+                    "Agent '{}': claude command '{}' skips permissions and sets only 'allowedTools', " +
+                        "which pre-approves tools without removing any. Contain the step with 'tools' " +
+                        "or 'disallowedTools: [Agent, Task]' (see AGENT.md).",
+                    agent.name,
+                    cmd.label,
+                )
+            }
         }
     }
 }
