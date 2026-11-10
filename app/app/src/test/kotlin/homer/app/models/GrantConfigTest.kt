@@ -3,6 +3,7 @@ package homer.app.models
 import com.charleskorn.kaml.Yaml
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -65,6 +66,24 @@ class GrantConfigTest {
                 .single()
                 .actions,
         )
+    }
+
+    @Test
+    fun `password user with a role other than admin is refused`() {
+        // ADR-0037: a principal declares `role: admin` or grants, never another role.
+        val ex =
+            assertFailsWith<IllegalArgumentException> {
+                PasswordUserConfig(passwordHash = "irrelevant", role = "editor")
+            }
+        assertTrue(
+            ex.message!!.contains("PasswordUserConfig.role must be 'admin'"),
+            "expected the role guard message, got: ${ex.message}",
+        )
+    }
+
+    @Test
+    fun `password user with role admin is accepted`() {
+        assertEquals("admin", PasswordUserConfig(passwordHash = "irrelevant", role = "admin").role)
     }
 
     @Test

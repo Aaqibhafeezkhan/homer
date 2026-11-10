@@ -1,5 +1,6 @@
 package homer.app.auth
 
+import homer.app.fixtures.TestFixtures
 import homer.app.models.AuthConfig
 import homer.app.models.PasswordUserConfig
 import homer.app.models.SameSiteMode
@@ -39,6 +40,46 @@ class SessionAuthTest {
             sessionTtlMin = 60,
             cookieSecure = false,
         )
+
+    /**
+     * Seeds a session expiring [offsetSec] seconds after a fresh wall-clock second and reads an
+     * authenticated route back: the provider must refuse `exp == now` and accept `exp == now + 1`,
+     * the two sides of the `session.exp <= Instant.now()` boundary (SessionAuth.kt:128).
+     */
+    private fun sessionExpiringIn(
+        offsetSec: Long,
+        expected: HttpStatusCode,
+    ) = testApplication {
+        application {
+            installPasswordSessions(baseScheme)
+            install(Authentication) {
+                passwordSessionProvider("auth-session", baseScheme)
+            }
+            routing {
+                get("/seed") {
+                    call.sessions.set(
+                        HomerSession(
+                            username = "alice",
+                            exp = TestFixtures.atFreshSecond() + offsetSec,
+                        ),
+                    )
+                    call.respondText("ok")
+                }
+                authenticate("auth-session") {
+                    get("/api/v1/agents") { call.respondText("agents") }
+                }
+            }
+        }
+        val client = createClient { install(HttpCookies) }
+        client.get("/seed")
+        assertEquals(expected, client.get("/api/v1/agents").status)
+    }
+
+    @Test
+    fun `session expiring exactly now returns 401`() = sessionExpiringIn(0, HttpStatusCode.Unauthorized)
+
+    @Test
+    fun `session expiring one second from now is accepted`() = sessionExpiringIn(1, HttpStatusCode.OK)
 
     @Test
     fun `valid session reaches authenticated route`() =
@@ -248,6 +289,31 @@ class SessionAuthTest {
             ex.message!!.contains("cookieSameSite=NONE requires cookieSecure=true"),
             "expected the None-without-Secure guard message, got: ${ex.message}",
         )
+    }
+
+    @Test
+    fun `sessionTtlMin must be positive and one minute is accepted`() {
+        listOf(0, -1).forEach { ttl ->
+            val ex = assertFailsWith<IllegalArgumentException> { baseScheme.copy(sessionTtlMin = ttl) }
+            assertTrue(
+                ex.message!!.contains("sessionTtlMin must be > 0"),
+                "expected the sessionTtlMin guard message for $ttl, got: ${ex.message}",
+            )
+        }
+        assertEquals(1, baseScheme.copy(sessionTtlMin = 1).sessionTtlMin)
+    }
+
+    @Test
+    fun `bcryptCost must be in 4 to 15 and both bounds are accepted`() {
+        listOf(3, 16).forEach { cost ->
+            val ex = assertFailsWith<IllegalArgumentException> { baseScheme.copy(bcryptCost = cost) }
+            assertTrue(
+                ex.message!!.contains("bcryptCost must be in 4..15"),
+                "expected the bcryptCost guard message for $cost, got: ${ex.message}",
+            )
+        }
+        assertEquals(4, baseScheme.copy(bcryptCost = 4).bcryptCost)
+        assertEquals(15, baseScheme.copy(bcryptCost = 15).bcryptCost)
     }
 
     @Test
