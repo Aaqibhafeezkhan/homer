@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.models.MaintenanceConfig
 import homer.app.models.MaintenanceResponse
 import homer.app.services.persistence.ServerMetaRepository
@@ -43,7 +44,8 @@ internal fun interface MaintenanceSlot {
  *
  * A start that is part of already-admitted work — a `!<agent>` hop, a dispatch or a continuation
  * fire made by a run that is still `WORKING` — does not park: it is admitted, not new.
- * See [gated] and ADR-0092.
+ * The shutdown drain reads the same rule through [isDraining] and refuses everything else
+ * outright instead of queueing it. See [gated], ADR-0092 and ADR-0101.
  */
 internal class MaintenanceModeService(
     private val repository: ServerMetaRepository,
@@ -52,7 +54,14 @@ internal class MaintenanceModeService(
     private val logger: Logger,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     private val now: () -> Long = { Instant.now().epochSecond },
+    // The shutdown drain flag (`homer.app.isDraining`), injected as a lambda so this Services
+    // layer type stays off the HTTP-layer flag. While it is set a non-admitted start is refused
+    // instead of parked: the process is going away, so a parked start could only end `UNKNOWN`.
+    // See ADR-0101.
+    isDraining: () -> Boolean = { false },
 ) {
+    private val draining = isDraining
+
     /** A parked start: [released] is completed when its turn comes, [done] when it leaves the gate. */
     private class Waiter(
         val owner: String?,
@@ -71,6 +80,13 @@ internal class MaintenanceModeService(
     private val releaseSlots = Semaphore(config.releaseConcurrency)
 
     fun isEnabled(): Boolean = enabled.get()
+
+    /**
+     * The shutdown drain flag, as [gated] and `AgentRunStarter` read it: while it is set, a
+     * non-admitted start is refused and a server-derived start is admitted from its live parent.
+     * See ADR-0101.
+     */
+    fun isDraining(): Boolean = draining()
 
     fun queueDepth(): Int = synchronized(lock) { queue.size }
 
@@ -259,6 +275,10 @@ internal class MaintenanceModeService(
  * dispatch or a continuation fire made by a run that is still `WORKING`. Such a start never queues.
  * The flag is decided from the parent's own row, never from a caller-supplied parent id.
  * See ADR-0092.
+ *
+ * A start that is neither admitted nor part of the shutdown drain's work is refused with
+ * [ServerDrainingException] as soon as the drain flag is set — shed, never parked, because a
+ * start queued behind a process that is going away could only end `UNKNOWN`. See ADR-0101.
  */
 internal suspend fun <T> MaintenanceModeService.gated(
     owner: String?,
@@ -266,6 +286,7 @@ internal suspend fun <T> MaintenanceModeService.gated(
     start: suspend () -> T,
 ): T {
     if (admitted) return start()
+    if (isDraining()) throw ServerDrainingException()
     val slot = awaitRelease(owner)
     try {
         return start()

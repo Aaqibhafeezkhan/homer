@@ -3570,8 +3570,11 @@ docker compose up -d          # console :3000, API :8080</code></pre>
 
         <article class="f">
           <h3>Graceful shutdown <span class="where">server config</span></h3>
-          <p>On SIGTERM <code>/readyz</code> flips to 503 while in-flight runs finish, up to the drain window. Keep it
-            below <code>terminationGracePeriodSeconds</code>.</p>
+          <p>On SIGTERM <code>/readyz</code> flips to 503 while in-flight runs finish, up to the drain window. The
+            window covers the runs those runs start — a <code>!&lt;agent&gt;</code> hop, a dispatch, a continuation
+            fired by a run that just ended — and runs already waiting for a runner claim, which still get one; a new
+            top-level start is refused with 503. Keep it below <code>terminationGracePeriodSeconds</code>, since a
+            shutdown with such work in flight can use the whole window.</p>
           <pre><code>server:
   shutdownDrainSec: 30</code></pre>
         </article>

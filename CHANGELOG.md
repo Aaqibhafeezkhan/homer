@@ -7,6 +7,7 @@
 - **Changed: a run's Langfuse trace name and tags reach every span it exports** — Langfuse v4 reads both off each observation, so the run's name and subject tags now ride on every span and the exporter declares OTLP ingestion version 4. See [ADR-0050](docs/adr/0050-per-agent-telemetry-block.md).
 - **Fixed: a stalled Kubernetes API server no longer holds a run** — The runner's non-streaming API reads now fail after a fixed 30 s instead of hanging, so the run ends and its runner slot is freed; exec and workspace-sync streams stay open as long as the command needs. See [ADR-0100](docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
 - **Fixed: a `!<claude>` result flagged `is_error` fails the step** — Runs that reported `subtype: "success"` while the CLI flagged an error (a refusal, an unavailable deferred tool, an API error) now fail instead of finishing green, so their `retry` and `escalate` tiers run and their `afterFailure` cooldowns arm.
+- **Fixed: shutdown drain waits for runs started during the drain** — A shutdown now also finishes the `!<agent>` hops, dispatches and continuations its in-flight runs start, and runs already waiting for a runner claim, instead of killing them and leaving them `UNKNOWN`; a new top-level start during the drain is refused with `503`. See [ADR-0101](docs/adr/0101-shutdown-drain-waits-for-descendant-runs.md).
 
 ## [1.41.0] - 2026-11-06
 

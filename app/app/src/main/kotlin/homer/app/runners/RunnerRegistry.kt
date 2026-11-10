@@ -25,7 +25,8 @@ import kotlin.time.Duration.Companion.seconds
  * backend (consumers, diagnostics); [forAgent] / [forAlias] return the queued
  * view every run must go through. [start] launches one consumer per entry on
  * the application scope and must be called exactly once; [stop] cancels them
- * again at shutdown. See ADR-0066.
+ * again at shutdown, after the drain ([consumerJobs] is what the drain excludes).
+ * See ADR-0066.
  */
 class RunnerRegistry(
     private val entries: List<RegisteredRunner>,
@@ -79,8 +80,17 @@ class RunnerRegistry(
     }
 
     /**
+     * The consumer and heartbeat-sweeper jobs [start] launched, so the shutdown drain can
+     * exclude them by [Job] identity from what it waits for: their `while (isActive)` loops
+     * never complete on their own, and they must keep claiming queued runs until the drain
+     * ends. Empty before [start] and after [stop]. See ADR-0066, ADR-0101.
+     */
+    fun consumerJobs(): List<Job> = consumerJobs
+
+    /**
      * Cancels the consumer loops so a shutdown drain only waits for real run
-     * jobs; call before draining the application scope.
+     * jobs; call **after** the drain, not before — until then they are what lets a run
+     * already queued for a static runner still be claimed.
      */
     fun stop() {
         consumerJobs.forEach { it.cancel() }

@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.fixtures.TestFixtures
 import homer.app.models.MaintenanceConfig
 import homer.app.services.persistence.DatabaseService
@@ -35,7 +36,8 @@ import kotlin.test.assertTrue
 
 /**
  * The maintenance-mode gate: the durable flag, the bounded FIFO wait queue and the release
- * that drains it. See ADR-0092 and root §12 rules 4–5.
+ * that drains it — plus the shutdown drain's refusal, which sheds an unadmitted start rather
+ * than parking it. See ADR-0092, ADR-0101 and root §12 rules 4–5.
  */
 class MaintenanceModeServiceTest {
     private lateinit var db: DatabaseService
@@ -61,6 +63,7 @@ class MaintenanceModeServiceTest {
         config: MaintenanceConfig = MaintenanceConfig(),
         initialEnabled: Boolean = false,
         logger: Logger = TestFixtures.mockLogger(),
+        isDraining: () -> Boolean = { false },
     ): MaintenanceModeService =
         MaintenanceModeService(
             repository = repository,
@@ -68,6 +71,7 @@ class MaintenanceModeServiceTest {
             initialEnabled = initialEnabled,
             logger = logger,
             scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
+            isDraining = isDraining,
         ).also { svc = it }
 
     /** Asserts the shed warning, which arrives as `warn(format, argument)` on [logger]. */
@@ -515,5 +519,64 @@ class MaintenanceModeServiceTest {
             yield()
             svc.setEnabled(false)
             withTimeout(5_000) { parked.await() }
+        }
+
+    // --- the shutdown drain (ADR-0101) ---
+
+    @Test
+    fun `gated sheds an unadmitted start while the drain is running instead of parking it`() =
+        runBlocking {
+            // A start queued behind a process that is going away could only end UNKNOWN, so it
+            // is shed at once — and shed means shed: it never enters the queue (root §12 rule 5).
+            newService(isDraining = { true })
+            var ran = false
+
+            assertFailsWith<ServerDrainingException> { svc.gated("alice") { ran = true } }
+
+            assertFalse(ran)
+            assertEquals(0, svc.queueDepth(), "a start refused by the drain must not be queued")
+            assertEquals(0, svc.snapshot().queued)
+        }
+
+    @Test
+    fun `gated runs an admitted start while the drain is running`() =
+        runBlocking {
+            // The drain's own work — a `!<agent>` hop, a dispatch, a continuation fire made by a
+            // run that is still WORKING — must still start, or the drain could never finish.
+            newService(isDraining = { true })
+            val ran = CompletableDeferred<Unit>()
+
+            withTimeout(5_000) { svc.gated("alice", admitted = true) { ran.complete(Unit) } }
+
+            assertTrue(ran.isCompleted)
+            assertEquals(0, svc.queueDepth())
+        }
+
+    @Test
+    fun `the drain refusal wins while maintenance mode is on too`() =
+        runBlocking {
+            // Both gates on: the refusal is the answer, not a queue entry behind a mode that is
+            // also never going to be released during this process's life.
+            newService(isDraining = { true })
+            svc.setEnabled(true)
+
+            assertFailsWith<ServerDrainingException> { svc.gated("alice") { } }
+
+            assertEquals(0, svc.queueDepth(), "the drain refusal must not park behind maintenance mode")
+        }
+
+    @Test
+    fun `gated runs a start again once the drain flag clears`() =
+        runBlocking {
+            // The flag is read per call, not latched at construction.
+            var draining = true
+            newService(isDraining = { draining })
+
+            assertFailsWith<ServerDrainingException> { svc.gated("alice") { } }
+
+            draining = false
+            val ran = CompletableDeferred<Unit>()
+            withTimeout(5_000) { svc.gated("alice") { ran.complete(Unit) } }
+            assertTrue(ran.isCompleted)
         }
 }

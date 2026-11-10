@@ -373,6 +373,15 @@ class MaintenanceWaitTimeoutException(
     timeout: Duration,
 ) : HomerException("Maintenance mode is on and the start did not leave the queue within ${timeout.inWholeSeconds} s")
 
+/**
+ * Raised when a start arrives while the shutdown drain is running and is not part of work the
+ * drain already admitted — a `!<agent>` hop, a dispatch or a continuation fire whose
+ * server-derived parent is still `WORKING`. A new top-level start is shed rather than queued:
+ * the process is going away, so a parked start could only end `UNKNOWN`. Maps to 503. §12 rule 5,
+ * ADR-0047 rule 5, ADR-0101.
+ */
+class ServerDrainingException : HomerException("Server is shutting down and is not accepting new runs")
+
 /** A pull-mode runner instance announced something the domain does not accept (tag shape, `allowedTags`, `concurrency` cap). Maps to 422. */
 class RunnerRegistrationRejectedException(
     domain: String,

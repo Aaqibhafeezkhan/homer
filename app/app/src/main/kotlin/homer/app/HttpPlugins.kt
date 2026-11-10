@@ -37,6 +37,7 @@ import homer.app.exceptions.RunnerOutputSequenceException
 import homer.app.exceptions.RunnerRegistrationRejectedException
 import homer.app.exceptions.RunnerTransferTimeoutException
 import homer.app.exceptions.RunnerTransferTooLargeException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.exceptions.TooManyConcurrentWaitsException
 import homer.app.exceptions.TooManyOpenQuestionsException
 import homer.app.exceptions.TooManyPendingContinuationsException
@@ -303,6 +304,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is ProcessManagerAtCapacityException,
         is RunnerClaimTimeoutException,
         is MaintenanceWaitTimeoutException,
+        is ServerDrainingException,
         -> {
             transferCapacityOrServerStatus(e)
         }
@@ -399,6 +401,7 @@ private fun transferCapacityOrServerStatus(e: HomerException): HttpStatusCode =
         is ProcessManagerAtCapacityException,
         is RunnerClaimTimeoutException,
         is MaintenanceWaitTimeoutException,
+        is ServerDrainingException,
         -> {
             HttpStatusCode.ServiceUnavailable
         }

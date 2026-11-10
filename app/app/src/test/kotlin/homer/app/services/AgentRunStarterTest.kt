@@ -7,6 +7,7 @@ import homer.app.exceptions.InvocationCycleDetectedException
 import homer.app.exceptions.InvocationDepthExceededException
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
 import homer.app.fixtures.AgentFixtures
@@ -336,6 +337,7 @@ class AgentRunStarterTest {
         cooldownGate: CooldownGate = mockk(relaxed = true),
         costMeter: CostMeter = mockk(relaxed = true),
         parentStatus: ProcessStatus = ProcessStatus.UNKNOWN,
+        processReads: ProcessRecordReads = mockk { coEvery { getProcessStatus(any()) } returns parentStatus },
     ): AgentRunStarter =
         AgentRunStarter(
             serverId = "test-server",
@@ -346,7 +348,7 @@ class AgentRunStarterTest {
             maxInvocationDepth = 5,
             cooldownGate = cooldownGate,
             maintenanceGate = gate,
-            processReads = mockk { coEvery { getProcessStatus(any()) } returns parentStatus },
+            processReads = processReads,
         )
 
     /**
@@ -356,6 +358,19 @@ class AgentRunStarterTest {
     private fun refusingGate(): MaintenanceModeService =
         mockk {
             every { isEnabled() } returns true
+            every { isDraining() } returns false
+            coEvery { awaitRelease(any()) } throws MaintenanceQueueFullException(500)
+        }
+
+    /**
+     * A gate with the drain running and the mode off: a start that is not admitted is refused
+     * outright, so a start that reaches [MaintenanceModeService.awaitRelease] would hang the test
+     * — and one that does not reach the gate at all proves the drain admitted it. See ADR-0101.
+     */
+    private fun drainingGate(): MaintenanceModeService =
+        mockk {
+            every { isEnabled() } returns false
+            every { isDraining() } returns true
             coEvery { awaitRelease(any()) } throws MaintenanceQueueFullException(500)
         }
 
@@ -365,6 +380,7 @@ class AgentRunStarterTest {
             val processExecutor = mockk<ProcessExecutor>(relaxed = true)
             coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
             val gate = mockk<MaintenanceModeService>()
+            every { gate.isDraining() } returns false
             val modeOff = CompletableDeferred<Unit>()
             coEvery { gate.awaitRelease(any()) } coAnswers {
                 modeOff.await()
@@ -391,6 +407,7 @@ class AgentRunStarterTest {
                 val cooldownGate = mockk<CooldownGate>()
                 coEvery { cooldownGate.check(any()) } throws CooldownActiveException("child", 5, "cooling down")
                 val gate = mockk<MaintenanceModeService>()
+                every { gate.isDraining() } returns false
                 val modeOff = CompletableDeferred<Unit>()
                 coEvery { gate.awaitRelease(any()) } coAnswers {
                     modeOff.await()
@@ -415,6 +432,7 @@ class AgentRunStarterTest {
         runBlocking {
             val processExecutor = mockk<ProcessExecutor>(relaxed = true)
             val gate = mockk<MaintenanceModeService>()
+            every { gate.isDraining() } returns false
             coEvery { gate.awaitRelease(any()) } throws MaintenanceQueueFullException(500)
             val starter = starterWithGate(gate, processExecutor)
 
@@ -431,6 +449,7 @@ class AgentRunStarterTest {
             val agent = AgentFixtures.simpleAgent(name = "child")
             for (refusal in listOf(MaintenanceQueueFullException(500), MaintenanceWaitTimeoutException(600.seconds))) {
                 val gate = mockk<MaintenanceModeService>()
+                every { gate.isDraining() } returns false
                 coEvery { gate.awaitRelease(any()) } throws refusal
                 val starter = starterWithGate(gate, mockk(relaxed = true))
 
@@ -508,6 +527,7 @@ class AgentRunStarterTest {
             val gate =
                 mockk<MaintenanceModeService> {
                     every { isEnabled() } returns false
+                    every { isDraining() } returns false
                     coEvery { awaitRelease(any()) } returns MaintenanceSlot { }
                 }
             val processReads =
@@ -637,5 +657,98 @@ class AgentRunStarterTest {
 
                 coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
             }
+        }
+
+    // --- the shutdown drain (ADR-0101) ---
+
+    @Test
+    fun `a server-derived start whose parent is still WORKING runs during the drain`() =
+        runBlocking {
+            // A `!<agent>` hop, a dispatch or a continuation fire made by a run that is still
+            // WORKING is part of the drain's own work: refusing it would leave that run unable
+            // to finish, which is exactly what the drain is waiting for.
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val gate = drainingGate()
+            val starter = starterWithGate(gate, processExecutor, parentStatus = ProcessStatus.WORKING)
+
+            val processId =
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "agent",
+                    parentProcessId = 42,
+                    serverDerivedParent = true,
+                ) { emptyMap() }
+
+            assertEquals(7, processId)
+            coVerify(exactly = 0) { gate.awaitRelease(any()) }
+            coVerify(exactly = 1) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a start whose parent has ended is refused by the drain, never parked`() =
+        runBlocking {
+            // Shed, not queued: a start parked behind a process that is going away could only
+            // end UNKNOWN at the next boot. ADR-0047 rule 5, ADR-0101.
+            for (status in listOf(ProcessStatus.FINISHED, ProcessStatus.FAILED, ProcessStatus.KILLED, ProcessStatus.UNKNOWN)) {
+                val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+                val gate = drainingGate()
+                val starter = starterWithGate(gate, processExecutor, parentStatus = status)
+
+                assertFailsWith<ServerDrainingException> {
+                    starter.start(
+                        AgentFixtures.simpleAgent(name = "child"),
+                        emptyList(),
+                        "agent",
+                        parentProcessId = 42,
+                        serverDerivedParent = true,
+                    ) { emptyMap() }
+                }
+                coVerify(exactly = 0) { gate.awaitRelease(any()) }
+                coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+            }
+        }
+
+    @Test
+    fun `a caller-supplied parent is refused by the drain without probing its row`() =
+        runBlocking {
+            // The flag short-circuits before the read, so naming a parent admits no start and
+            // probes no row the caller cannot see (root §12 rule 3).
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val gate = drainingGate()
+            val processReads =
+                mockk<ProcessRecordReads> {
+                    coEvery { getProcessStatus(any()) } returns ProcessStatus.WORKING
+                }
+            val starter = starterWithGate(gate, processExecutor, processReads = processReads)
+
+            assertFailsWith<ServerDrainingException> {
+                starter.start(
+                    AgentFixtures.simpleAgent(name = "child"),
+                    emptyList(),
+                    "http",
+                    parentProcessId = 42,
+                ) { emptyMap() }
+            }
+
+            coVerify(exactly = 0) { processReads.getProcessStatus(any()) }
+            coVerify(exactly = 0) { gate.awaitRelease(any()) }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a parentless start is refused by the drain`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val gate = drainingGate()
+            val starter = starterWithGate(gate, processExecutor, parentStatus = ProcessStatus.WORKING)
+
+            assertFailsWith<ServerDrainingException> {
+                starter.start(AgentFixtures.simpleAgent(name = "child"), emptyList(), "http") { emptyMap() }
+            }
+
+            coVerify(exactly = 0) { gate.awaitRelease(any()) }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
         }
 }
