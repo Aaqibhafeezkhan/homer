@@ -415,6 +415,32 @@ class RunAgentExecutorTest {
             assertEquals("""{"a":1,"b":[true,null]}""", resolvedParams.captured["payload"])
         }
 
+    // Same helper as `resultEnvParam`: an indefinite path (filter) matching nothing forwards the
+    // literal `[]`, not unset, so an absence guard on the param does not fire.
+    @Test
+    fun `param mapping with JsonPath transformer forwards an indefinite no-match as empty array`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to """{"a":1,"b":"x"}"""))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$[?(@.nope=='x')]"),
+                            ),
+                        ),
+                )
+
+            executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals("[]", resolvedParams.captured["payload"])
+        }
+
     @Test
     fun `param mapping with Regex transformer forwards captured group`() =
         runTest {

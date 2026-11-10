@@ -172,6 +172,37 @@ class JsonPathTransformerTest {
         assertEquals(mapOf("FIRST" to """{"a":2}"""), result)
     }
 
+    // An indefinite path (filter) that matches nothing yields the empty list, which reaches the
+    // env as the literal `[]` — not unset — so an absence guard does not fire (AGENT.md, Value shape).
+    @Test
+    fun `resolveDebug serializes an indefinite path that matches nothing as empty array`() {
+        val agent =
+            AgentFixtures.simpleAgent().copy(
+                queryParams =
+                    listOf(
+                        Param(
+                            paramName = "data",
+                            envName = "MATCH",
+                            type = ParamType.ANY,
+                            required = true,
+                            transformer = Transformer.JsonPath("$[?(@.nope=='x')]"),
+                        ),
+                    ),
+            )
+        val params = createParameters(mapOf("data" to """{"a":1,"b":"x"}"""))
+
+        val result =
+            resolver.resolveDebug(
+                queryParams = params,
+                bodyJson = null,
+                headers = emptyMap(),
+                agent = agent,
+                enforceRequired = true,
+            )
+
+        assertEquals(mapOf("MATCH" to "[]"), result)
+    }
+
     @Test
     fun `resolveDebug uses Pass transformer when not specified`() {
         val agent =
