@@ -81,11 +81,20 @@ class RunnerProtocolRoutesTest {
     private fun registerBody(name: String) = """{"name":"$name","tags":["linux","gpu"],"concurrency":1}"""
 
     private val queue = RunnerClaimQueue(maxPending = 10)
+
+    /**
+     * The `workers` domain's clock: the tests advance it themselves, so a route's heartbeat is
+     * asserted by equality — `lastSeenAt` must BE the clock at that call, not merely newer than
+     * some earlier reading, which a removed `touch` would also satisfy.
+     */
+    private var now = 1_000_000L
+
     private val workers =
         ExternalRunnerDomain(
             "workers",
             RunnerConfig.External(token = "workers-token", allowedTags = listOf("linux", "gpu"), maxInstances = 2),
             queue,
+            clock = { now },
         )
     private val other = ExternalRunnerDomain("other", RunnerConfig.External(token = "other-token"), queue)
     private val greeter =
@@ -486,8 +495,8 @@ class RunnerProtocolRoutesTest {
                 val op = apiJson.decodeFromString(RunnerOp.serializer(), next.bodyAsText())
                 assertTrue(op is RunnerOp.CreateWorkspace, "$op")
 
-                val before = workers.instance(id)!!.lastSeenAt
-                delay(20)
+                // A result-carrying poll heartbeats the instance as much as an idle one.
+                now += 5_000
                 val afterResult =
                     client.post("/api/v1/runner/sessions/${claimed.sessionId}/next") {
                         header(HttpHeaders.Authorization, "Bearer workers-token")
@@ -498,7 +507,7 @@ class RunnerProtocolRoutesTest {
                     }
                 assertEquals(HttpStatusCode.NoContent, afterResult.status, "nothing else queued yet")
                 assertEquals("/r/7/workdir", overrides.await()[EnvConstants.WORK_DIR])
-                assertTrue(workers.instance(id)!!.lastSeenAt >= before)
+                assertEquals(now, workers.instance(id)!!.lastSeenAt, "the poll heartbeats the instance")
 
                 assertEquals(
                     HttpStatusCode.NotFound,
@@ -1288,5 +1297,205 @@ class RunnerProtocolRoutesTest {
             }.join()
 
             assertIs<CancellationException>(thrown.await())
+        }
+
+    // ---- liveness (ADR-0066): every protocol call is the heartbeat the sweep reads, so each route
+    // ---- is asserted against the clock the test advanced, not against a reading taken before it.
+
+    @Test
+    fun `a claim poll heartbeats the instance`() =
+        testApplication {
+            mount()
+            val id = registered().instanceId
+            val instance = workers.instance(id)!!
+            now += 5_000
+
+            val idle =
+                client.post("/api/v1/runner/instances/$id/claim") {
+                    header(HttpHeaders.Authorization, "Bearer workers-token")
+                }
+            assertEquals(HttpStatusCode.NoContent, idle.status)
+            assertEquals(now, instance.lastSeenAt, "an idle claim poll still proves the instance is alive")
+        }
+
+    @Test
+    fun `a session poll heartbeats the instance`() =
+        testApplication {
+            mount()
+            val (sid, session) = claimedSession()
+            now += 5_000
+
+            val idle =
+                client.post("/api/v1/runner/sessions/$sid/next") {
+                    header(HttpHeaders.Authorization, "Bearer workers-token")
+                }
+            assertEquals(HttpStatusCode.NoContent, idle.status)
+            assertEquals(now, session.instance.lastSeenAt, "an idle session poll still proves the instance is alive")
+            session.close()
+        }
+
+    @Test
+    fun `a delivered claim heartbeats the instance after the poll started`() =
+        testApplication {
+            application {
+                configureStatusPages()
+                routing {
+                    install(ContentNegotiation) { json(apiJson) }
+                    runnerProtocolRoutes(listOf(workers, other, greeter), queue, pollTimeout = 5.seconds)
+                }
+            }
+            val id = registered().instanceId
+            val instance = workers.instance(id)!!
+            val p = params()
+            coroutineScope {
+                val polled = now
+                val claim =
+                    async(Dispatchers.Default) {
+                        client.post("/api/v1/runner/instances/$id/claim") {
+                            header(HttpHeaders.Authorization, "Bearer workers-token")
+                        }
+                    }
+                delay(200)
+                // The poll parked at `polled`; the run it now takes is the call that must prove
+                // the instance is still there, so the delivery has to heartbeat it again.
+                now += 5_000
+                val run = async(Dispatchers.Default) { queue.awaitClaim(p, RunnerFilter.Tags(setOf("gpu")), 30.seconds) }
+
+                assertEquals(HttpStatusCode.OK, claim.await().status)
+                assertTrue(instance.lastSeenAt > polled, "the delivered claim heartbeats the instance")
+                assertEquals(now, instance.lastSeenAt)
+                (run.await() as ExternalRunnerSession).close()
+            }
+        }
+
+    @Test
+    fun `an upload tar fetch heartbeats the instance`() =
+        testApplication {
+            mount()
+            val (sid, session) = claimedSession()
+            val src = tmp.resolve("src").createDirectories()
+            src.resolve("hello.txt").writeText("hi")
+            coroutineScope {
+                val upload = async(Dispatchers.Default) { session.upload(src, ".") }
+                delay(100)
+                val op = nextOp(sid) as RunnerOp.Upload
+                now += 5_000
+
+                val tar =
+                    client.get(
+                        "/api/v1/runner/sessions/$sid/ops/${op.opId}/tar",
+                    ) { header(HttpHeaders.Authorization, "Bearer workers-token") }
+                assertEquals(HttpStatusCode.OK, tar.status)
+                assertEquals(now, session.instance.lastSeenAt, "fetching the tar heartbeats the instance")
+                tar.bodyAsChannel().toInputStream().use { it.readBytes() }
+                complete(sid, OpResult(op.opId))
+                upload.await()
+            }
+            session.close()
+        }
+
+    @Test
+    fun `a download tar post heartbeats the instance`() =
+        testApplication {
+            mount()
+            val (sid, session) = claimedSession()
+            val local = tmp.resolve("workdir").createDirectories()
+            val remote = tmp.resolve("remote").createDirectories()
+            remote.resolve("fresh").writeText("new")
+            coroutineScope {
+                val download = async(Dispatchers.Default) { session.download("workdir", local, DownloadMode.OVERLAY) }
+                delay(100)
+                val op = nextOp(sid) as RunnerOp.Download
+                now += 5_000
+
+                val posted =
+                    client.post("/api/v1/runner/sessions/$sid/ops/${op.opId}/tar?kind=dir") {
+                        header(HttpHeaders.Authorization, "Bearer workers-token")
+                        setBody(tarOf(remote))
+                    }
+                assertEquals(HttpStatusCode.Accepted, posted.status)
+                assertEquals(now, session.instance.lastSeenAt, "posting the tar heartbeats the instance")
+                complete(sid, OpResult(op.opId))
+                download.await()
+            }
+            session.close()
+        }
+
+    @Test
+    fun `an output chunk post heartbeats the instance`() =
+        testApplication {
+            mount()
+            val (sid, session) = claimedSession()
+            val out = tmp.resolve("cmd_0.out")
+            val err = tmp.resolve("cmd_0.err")
+            coroutineScope {
+                val cmd = async(Dispatchers.Default) { session.shell.cmd(listOf("echo"), out, err, timeout = 30.seconds) }
+                delay(100)
+                val op = nextOp(sid) as RunnerOp.Cmd
+                now += 5_000
+
+                val chunk =
+                    client.post("/api/v1/runner/sessions/$sid/ops/${op.opId}/output?stream=stdout&seq=0") {
+                        header(HttpHeaders.Authorization, "Bearer workers-token")
+                        setBody("one\n".toByteArray())
+                    }
+                assertEquals(HttpStatusCode.Accepted, chunk.status)
+                assertEquals(now, session.instance.lastSeenAt, "posting a chunk heartbeats the instance")
+                complete(sid, OpResult(op.opId, exitCode = 0))
+                assertEquals(0, cmd.await().exitCode)
+            }
+            session.close()
+        }
+
+    @Test
+    fun `a call on a swept instance is 404 and revives nothing`() =
+        testApplication {
+            mount()
+            val id = registered().instanceId
+            now += 61_000
+            workers.sweepExpired()
+            assertNull(workers.instance(id), "an instance silent past the heartbeat timeout is swept")
+
+            // Its absence is answered like any other unknown id — the same 404, naming nothing —
+            // and the call must not put the instance back (§12 rule 3).
+            assertEquals(
+                HttpStatusCode.NotFound,
+                client
+                    .post("/api/v1/runner/instances/$id/claim") {
+                        header(HttpHeaders.Authorization, "Bearer workers-token")
+                    }.status,
+            )
+            assertNull(workers.instance(id), "a protocol call never revives a swept instance")
+        }
+
+    @Test
+    fun `an output chunk of exactly the wire limit is accepted and one byte over is 413`() =
+        testApplication {
+            mount()
+            val (sid, session) = claimedSession()
+            val out = tmp.resolve("cmd_0.out")
+            val err = tmp.resolve("cmd_0.err")
+            coroutineScope {
+                val cmd = async(Dispatchers.Default) { runCatching { session.shell.cmd(listOf("echo"), out, err, timeout = 30.seconds) } }
+                delay(100)
+                val op = nextOp(sid) as RunnerOp.Cmd
+
+                suspend fun chunk(
+                    seq: Long,
+                    body: ByteArray,
+                ) = client.post("/api/v1/runner/sessions/$sid/ops/${op.opId}/output?stream=stdout&seq=$seq") {
+                    header(HttpHeaders.Authorization, "Bearer workers-token")
+                    setBody(body)
+                }
+
+                // One byte over the wire cap is refused before the sink sees it, and consumes no
+                // seq: the same chunk of exactly the cap is then served. The fixture's own
+                // 1024-byte output cap drops it afterwards, so only the status is asserted here.
+                assertEquals(HttpStatusCode.PayloadTooLarge, chunk(0, ByteArray(RunnerProtocol.MAX_OUTPUT_CHUNK_BYTES + 1)).status)
+                assertEquals(HttpStatusCode.Accepted, chunk(0, ByteArray(RunnerProtocol.MAX_OUTPUT_CHUNK_BYTES)).status)
+
+                assertTrue(cmd.await().isFailure, "the chunk the cap dropped fails the step")
+            }
+            session.close()
         }
 }
