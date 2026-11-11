@@ -684,8 +684,13 @@ class WorkspacePurgeServiceTest {
             // A run still in flight is never purged, however long past its purge time it is.
             val (created, createdDir) = runOf(ProcessStatus.CREATED)
             val (working, workingDir) = runOf(ProcessStatus.WORKING)
-            val (_, finishedDir) = runOf(ProcessStatus.FINISHED)
-            val (_, unknownDir) = runOf(ProcessStatus.UNKNOWN)
+            // Every terminal status, so a status dropped from the swept set fails here.
+            // Both sweeps take that same set, so this matrix pins the directory sweep
+            // and the record sweep together.
+            val (finished, finishedDir) = runOf(ProcessStatus.FINISHED)
+            val (failed, failedDir) = runOf(ProcessStatus.FAILED)
+            val (killed, killedDir) = runOf(ProcessStatus.KILLED)
+            val (unknown, unknownDir) = runOf(ProcessStatus.UNKNOWN)
 
             purge.purgeExpired()
 
@@ -694,7 +699,13 @@ class WorkspacePurgeServiceTest {
             assertNotNull(realManager.getProcessInfo(created)?.artifactsDir, "a live run keeps its artifacts_dir")
             assertNotNull(realManager.getProcessInfo(working)?.artifactsDir, "a live run keeps its artifacts_dir")
             assertFalse(finishedDir.toFile().exists(), "a FINISHED run's due workspace is swept")
+            assertFalse(failedDir.toFile().exists(), "FAILED is a swept terminal status")
+            assertFalse(killedDir.toFile().exists(), "KILLED is a swept terminal status")
             assertFalse(unknownDir.toFile().exists(), "UNKNOWN is a swept terminal status")
+            assertNull(realManager.getProcessInfo(finished), "a FINISHED run's due record is swept")
+            assertNull(realManager.getProcessInfo(failed), "a FAILED run's due record is swept")
+            assertNull(realManager.getProcessInfo(killed), "a KILLED run's due record is swept")
+            assertNull(realManager.getProcessInfo(unknown), "an UNKNOWN run's due record is swept")
             root.toFile().deleteRecursively()
         }
 
