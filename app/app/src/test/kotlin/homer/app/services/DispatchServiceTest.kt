@@ -209,8 +209,9 @@ class DispatchServiceTest {
             service().create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = 1)
             assertEquals(1001L, stored.captured.expiresAt)
 
-            // A caller-supplied ttl wins over the default; the default applies only without one.
-            service(DispatchConfig(defaultTtlSec = 60))
+            // A caller-supplied ttl wins over the default: only that branch can produce
+            // 1060 here, since the configured default would store 1300.
+            service(DispatchConfig(defaultTtlSec = 300))
                 .create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = 60)
             assertEquals(1060L, stored.captured.expiresAt)
             service(DispatchConfig(defaultTtlSec = 300))
@@ -1100,6 +1101,9 @@ class DispatchServiceTest {
 
             coVerify { repo.markFailed(5, "Dispatch failed", 1000L) }
             assertEquals(DispatchStatus.FAILED, result?.status)
+            // The returned row carries the same fallback reason the stored row keeps, so the
+            // immediate answer and any later poll agree.
+            assertEquals("Dispatch failed", result?.error)
         }
 
     @Test

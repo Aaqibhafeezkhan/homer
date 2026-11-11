@@ -259,7 +259,7 @@ internal class DispatchService(
         } catch (e: HomerException) {
             repository.markFailed(dispatch.id, e.message ?: "Dispatch failed", now)
             logger.warn("Dispatch {} failed to fire: {}", dispatch.id, e.message)
-            dispatch.copy(status = DispatchStatus.FAILED, error = e.message, dispatchedAt = now)
+            dispatch.copy(status = DispatchStatus.FAILED, error = e.message ?: "Dispatch failed", dispatchedAt = now)
         } catch (e: Exception) {
             val msg = e.message ?: "Unexpected dispatch failure"
             repository.markFailed(dispatch.id, msg, now)

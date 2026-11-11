@@ -293,6 +293,26 @@ class ContinuationServiceTest {
             coVerify(exactly = 0) { repo.create(any(), any()) }
         }
 
+    // The registration-time re-check re-reads the live registration and the origin's owner
+    // after `validate`, so it authorizes against state that may have changed in between
+    // (ADR-0039): a hop `validate` allowed must still be refused when the re-check denies it.
+    @Test
+    fun `create refuses the registration when the hop re-check after validate denies it`() =
+        runTest {
+            dispatchableTarget()
+            coEvery { processManager.getProcessInfo(7) } returns
+                mockk(relaxed = true) { every { owner } returns "alice" }
+            // true for `validate`'s two gate calls (its own check and `dispatchableTarget`'s),
+            // false for `pendingContinuation`'s re-check against the freshly read state.
+            every { authorizer.canDispatchHop("alice", "asker", "h") } returnsMany
+                listOf(true, true, false)
+
+            assertFailsWith<DispatchAgentNotFoundException> {
+                service().create(7, 42, "h", emptyMap(), "HMR_LG_RESUME", null, null)
+            }
+            coVerify(exactly = 0) { repo.create(any(), any()) }
+        }
+
     @Test
     fun `create rejects when the target's required input cannot be satisfied by params or resumeParam`() =
         runTest {
