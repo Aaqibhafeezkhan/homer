@@ -761,9 +761,12 @@ class WorkspaceSyncTest {
         assertEquals(local.toAbsolutePath().normalize().resolve("out.bin"), resolved)
     }
 
-    // One case per unsafe name, each pinned to the name guard's own message: the
-    // composed check refuses them too, so only the message tells the two
-    // defence-in-depth layers apart (ADR-0047).
+    // One case per unsafe name, each pinned to the name guard's own message. The
+    // containment check behind the guard (`child.parent != base`) is unreachable
+    // while the guard passes — `base.resolve(name).normalize()` is then always a
+    // direct child of the base — so no test can tell its behaviour-neutral mutant
+    // from the original; it is accepted in
+    // tools/quality/mutation-exceptions/backend.json instead (ADR-0047, ADR-0082).
 
     @Test
     fun `containedChild rejects an empty name as not a plain file name`(
@@ -822,22 +825,24 @@ class WorkspaceSyncTest {
     }
 
     @Test
-    fun `the containment layer refuses a name that resolves outside with the name guard bypassed`(
+    fun `containedChild rejects a traversal name as not a plain file name`(
         @TempDir local: Path,
     ) = runBlocking {
-        for (name in listOf("../evil.sh", "..", "sub/../../evil.sh", "/etc/cron.d/x")) {
-            // The composed check stops each of these at the name guard, so it
-            // never reaches the containment layer — that is what the cases above
-            // pin. resolveContained is the guard bypassed, and the refusal it
-            // throws can then only come from `child.parent != base`; its own
-            // message says which layer did (ADR-0047, defence in depth).
-            assertRefusedByName(local, name)
-            val refusal = assertThrows<SecurityException> { WorkspaceSync.resolveContained(local, name) }
-            assertTrue(
-                refusal.message.orEmpty().contains("resolves outside"),
-                "expected the containment layer to refuse '$name', got: ${refusal.message}",
-            )
-        }
+        assertRefusedByName(local, "../evil.sh")
+    }
+
+    @Test
+    fun `containedChild rejects an absolute path as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "/etc/cron.d/x")
+    }
+
+    @Test
+    fun `containedChild rejects a multi-segment name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "sub/child.txt")
     }
 
     // ===== Pre-existing local symlinks must not redirect writes =====
