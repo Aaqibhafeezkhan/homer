@@ -47,10 +47,7 @@ import io.ktor.server.request.path
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.job
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -274,50 +271,12 @@ private fun Application.configureRouting(
     }
 }
 
-/**
- * Shutdown drain (Audit P0 #3): join in-flight ProcessExecutor jobs, bounded
- * by [drainTimeout], then close whatever runner sessions remain. Without the
- * drain, k8s rolling updates or a SIGTERM during local dev cancel mid-flight
- * Claude runs, leaving partial artifacts and incurring billed cost without a
- * result.
- */
-internal fun drainInFlightJobsThenCloseSessions(
-    applicationScope: CoroutineScope,
-    activeSessions: ActiveSessionsRegistry,
-    drainTimeout: Duration,
-) {
-    val children =
-        applicationScope.coroutineContext.job.children
-            .toList()
-    if (children.isNotEmpty()) {
-        logger.info("Draining {} in-flight process job(s), timeout={}s", children.size, drainTimeout.inWholeSeconds)
-        val drained =
-            runBlocking {
-                withTimeoutOrNull(drainTimeout) {
-                    children.joinAll()
-                    true
-                } ?: false
-            }
-        if (drained) {
-            logger.info("Drain complete")
-        } else {
-            logger.warn(
-                "Drain timed out after {}s with {} job(s) still running; engine will stop anyway",
-                drainTimeout.inWholeSeconds,
-                applicationScope.coroutineContext.job.children
-                    .count(),
-            )
-        }
-    }
-
-    // Must run AFTER the join: closing a remote session deletes the pod /
-    // connection out from under a run the drain is waiting for, failing it.
-    // Runs that finish inside the window release their own session in the
-    // executor's finally; only what is still registered here is an orphan.
-    activeSessions.closeAll()
-}
-
 fun Application.configureServer(config: AppConfig) {
+    // `isDraining` is JVM-global and is never cleared on the way out, so clear it here: a freshly
+    // configured application is not draining. Without this, a second application configured in
+    // the same JVM starts up already draining — `/readyz` answering 503 and every run start
+    // refused with 503. See ADR-0102.
+    isDraining.set(false)
     validateStartupConfig(config)
     installKoin(config)
     installHttpPlugins(config)
@@ -450,8 +409,9 @@ private class BackgroundServices(
 }
 
 /**
- * On `ApplicationStopping`: flips the drain flag, stops the [background] services, drains in-flight
- * jobs within [drainTimeout] and closes [databaseService] last.
+ * On `ApplicationStopping`: flips the drain flag, stops the [background] services, drains the run
+ * jobs within [drainTimeout], stops the runner consumers it kept alive through the drain, and
+ * closes [databaseService] last. See ADR-0102.
  */
 private fun Application.subscribeShutdownDrain(
     databaseService: DatabaseService,
@@ -469,11 +429,11 @@ private fun Application.subscribeShutdownDrain(
             logger.info("Drain initiated; /api/v1/readyz will now answer 503")
         }
 
-        // Stop the claim-queue consumers right after: their `while (isActive)` loops
-        // never complete on their own, so leaving them running would make the
-        // drain below always burn the full timeout waiting on jobs that were
-        // never going to finish. See ADR-0066.
-        background.runnerRegistry.stop()
+        // The claim-queue consumers keep running **through** the drain: a run already queued for
+        // a static runner must still be claimed, or it burns the window and ends UNKNOWN. Their
+        // `while (isActive)` loops never complete on their own, so the drain excludes them from
+        // what it waits for and they are stopped right after it. See ADR-0066, ADR-0102.
+        val consumerJobs = background.runnerRegistry.consumerJobs()
 
         background.cronSchedulerService.stop()
         // Fail the parked maintenance-mode starts now: left alone, they would hold their
@@ -483,7 +443,15 @@ private fun Application.subscribeShutdownDrain(
         background.dispatchSweepService.stop()
         background.continuationSweepService.stop()
 
-        drainInFlightJobsThenCloseSessions(background.applicationScope, background.activeSessions, drainTimeout)
+        drainInFlightJobsThenCloseSessions(
+            background.applicationScope,
+            background.activeSessions,
+            drainTimeout,
+            consumerJobs.toSet(),
+        )
+
+        // After the drain: until here the consumers are what let a queued run still be claimed.
+        background.runnerRegistry.stop()
 
         // Close the database last — after in-flight writes have drained — so a
         // graceful shutdown never truncates the WAL mid-write. See ADR-0020.

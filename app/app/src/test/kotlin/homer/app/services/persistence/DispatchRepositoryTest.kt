@@ -143,6 +143,21 @@ class DispatchRepositoryTest {
         }
 
     @Test
+    fun `releaseForRetry returns a claimed dispatch to PENDING and keeps the bound question`() =
+        runTest {
+            val id = repo.create(question("q1"), dispatch("q1"), 10)!!
+            repo.claim(id)
+            assertTrue(repo.releaseForRetry(id))
+            assertEquals(DispatchStatus.PENDING, repo.get(id)!!.status)
+            // Unlike markFailed/markDispatched, the bound question survives: its answer must
+            // still be there for the next boot's `refirePendingAnswered` (ADR-0102).
+            assertEquals(QuestionStatus.OPEN, QuestionsRepository(db).get("q1")!!.status)
+            // Only a claimed (DISPATCHING) row has a claim to undo.
+            val unclaimed = repo.create(question("q2"), dispatch("q2"), 10)!!
+            assertFalse(repo.releaseForRetry(unclaimed))
+        }
+
+    @Test
     fun `cancelWithQuestion returns null when not pending`() =
         runTest {
             val id = repo.create(question("q1"), dispatch("q1"), 10)!!

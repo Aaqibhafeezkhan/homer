@@ -318,6 +318,9 @@ val appModule =
                 config = get<AppConfig>().server.maintenance,
                 initialEnabled = repository.readMaintenanceMode(),
                 logger = get { parametersOf("homer.app.services.MaintenanceModeService") },
+                // The one shutdown flag: a start during the drain is refused (or admitted from a
+                // live parent) instead of parked. See ADR-0102.
+                isDraining = homer.app.isDraining::get,
             )
         }
 

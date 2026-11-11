@@ -229,6 +229,10 @@ pitest {
     targetClasses = providers.gradleProperty("pitestTargetClasses").map { it.split(",").toSet() }.orElse(setOf("homer.app.*"))
     excludedClasses = setOf("*\$\$serializer")
     targetTests = setOf("homer.app.*")
+    // PIT cannot instrument these tests' MockK constructor mocks (fails its green-suite phase);
+    // the wiring they pin stays enforced by :app:test. See ADR-0102.
+    excludedTestClasses =
+        setOf("homer.app.MaintenanceShutdownWiringTest", "homer.app.ShutdownWiringTest")
     outputFormats = setOf("XML", "HTML")
     timestampedReports = false
     threads = 4

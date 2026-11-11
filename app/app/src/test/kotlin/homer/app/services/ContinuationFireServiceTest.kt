@@ -1,6 +1,7 @@
 package homer.app.services
 
 import homer.app.exceptions.CostCapExceededException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
 import homer.app.models.AgentContinuationConfig
@@ -208,6 +209,23 @@ class ContinuationFireServiceTest {
             fires.fire(pending(), ProcessStatus.FINISHED)
 
             coVerify { repo.releaseForRetry(5, any(), 1, 1060L) }
+        }
+
+    @Test
+    fun `a fire the drain refused is released for a retry, not settled failed`() =
+        runTest {
+            // The origin run ended and its resume is the only thing the target will ever see:
+            // the next boot's sweep must fire it, so the row goes back to PENDING with the
+            // attempt counted rather than to FAILED. See ADR-0023, ADR-0102.
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.claim(5) } returns true
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+                ServerDrainingException()
+
+            fires.fire(pending(), ProcessStatus.FINISHED)
+
+            coVerify { repo.releaseForRetry(5, any(), 1, 1060L) }
+            coVerify(exactly = 0) { repo.markFailed(5, any(), any()) }
         }
 
     @Test
