@@ -6,6 +6,7 @@ import homer.app.fixtures.TestFixtures
 import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerConfig
 import homer.app.models.RunnerFilter
+import homer.app.models.RunnerTagValidation
 import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
 import homer.app.runners.queue.RunnerAffinityMemory
@@ -69,7 +70,11 @@ class ExternalRunnerDomainTest {
     fun `register rejects a tag outside allowedTags, a bad tag shape and an oversized concurrency`() {
         val d = domain(RunnerConfig.External(token = "t", allowedTags = listOf("linux"), maxConcurrencyPerInstance = 4))
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("gpu"))) }
-        assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("bad tag"))) }
+        val badShape = assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("bad tag"))) }
+        assertTrue(
+            badShape.message!!.contains("runner tag 'bad tag' does not match ${RunnerTagValidation.PATTERN}"),
+            "a tag-shape rejection carries the validator's own message, not a stand-in: ${badShape.message}",
+        )
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 5)) }
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 0)) }
         assertTrue(queue.consumers().isEmpty(), "a rejected registration leaves no consumer")
