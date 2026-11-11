@@ -18,6 +18,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
@@ -29,6 +30,7 @@ import kotlin.test.assertTrue
  * `apiAuth`, so the two principal classes meet the real routing tree: each
  * credential must be `401` on the other's routes (ADR-0066, §12).
  */
+@ExtendWith(ResetDrainingExtension::class)
 class ExternalRunnerBootTest {
     @TempDir
     lateinit var agentsDir: File

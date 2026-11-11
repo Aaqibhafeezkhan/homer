@@ -19,6 +19,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
@@ -31,6 +32,7 @@ import kotlin.test.assertTrue
  * e.g. the app-level ContentNegotiation install colliding with the
  * route-scoped McpJson install on /mcp (DuplicatePluginException at startup).
  */
+@ExtendWith(ResetDrainingExtension::class)
 class ConfigureServerMcpTest {
     @TempDir
     lateinit var agentsDir: File
