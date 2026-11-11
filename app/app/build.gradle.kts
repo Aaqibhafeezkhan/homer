@@ -229,6 +229,13 @@ pitest {
     targetClasses = providers.gradleProperty("pitestTargetClasses").map { it.split(",").toSet() }.orElse(setOf("homer.app.*"))
     excludedClasses = setOf("*\$\$serializer")
     targetTests = setOf("homer.app.*")
+    // MaintenanceShutdownWiringTest pins the shutdown wiring through MockK constructor mocks on
+    // three services built inside `configureServer`. Under PIT's own instrumentation those mocks
+    // are unreliable — the test fails PIT's green-suite phase on most runs while passing every
+    // plain run (and every run under CPU contention), so it is excluded here. The ordering it
+    // pins is still enforced by :app:test; the drain code stays PIT-covered by ApplicationTest
+    // and ShutdownDrainTest. See ADR-0102.
+    excludedTestClasses = setOf("homer.app.MaintenanceShutdownWiringTest")
     outputFormats = setOf("XML", "HTML")
     timestampedReports = false
     threads = 4

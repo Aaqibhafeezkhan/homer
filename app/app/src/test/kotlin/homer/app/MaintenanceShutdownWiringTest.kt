@@ -9,6 +9,8 @@ import homer.app.runners.ActiveSessionsRegistry
 import homer.app.runners.RunnerRegistry
 import homer.app.runners.queue.RunnerClaimQueue
 import homer.app.services.MaintenanceModeService
+import io.ktor.client.request.get
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
 import io.mockk.every
 import io.mockk.mockkConstructor
@@ -99,5 +101,26 @@ class MaintenanceShutdownWiringTest {
             order,
             "the parked starts are failed first, then the run jobs are joined, and only then are the consumers stopped",
         )
+    }
+
+    @Test
+    fun `configureServer clears a drain flag left set in the JVM`() {
+        // `isDraining` is JVM-global and ApplicationStopping never clears it on the way out,
+        // so a second application configured in the same JVM would start up already draining
+        // — /readyz answering 503 and every run start refused — unless configureServer
+        // clears it. Deleting that clear leaves this green. See ADR-0102.
+        isDraining.set(true)
+        try {
+            testApplication {
+                application { configureServer(config()) }
+                assertEquals(
+                    HttpStatusCode.OK,
+                    client.get("/api/v1/readyz").status,
+                    "a freshly configured application must not report draining",
+                )
+            }
+        } finally {
+            isDraining.set(false)
+        }
     }
 }

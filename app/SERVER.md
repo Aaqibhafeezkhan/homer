@@ -466,10 +466,14 @@ starts and then drains the work already admitted:
   claimed and finishes inside the window (ADR-0066).
 - A **new top-level start** — `POST /api/v1/agent/{agentName}` and the
   other run-start endpoints — is **refused with `503`** while the drain
-  runs, and so is any start whose parent run has already ended. A start
-  that is part of a run the drain is already waiting for is still
-  admitted, or the drain would wait on a parent blocked by a child it
-  refused. See [ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
+  runs, and so is any start whose parent run has already ended. The one
+  silent exception is a manual cron-run fire (`POST
+  /api/v1/agents/{name}/cron-run`): its refusal is only logged, and the
+  caller still gets `204`, exactly as for any other preflight refusal.
+  A start that is part of a run the drain is already waiting for is
+  still admitted, or the drain would wait on a parent blocked by a
+  child it refused. See
+  [ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
 
 The whole drain is bounded by this one value, whatever the shape of the
 run tree: a chain of short-lived runs cannot extend it round by round.

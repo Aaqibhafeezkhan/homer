@@ -62,15 +62,17 @@ with `server.localRunner.enabled: false` no local consumer exists and
 `forAlias("local")` throws a `ConfigurationException` before anything is
 queued, rather than letting the claim wait out its TTL (ADR-0095). One
 `StaticRunnerConsumer` per configured runner (started once from
-`Application` on the application scope, and stopped via
-`RunnerRegistry.stop()` **after** the shutdown drain — the consumers stay
-claiming through it, so a run queued at SIGTERM still gets a claim and
-finishes inside `shutdownDrainSec`; the drain excludes them from the jobs
-it joins, by `Job` identity through `consumerJobs()`, since their loops
-never complete on their own. See ADR-0102) takes the oldest matching request
+`Application` on the application scope) takes the oldest matching request
 when it holds a free permit (`concurrency`; null = unbounded), opens the
 real session in a child coroutine, and hands it back wrapped in
-`PermitReleasingSession` so the permit returns on `close()`. Never call a
+`PermitReleasingSession` so the permit returns on `close()`.
+
+The consumers are stopped via `RunnerRegistry.stop()` **after** the
+shutdown drain, not before it: they stay claiming through the drain, so a
+run queued at SIGTERM still gets a claim and finishes inside
+`shutdownDrainSec`. The drain excludes the consumer loops from the jobs it
+joins, by `Job` identity through `consumerJobs()`, since their loops never
+complete on their own. See ADR-0102. Never call a
 backend's `openSession` directly from a run path; `RunnerRegistry.get`
 is for consumers and diagnostics only. Tests that construct a
 `RunnerRegistry` and resolve runners must call `start(backgroundScope)`

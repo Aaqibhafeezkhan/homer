@@ -74,6 +74,15 @@ admission plus a `503` refusal**.
   the same whether the drain needs one round or twenty. On expiry the drain logs the number of jobs it
   left behind and proceeds to close sessions: the engine stops either way, and the runs it could not
   finish are reconciled to `UNKNOWN` at the next boot as before.
+- **The scope-scan invariant.** The drain identifies work structurally: it treats every child of the
+  application scope that is not in `excluded` as a run job or a background cost settlement (ADR-0089)
+  and joins it. That scan stands in for an explicit run-job registry, and it is only correct while
+  every application-scope child **is** a run job, a cost settlement, or one of the excluded
+  consumer loops. A future background loop launched on the application scope must either be stopped
+  before the drain begins or be added to `excluded` — otherwise it makes every shutdown burn the
+  full `shutdownDrainSec` and log a timeout warning for work no run ever owed. An explicit registry
+  was weighed and rejected: it is a second place run starts must register, and a start that forgets
+  to fails silently in the opposite direction — a run lost at exit instead of a slow shutdown.
 - **The consumers.** `RunnerRegistry.consumerJobs()` exposes the consumer and heartbeat-sweeper loops
   `start` launched, and the drain excludes them from what it joins — their `while (isActive)` loops
   never complete on their own, so counting them would make every drain burn its whole budget.
@@ -97,6 +106,9 @@ admission plus a `503` refusal**.
   whose origin is a fan-out parent still `WORKING` is admitted on exactly this rule; one whose origin
   has already ended is refused, and `ContinuationFireService.isTransient` treats that refusal as
   transient, so the row goes back to `PENDING` for the next boot's sweep rather than settling `FAILED`.
+  The answered dispatch fire gets the same treatment: its start refused by the drain releases the
+  claim back to `PENDING` with the answer intact, so the next boot's `refirePendingAnswered` fires
+  it — settling `FAILED` would consume the operator's answer for a run that never started.
 - **The order on `ApplicationStopping`.** The flag flips, the consumer jobs are read, the background
   services stop (cron, maintenance, purge, dispatch sweep, continuation sweep), the drain runs, the
   consumers stop, and the database closes last (ADR-0020). `MaintenanceModeService.stop()` stays before
@@ -136,7 +148,8 @@ Each constraint has a test that asserts the denial path (ADR-0047 rule 8):
   liveness read;
 - `POST /api/v1/agent/{agentName}` answers `503` while the flag is set, and a caller without a `run`
   grant still gets the same `404` it would get with the drain off;
-- a continuation fire refused by the drain is released for retry rather than settled `FAILED`.
+- a continuation fire refused by the drain is released for retry rather than settled `FAILED`, and so
+  is an answered dispatch fire refused by the drain.
 
 ### Consequences
 

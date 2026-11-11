@@ -470,6 +470,16 @@ class ApplicationTest {
             processReads = mockk(relaxed = true),
         )
 
+    /** A real gate reading the production drain flag, exactly as `AppModule` wires it (see [drainingRunStarter]). */
+    private fun drainingGate(): MaintenanceModeService =
+        MaintenanceModeService(
+            repository = mockk(relaxed = true),
+            config = MaintenanceConfig(),
+            initialEnabled = false,
+            logger = logger,
+            isDraining = homer.app.isDraining::get,
+        )
+
     @Test
     fun `POST agent answers 503 while the drain is running`() =
         testApplication {
@@ -516,6 +526,36 @@ class ApplicationTest {
                 assertEquals(HttpStatusCode.NotFound, response.status)
                 coVerify(exactly = 0) { executor.execute(any(), any()) }
             } finally {
+                homer.app.isDraining.set(false)
+            }
+        }
+
+    @Test
+    fun `POST retry answers 503 while the drain is running`() =
+        testApplication {
+            // Retry takes the gate in `respondStartedUnderRootSpan`, not in `AgentRunStarter`,
+            // so the drain refusal needs its own HTTP proof on this call site — the README row
+            // promises the 503. See ADR-0102.
+            val finished =
+                ProcessInfo(id = 42, status = ProcessStatus.FINISHED, agentName = "deploy", inputParams = emptyMap())
+            val executor = mockk<ProcessExecutor>(relaxed = true)
+            homer.app.isDraining.set(true)
+            try {
+                mountApiV1Routes {
+                    every { processManager } returns mockProcessManager
+                    every { agentsService } returns mockAgentsService
+                    coEvery { mockProcessManager.getProcessInfo(42) } returns finished
+                    every { mockAgentsService.agents } returns mapOf("deploy" to AgentFixtures.simpleAgent(name = "deploy"))
+                    every { maintenanceModeService } returns drainingGate()
+                    stubRunDeps(mockk(relaxed = true), executor)
+                }
+
+                val response = client.post("/api/v1/processes/42/retry")
+
+                assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+                coVerify(exactly = 0) { executor.execute(any(), any()) }
+            } finally {
+                // The flag is JVM-global; leaking it would refuse every later test's starts.
                 homer.app.isDraining.set(false)
             }
         }
