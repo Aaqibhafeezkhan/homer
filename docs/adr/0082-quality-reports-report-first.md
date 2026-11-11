@@ -274,3 +274,20 @@ of what PIT judged before the budget, and no `partial` list as the weekly merge 
 leaves at most a cut-off file that cannot say which classes it finished. Raising the job's
 bound would only hold `quality-gate` longer, and narrowing the tests to the ones the change touches
 would report every mutant other tests kill as uncovered.
+
+*Amended (2026-11-11):* the backend report also ignores `replaced return value with null` mutants on
+a function or lambda that returns Unit, beside the compiler-added calls and the same way: outside the
+score, no finding, counted under `ignored`. Nothing reads such a value, so no test can kill the
+mutant, yet the weekly full run scored 860 of them (30% of its findings) as survivors, burying the
+real ones and pushing agents towards meaningless tests or an accepted exception per mutant. The
+decision comes from what the mutated function actually returns, never from its name: the JVM
+descriptor PIT already emits decides a plain function or lambda (`)V`, or `)Lkotlin/Unit;` for a
+boxed Unit), and a suspend function, whose state machine returns `Object` whatever it returns, is
+resolved against its `fun` declaration in the source the report already reads for exception keys — a
+block body or `: Unit` is Unit, while an inferred `=` body, another return type, no matching
+declaration and an overload the name cannot tell apart are not. A lambda or suspend function that
+returns a value therefore keeps its mutants. What the rule cannot decide is a suspend *lambda*: its
+`invokeSuspend` takes the lambda instance, not a `Continuation`, and has no declaration to read, so
+`CsrfProtection.kt#invokeSuspend` stays a reviewed exception rather than a silently ignored mutant.
+The three backend exceptions the rule does cover are removed with it, since an entry matching no
+mutant is a finding of its own.

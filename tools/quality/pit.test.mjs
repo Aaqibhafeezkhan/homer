@@ -5,11 +5,11 @@ import path from 'node:path';
 import { mock, test } from 'node:test';
 import fc from 'fast-check';
 import { withinChanged } from './pit-changed.mjs';
-import { decodeXml, isCompilerCallMutant, main, mutationKey, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
+import { declaresUnitReturn, decodeXml, isCompilerCallMutant, isNullReturnOnUnit, main, mutationKey, parseMutations, pitFindings, pitStats, sourceReader, withKeys, writeReport } from './pit.mjs';
 
-const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, description = 'negated conditional' } = {}) =>
+const mutation = (status, { file = 'A.kt', cls = 'homer.app.config.A', method = 'run', line = 7, descriptor = '()V', description = 'negated conditional' } = {}) =>
   `<mutation detected='${status === 'KILLED'}' status='${status}' numberOfTestsRun='1'><sourceFile>${file}</sourceFile>` +
-  `<mutatedClass>${cls}</mutatedClass><mutatedMethod>${method}</mutatedMethod><methodDescription>()V</methodDescription>` +
+  `<mutatedClass>${cls}</mutatedClass><mutatedMethod>${method}</mutatedMethod><methodDescription>${descriptor}</methodDescription>` +
   `<lineNumber>${line}</lineNumber><mutator>m</mutator><indexes><index>1</index></indexes><blocks><block>0</block></blocks>` +
   `<killingTest/><description>${description}</description></mutation>`;
 
@@ -22,6 +22,7 @@ test('each mutation maps its class package and source file to a repository path'
     path: 'app/app/src/main/kotlin/homer/app/config/LogLevelOverrides.kt',
     line: 28,
     method: 'run',
+    descriptor: '()V',
     description: 'negated conditional',
   });
 });
@@ -115,6 +116,72 @@ test('removed calls the Kotlin compiler adds are compiler-call mutants, other re
 
 test('only a removed call into the Kotlin runtime is ever a compiler-call mutant', () => {
   fc.assert(fc.property(fc.string(), (description) => !isCompilerCallMutant({ description }) || description.startsWith('removed call to kotlin/')));
+});
+
+const summaryOf = (dir) => fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8');
+
+test('a null-return mutant on a Unit-returning lambda is ignored, a value-returning one stays a finding', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-lambda-'));
+  const lambda = (descriptor) => mutation('SURVIVED', { method: 'json$lambda$0', descriptor, description: 'replaced return value with null for homer/app/config/A::json$lambda$0#}' });
+  const all = withKeys(parsed(lambda('(Lkotlinx/serialization/json/JsonBuilder;)Lkotlin/Unit;'), lambda('()Ljava/lang/String;')), lineOf('a'));
+  const text = writeReport(dir, 'T', all, {});
+  assert.match(text, /\(score 0\.0%\): 1 finding\(s\)/);
+  assert.match(text, /survived: json\$lambda\$0 → replaced return value with null/);
+  assert.match(summaryOf(dir), /findings=1\n/);
+  assert.match(summaryOf(dir), /ignored=1\n/);
+});
+
+test('an ignored null-return mutant leaves the score, not only the findings', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-fun-'));
+  const unit = mutation('SURVIVED', { description: 'replaced return value with null for homer/app/config/A::run#}' });
+  const text = writeReport(dir, 'T', withKeys(parsed(mutation('KILLED'), unit), lineOf('a')), {});
+  assert.match(text, /\(score 100\.0%\): 0 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=1\n/);
+});
+
+test('a null-return mutant on a suspend function is ignored only when its declaration returns Unit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-suspend-'));
+  const suspend = (method) => mutation('SURVIVED', { method, descriptor: '(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;', description: `replaced return value with null for homer/app/config/A::${method}#private suspend fun ${method}(` });
+  const unit = withKeys(parsed(suspend('tick')), lineOf('private suspend fun tick(delay: Long) {', '  delay(delay)', '}'));
+  assert.match(writeReport(dir, 'T', unit, {}), /0 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=1\n/);
+  const value = withKeys(parsed(suspend('admitted')), lineOf('private suspend fun admitted(', '): Boolean {'));
+  assert.match(writeReport(dir, 'T', value, {}), /1 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=0\n/);
+});
+
+test('the mutated method name never decides: an invokeSuspend mutant is not ignored without a Unit declaration', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-invoke-'));
+  const invoke = mutation('SURVIVED', { method: 'invokeSuspend', descriptor: '(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;', description: 'replaced return value with null for homer/app/config/A$1::invokeSuspend#}' });
+  const value = writeReport(dir, 'T', withKeys(parsed(invoke), lineOf('private suspend fun invokeSuspend(): Boolean {')), {});
+  assert.match(value, /1 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=0\n/);
+  // A suspend lambda's invokeSuspend has no declaration to read, whatever its body returns.
+  const lambda = mutation('SURVIVED', { method: 'invokeSuspend', descriptor: '(Ljava/lang/Object;)Ljava/lang/Object;', description: 'replaced return value with null for homer/app/config/A$1::invokeSuspend#}' });
+  const noDeclaration = writeReport(dir, 'T', withKeys(parsed(lambda), lineOf('val x = 1')), {});
+  assert.match(noDeclaration, /1 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=0\n/);
+});
+
+test('another replaced return on a Unit function is not ignored', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-other-'));
+  const other = mutation('SURVIVED', { description: 'replaced return value with Collections.emptyMap for homer/app/config/A::run#' });
+  const text = writeReport(dir, 'T', withKeys(parsed(other), lineOf('a')), {});
+  assert.match(text, /1 finding\(s\)/);
+  assert.match(summaryOf(dir), /ignored=0\n/);
+});
+
+test('only a replaced-return-with-null description is ever ignored by the Unit rule', () => {
+  fc.assert(fc.property(fc.string(), fc.boolean(), (description, unitReturn) => !isNullReturnOnUnit({ description, unitReturn }) || description.startsWith('replaced return value with null')));
+});
+
+test('a declaration returns Unit only when its own return type is Unit', () => {
+  const type = fc.tuple(fc.stringMatching(/^[A-Za-z]\w{0,12}$/), fc.boolean()).map(([name, nullable]) => `${name}${nullable ? '?' : ''}`);
+  fc.assert(
+    fc.property(type, (declared) => {
+      assert.equal(declaresUnitReturn([`fun f(): ${declared} {`], 'f'), declared === 'Unit');
+    }),
+  );
 });
 
 test('main writes the mutation-backend report files and fails on a missing report', () => {

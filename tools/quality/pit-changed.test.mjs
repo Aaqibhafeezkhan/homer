@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import fc from 'fast-check';
 import { execFileSync } from 'node:child_process';
 import { DEFAULT_BUDGET_SEC, budgetSeconds, budgetText, changedSources, classGlobs, codeLineNumbers, codeLines, pitPath, withinChanged } from './pit-changed.mjs';
+import { parseMutations, withKeys, writeReport } from './pit.mjs';
 
 const SRC = 'app/app/src/main/kotlin';
 const source = (pkg, body) => `package ${pkg}\n\nimport x.Y\n\n${body}\n`;
@@ -134,6 +135,20 @@ test('two changed sources with one PIT path are refused, not merged', () => {
 test('a source whose changed lines are all comments is left out', () => {
   const text = source('homer.app', '// changed comment\nclass A');
   assert.deepEqual(changedSources(new Map([[`${SRC}/homer/app/A.kt`, new Set([5])]]), () => text), { globs: [], lines: new Map() });
+});
+
+test('a Unit null-return mutant stays ignored after withinChanged rewrites its PIT path', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-changed-unit-'));
+  const text = 'package homer.app.infra\n\nprivate suspend fun tick(delay: Long) {\n  delay(delay)\n}\n';
+  const xml = '<mutations><mutation status=\'SURVIVED\'><sourceFile>A.kt</sourceFile><mutatedClass>homer.app.infra.AKt</mutatedClass><mutatedMethod>tick</mutatedMethod><methodDescription>(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;</methodDescription><lineNumber>3</lineNumber><description>replaced return value with null for homer/app/infra/AKt::tick#private suspend fun tick(</description></mutation></mutations>';
+  // The Unit flag is stamped while the mutant still carries its PIT path, which the reader answers.
+  const [keyed] = withKeys(parseMutations(xml), () => text);
+  assert.equal(keyed.unitReturn, true);
+  const lines = new Map([[`${SRC}/homer/app/infra/A.kt`, { path: `${SRC}/homer/app/elsewhere/A.kt`, lines: new Set([3]) }]]);
+  const [changed] = withinChanged([keyed], lines);
+  assert.equal(changed.path, `${SRC}/homer/app/elsewhere/A.kt`);
+  assert.match(writeReport(dir, 'T', [changed], {}), /\(no mutants\): 0 finding\(s\)/);
+  assert.match(fs.readFileSync(path.join(dir, 'mutation-backend-summary.txt'), 'utf8'), /ignored=1\n/);
 });
 
 test('only mutants on changed lines remain, with their repository path', () => {
