@@ -1058,7 +1058,8 @@ class ProcessExecutorTest {
             every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
             val exception = MaxParallelRunsExceededException("demo", 3)
             coEvery { mockProcess.execute(any(), any()) } throws exception
-            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+            // Status is not KILLED (process never ran), matching the lock-collision fixture.
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.CREATED
 
             executeAndJoin()
 
