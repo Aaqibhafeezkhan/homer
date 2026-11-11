@@ -29,7 +29,7 @@ import { parseJUnit } from './architecture-backend.mjs';
 import { exitCode, formatTable } from './gate.mjs';
 import { changedFiles, worktreeChanges } from './git-diff.mjs';
 import { diagnostic, parseLog } from './kotlin-warnings.mjs';
-import { repoRelative, runMain } from './lib.mjs';
+import { escapeRegExp, repoRelative, runMain } from './lib.mjs';
 import { parseReport as queryPlans } from './query-plans.mjs';
 import { parseReport as queryRepeats } from './query-repeats.mjs';
 
@@ -96,8 +96,6 @@ export function declaredNames(text) {
   return [...new Set([...text.matchAll(types), ...text.matchAll(functions)].map((m) => m[1]))];
 }
 
-// A file name may hold any character but `/` (`A(1).kt`); declared names are \w+ already.
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const packageOf = (text) => /^\s*package\s+([\w.]+)/m.exec(text)?.[1];
 const isTestClass = (file) => file.sourceSet === 'test' && file.name.endsWith('Test');
 
@@ -128,6 +126,7 @@ export function relatedTests(changed, testFiles, read) {
     const inModule = testClasses.filter((t) => t.module === file.module);
     let related = inModule.filter((t) => t.dir === file.dir && t.name.startsWith(file.name));
     if (related.length === 0) {
+      // A file name may hold any character but `/` (`A(1).kt`); declared names are \w+ already.
       const names = new RegExp(String.raw`\b(?:${[file.name, ...declaredNames(read(changedPath))].map(escapeRegExp).join('|')})\b`);
       related = inModule.filter((t) => names.test(read(t.path)));
     }

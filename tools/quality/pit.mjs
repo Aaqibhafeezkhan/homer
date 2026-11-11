@@ -3,13 +3,14 @@
  * shared report files, one finding per survived or uncovered mutant. The report of both backend runs:
  * a pull request's changed lines (tools/quality/pit-changed.mjs) and the weekly full run, sharded per
  * package (tools/quality/pit-full.mjs).
- * Mutants that only remove a call the Kotlin compiler adds are ignored: outside the score, no finding.
+ * Mutants that only remove a call the Kotlin compiler adds, and null-return mutants on a function or
+ * lambda that returns Unit, are ignored: outside the score, no finding.
  * Accepted exceptions (mutation-exceptions.mjs) leave the score and the findings, and are listed apart.
  * Usage (repository root): node tools/quality/pit.mjs [mutations.xml] [out dir]
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { mutationScore, runMain, writeCheck } from './lib.mjs';
+import { codeText, escapeRegExp, mutationScore, runMain, writeCheck } from './lib.mjs';
 import { BACKEND_EXCEPTIONS, applyExceptions, countFindings, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 export const CHECK = 'mutation-backend';
@@ -35,7 +36,7 @@ const element = (body, name) => {
   return match ? decodeXml(match[1]) : '';
 };
 
-/** The `<mutation>` elements of a PIT XML report: status, source path, line, method and description. */
+/** The `<mutation>` elements of a PIT XML report: status, source path, line, method, descriptor and description. */
 export function parseMutations(xml) {
   return [...xml.matchAll(/<mutation\b([^>]*)>([\s\S]*?)<\/mutation>/g)].map(([, attributes, body]) => {
     const mutatedClass = element(body, 'mutatedClass');
@@ -45,6 +46,7 @@ export function parseMutations(xml) {
       path: [SOURCE_ROOT, packageDir, element(body, 'sourceFile')].filter(Boolean).join('/'),
       line: Number(element(body, 'lineNumber')) || 1,
       method: element(body, 'mutatedMethod'),
+      descriptor: element(body, 'methodDescription'),
       description: element(body, 'description'),
     };
   });
@@ -122,6 +124,9 @@ export function sourceReader(root = SOURCE_ROOT) {
   return reader;
 }
 
+/** The lines of a mutant's source, through the reader's own cache when it has one; null if unreadable. */
+const sourceLines = (m, read) => (read.lines ? read.lines(m.path) : read(m.path)?.split('\n')) ?? null;
+
 /**
  * The accepted-exception key of a mutant (mutation-exceptions.mjs): the PIT source path (relative to
  * the source root), method, description and the mutant's line text, trimmed with whitespace runs
@@ -129,16 +134,90 @@ export function sourceReader(root = SOURCE_ROOT) {
  * unreadable. No line number, so the key is the same when the mutant moves with its line.
  */
 export function mutationKey(m, read) {
-  const lines = read.lines ? read.lines(m.path) : read(m.path)?.split('\n');
+  const lines = sourceLines(m, read);
   const text = lines && m.line <= lines.length - (lines.at(-1) === '' ? 1 : 0) ? oneLine(lines[m.line - 1]) : '<inline>';
   return `${m.path.startsWith(`${SOURCE_ROOT}/`) ? m.path.slice(SOURCE_ROOT.length + 1) : m.path}#${oneLine(m.method)}#${oneLine(m.description)}#${text}`;
 }
 
-/** The mutants with their `key`, built from their PIT path: do it before any rewrite of `path`. */
-export const withKeys = (mutations, read) => mutations.map((m) => ({ ...m, key: mutationKey(m, read) }));
+/**
+ * The mutants with their `key` and their `unitReturn`, built from their PIT path: do it before any
+ * rewrite of `path`, so the predicates that filter them need no reader. The Unit decision is asked
+ * only of a null-return mutant — the only kind the filter reads it for — and, for a suspend
+ * descriptor, decided once per `path#method`, so a full run's many mutants of one method do not
+ * repeat the source scan.
+ */
+export const withKeys = (mutations, read) => {
+  const unit = new Map(); // `path#method` of a suspend declaration -> whether it returns Unit
+  return mutations.map((m) => ({ ...m, key: mutationKey(m, read), unitReturn: NULL_RETURN.test(m.description) ? returnsUnit(m, sourceLines(m, read), unit) : false }));
+};
 
 /** Whether the mutant only removes a call the Kotlin compiler added. */
 export const isCompilerCallMutant = (m) => COMPILER_CALL.test(m.description);
+
+// `replaced return value with null` mutants PIT places on the `return` of a function or lambda whose
+// result nothing reads. Ignored only when the mutated function itself returns Unit, decided from the
+// JVM descriptor and, for a suspend state machine, from the source declaration: never from the name.
+const NULL_RETURN = /^replaced return value with null\b/;
+// `)V` is a plain function or lambda returning Unit, `)Lkotlin/Unit;` its boxed form.
+const UNIT_DESCRIPTOR = /\)(?:V|Lkotlin\/Unit;)$/;
+// A suspend function compiles to a state machine that returns Object whatever it returns, so the
+// descriptor says nothing: the declaration decides. A suspend lambda's `invokeSuspend` takes the
+// lambda instance, not a Continuation, and has no declaration — it matches nothing here.
+const SUSPEND_DESCRIPTOR = /Lkotlin\/coroutines\/Continuation;\)Ljava\/lang\/Object;$/;
+
+/** The index of the `)` closing the `(` at `open`, or -1 when the source does not close it. */
+function closingParen(source, open) {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '(') depth++;
+    else if (source[i] === ')' && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Whether a declaration whose parameter list ends at `close` returns Unit. */
+function unitAfter(source, close) {
+  const rest = source.slice(close + 1).replace(/^\s+/, '');
+  if (rest.startsWith('{')) return true; // a block body
+  if (/^where\b/.test(rest)) return rest.slice(rest.search(/[={]/)).startsWith('{'); // a where clause: Unit only before a block body, never before an inferred `=` body
+  if (!rest.startsWith(':')) return false; // `=` infers the type, and nothing else declares Unit
+  return /^Unit(?![?<.\w])/.test(rest.slice(1).trimStart()); // `Unit?` is observable, `Unit` is not
+}
+
+/**
+ * Whether the source declares `fun <name>(…)` returning Unit: a block body or a `: Unit` after the
+ * parameter list. Read from code text only (`codeText`): a declaration example in a KDoc or a
+ * parenthesis inside a string literal decides nothing. An inferred `=` body, another type, no
+ * matching declaration and an overload the name cannot tell apart all mean not Unit.
+ */
+export function declaresUnitReturn(lines, name) {
+  if (!lines || !name) return false;
+  const source = codeText(lines.join('\n'));
+  const declarations = [...source.matchAll(new RegExp(`\\bfun\\s+(?:<[^>]*>\\s*)?${escapeRegExp(name)}\\s*\\(`, 'g'))];
+  if (declarations.length !== 1) return false;
+  const [declaration] = declarations;
+  const close = closingParen(source, declaration.index + declaration[0].length - 1);
+  return close >= 0 && unitAfter(source, close);
+}
+
+/**
+ * Whether the mutated function's own result is Unit: its JVM descriptor returns void or a boxed
+ * `Unit`, or it is a suspend function whose declaration the source gives as Unit. The suspend
+ * declaration scan is memoized under `path#method` in `memo`, when the caller shares one.
+ */
+export function returnsUnit(m, lines, memo = null) {
+  const descriptor = m.descriptor ?? '';
+  if (UNIT_DESCRIPTOR.test(descriptor)) return true;
+  if (!SUSPEND_DESCRIPTOR.test(descriptor)) return false;
+  const key = `${m.path}#${m.method}`;
+  if (memo?.has(key)) return memo.get(key);
+  const unit = declaresUnitReturn(lines, m.method);
+  memo?.set(key, unit);
+  return unit;
+}
+
+/** Whether the mutant replaces a `return` whose value nothing reads, so no test can kill it. */
+export const isNullReturnOnUnit = (m) => m.unitReturn === true && NULL_RETURN.test(m.description);
 
 const SCORED = { KILLED: 'killed', SURVIVED: 'survived', NO_COVERAGE: 'noCoverage', TIMED_OUT: 'timeout' };
 
@@ -154,13 +233,13 @@ export function pitStats(mutations) {
 }
 
 /**
- * Writes the check's report files for `all` mutants: compiler-call mutants left out, then the undetected
- * mutants `exceptions` accept (out of the score and the findings, listed in `<check>-accepted.txt`).
- * A `full` run also reports the exceptions that match no mutant, and those whose `count` differs from
- * the mutants they match; `extra` adds summary values. Returns the report text.
+ * Writes the check's report files for `all` mutants: compiler-call and Unit null-return mutants left
+ * out, then the undetected mutants `exceptions` accept (out of the score and the findings, listed in
+ * `<check>-accepted.txt`). A `full` run also reports the exceptions that match no mutant, and those
+ * whose `count` differs from the mutants they match; `extra` adds summary values. Returns the report text.
  */
 export function writeReport(outDir, title, all, { exceptions = {}, full = false, extra = {} } = {}) {
-  const mutations = all.filter((m) => !isCompilerCallMutant(m));
+  const mutations = all.filter((m) => !isCompilerCallMutant(m) && !isNullReturnOnUnit(m));
   const undetected = mutations.filter((m) => Object.hasOwn(FINDING_STATUSES, m.status));
   const { kept, accepted, stale, miscounted } = applyExceptions(undetected, (m) => m.key, exceptions, { full });
   const undetectedSet = new Set(undetected);

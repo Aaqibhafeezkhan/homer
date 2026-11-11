@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { codeQuality, formatSummary, mutationScore, parseSummary, repoRelative, sha1, writeCheck } from './lib.mjs';
+import fc from 'fast-check';
+import { codeLineNumbers, codeQuality, codeText, formatSummary, mutationScore, parseSummary, repoRelative, sha1, writeCheck } from './lib.mjs';
 
 test('the mutation score is detected over detected, survived and uncovered', () => {
   assert.equal(mutationScore({ killed: 3, timeout: 1, survived: 1, noCoverage: 1 }), '66.7');
@@ -50,4 +51,28 @@ test('writeCheck writes the report, summary and Code Quality files', () => {
 test('repoRelative turns absolute and relative paths into POSIX repo paths', () => {
   assert.equal(repoRelative('/repo', '/repo/app/A.kt'), 'app/A.kt');
   assert.equal(repoRelative('/repo', 'console/b.ts'), 'console/b.ts');
+});
+
+test('codeText blanks comments and string literals, keeping code and newlines', () => {
+  assert.equal(codeText('fun f() {}'), 'fun f() {}');
+  assert.doesNotMatch(codeText('/** fun g( */\nfun f() {}'), /fun g/);
+  assert.doesNotMatch(codeText('fun f(x: String = "(") {}'), /"/);
+  assert.doesNotMatch(codeText('val r = """\nfun g(\n"""\nval t = 1'), /fun g/);
+  assert.match(codeText('val r = """\nfun g(\n"""\nval t = 1'), /val t = 1/);
+});
+
+test('codeText leaves a source it cannot lex to a clean end unchanged', () => {
+  for (const broken of ['/* never closed\nfun f() = 1', 'val s = "open\nfun f() = 1', 'fun `never closed() = 1']) {
+    assert.equal(codeText(broken), broken);
+  }
+});
+
+test('codeText agrees with codeLineNumbers: a line with code left is a line codeLineNumbers counts', () => {
+  fc.assert(
+    fc.property(fc.string(), (source) => {
+      const code = codeText(source).split('\n');
+      const counted = codeLineNumbers(source);
+      for (const [n, line] of code.entries()) assert.equal(counted.has(n + 1) || line.trim() === '', true, JSON.stringify(source));
+    }),
+  );
 });
