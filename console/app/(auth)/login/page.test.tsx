@@ -401,4 +401,42 @@ describe('LoginPage', () => {
     expect(screen.getByRole('radio', { name: /password/i })).toBeChecked();
     expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
   });
+
+  it('falls back to the deployment default for an unrecognized ?mode value', () => {
+    appConfigMock.auth.allowBearer = true;
+    // No saved instance resolves a mode, so the bearer default alone decides.
+    instancesMock.instances = [];
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=admin'));
+    renderPage();
+    expect(screen.getByRole('radio', { name: /token/i })).toBeChecked();
+    expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the saved instance for a case-mismatched ?mode value', () => {
+    appConfigMock.auth.allowBearer = true;
+    setActiveInstanceMode('cookie');
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=Bearer'));
+    renderPage();
+    expect(screen.getByRole('radio', { name: /password/i })).toBeChecked();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+  });
+
+  it('lets ?mode=bearer from the URL win over a saved cookie instance', () => {
+    appConfigMock.auth.allowBearer = true;
+    setActiveInstanceMode('cookie');
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=bearer'));
+    renderPage();
+    expect(screen.getByRole('radio', { name: /token/i })).toBeChecked();
+    expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+  });
+
+  it('ignores an unrecognized ?mode value when bearer is disabled', () => {
+    // Only the two known values are ever honoured, and bearer needs the
+    // operator's opt-in on top (2026-07-12 review H3).
+    searchParamsMock.mockReturnValue(new URLSearchParams('mode=Bearer'));
+    renderPage();
+    expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /token/i })).not.toBeInTheDocument();
+  });
 });

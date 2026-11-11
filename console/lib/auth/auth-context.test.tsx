@@ -50,6 +50,35 @@ describe('AuthProvider (cookie mode)', () => {
     resetInstancesStoreForTests();
   });
 
+  // A button whose login() outcome the test reads back, for the classification cases.
+  function loginCapture() {
+    let outcome: string | undefined;
+    function OutcomeProbe() {
+      const { status, login: doLogin } = useAuth();
+      return (
+        <div>
+          <div data-testid="status">{status}</div>
+          <button
+            onClick={() =>
+              void doLogin('alice', 'pw').then((r) => {
+                outcome = r;
+              })
+            }
+          >
+            do-login-capture
+          </button>
+        </div>
+      );
+    }
+    renderWithProvider(<OutcomeProbe />);
+    return async () => {
+      await act(async () => {
+        screen.getByText('do-login-capture').click();
+      });
+      return outcome;
+    };
+  }
+
   it('starts in loading then transitions to authed once /auth/me resolves', async () => {
     getAuthMe.mockResolvedValue({ username: 'alice', role: 'admin', grants: [] });
     renderWithProvider();
@@ -266,6 +295,61 @@ describe('AuthProvider (cookie mode)', () => {
       screen.getByText('do-login-capture').click();
     });
     await waitFor(() => expect(outcome).toBe('rate-limited'));
+  });
+
+  it.each([
+    ['invalid-credentials', () => new HomerApiError('Unauthorized', 401)],
+    ['error', () => new HomerApiError('Server Error', 500)],
+    ['error', () => new Error('Failed to fetch')],
+  ])('login reports %s when the credential POST is rejected', async (expected, failure) => {
+    // A 401 is the password being wrong; every other rejection — a 500, a network
+    // failure — is the console failing to reach the server, and the form says so.
+    getAuthMe.mockRejectedValue(new Error('401')); // mount lands anon
+    login.mockRejectedValue(failure());
+
+    const submit = loginCapture();
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('anon'),
+    );
+
+    expect(await submit()).toBe(expected);
+  });
+
+  it('reads a status only off the client\'s own error type', async () => {
+    // Only HomerApiError carries a backend status. A foreign throwable that
+    // happens to have a `status` field must not be classified as rate-limited —
+    // the form would tell the user to wait for a window that never opened.
+    getAuthMe.mockRejectedValue(new Error('401')); // mount lands anon
+    login.mockRejectedValue(Object.assign(new Error('Too Many Requests'), { status: 429 }));
+
+    const submit = loginCapture();
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('anon'),
+    );
+
+    expect(await submit()).toBe('error');
+  });
+
+  it('reports the /auth/me re-probe failure, not the accepted credential POST', async () => {
+    // The POST succeeds but the session probe behind it is rejected — the login
+    // limiter's 429 here must still reach the form as rate-limited.
+    let probes = 0;
+    getAuthMe.mockImplementation(() => {
+      probes += 1;
+      return probes === 1
+        ? Promise.reject(new Error('401'))
+        : Promise.reject(new HomerApiError('Too Many Requests', 429));
+    });
+    login.mockResolvedValue(undefined);
+
+    const submit = loginCapture();
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('anon'),
+    );
+
+    expect(await submit()).toBe('rate-limited');
+    expect(login).toHaveBeenCalledWith('alice', 'pw');
+    expect(screen.getByTestId('status')).toHaveTextContent('anon');
   });
 
   it('maps /me role and grants into the auth user', async () => {
