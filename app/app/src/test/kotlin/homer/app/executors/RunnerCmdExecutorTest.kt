@@ -28,8 +28,10 @@ import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.io.OutputStream
@@ -43,6 +45,7 @@ import kotlin.time.Duration.Companion.seconds
 
 private class FakeShell(
     private val exitCodes: MutableList<Int>,
+    private val onCmd: suspend () -> Unit = {},
 ) : ShellExecutor {
     val invocations = mutableListOf<Pair<List<String>, String?>>()
     var lastEnv: Map<String, String> = emptyMap()
@@ -58,6 +61,7 @@ private class FakeShell(
     ): CommandResult {
         invocations += command to stdIn
         lastEnv = env
+        onCmd()
         val code = if (exitCodes.isEmpty()) 0 else exitCodes.removeFirst()
         return CommandResult(exitCode = code, stdOut = stdOut, stdErr = stdErr)
     }
@@ -126,9 +130,10 @@ class RunnerCmdExecutorTest {
     private fun executor(
         session: RunnerSession,
         scope: CoroutineScope,
+        activeSessions: ActiveSessionsRegistry = ActiveSessionsRegistry(),
     ) = RunnerCmdExecutor(
         runners = RunnerRegistry(listOf(FakeRunner(session))).also { it.start(scope) },
-        activeSessions = ActiveSessionsRegistry(),
+        activeSessions = activeSessions,
         fileOperations = TestFixtures.mockFileOperations(),
     )
 
@@ -633,5 +638,97 @@ class RunnerCmdExecutorTest {
             TestFixtures.mockSpan(),
         )
         assertEquals("/home/homer", shell.lastEnv["HOME"])
+    }
+
+    // ========== Active-session bookkeeping (ADR-0033) ==========
+
+    @Test
+    fun `the target session is registered while the command runs and released after success`(
+        @org.junit.jupiter.api.io.TempDir tmp: Path,
+    ) = runTest {
+        val activeSessions = ActiveSessionsRegistry()
+        val sizesWhileRunning = mutableListOf<Int>()
+        val shell = FakeShell(mutableListOf(0), onCmd = { sizesWhileRunning += activeSessions.size() })
+        val session = FakeSession(shell)
+        val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
+
+        executor(session, backgroundScope, activeSessions).execute(command(), context(workdir), TestFixtures.mockSpan())
+
+        assertEquals(listOf(1), sizesWhileRunning, "the session must be registered before the target command runs")
+        assertEquals(0, activeSessions.size(), "the session must be released when the step ends")
+    }
+
+    @Test
+    fun `the target session is released after a failing check`(
+        @org.junit.jupiter.api.io.TempDir tmp: Path,
+    ) = runTest {
+        val activeSessions = ActiveSessionsRegistry()
+        val shell = FakeShell(mutableListOf(3))
+        val session = FakeSession(shell)
+        val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
+
+        val result =
+            executor(session, backgroundScope, activeSessions).execute(
+                command(check = listOf("which cargo")),
+                context(workdir),
+                TestFixtures.mockSpan(),
+            )
+
+        assertEquals(3, result.exitCode)
+        assertEquals(0, activeSessions.size())
+    }
+
+    @Test
+    fun `the target session is released when the step throws`(
+        @org.junit.jupiter.api.io.TempDir tmp: Path,
+    ) = runTest {
+        val activeSessions = ActiveSessionsRegistry()
+        val shell = FakeShell(mutableListOf(0))
+        val session = FakeSession(shell, materializeOnDownload = false)
+        val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
+
+        assertThrows<homer.app.exceptions.CommandExecutionException> {
+            executor(session, backgroundScope, activeSessions).execute(
+                command(syncFromRemote = listOf("out.bin")),
+                context(workdir),
+                TestFixtures.mockSpan(),
+            )
+        }
+
+        assertEquals(0, activeSessions.size())
+    }
+
+    @Test
+    fun `the target session is released when the step is cancelled`(
+        @org.junit.jupiter.api.io.TempDir tmp: Path,
+    ) = runTest {
+        val activeSessions = ActiveSessionsRegistry()
+        val started = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val shell =
+            FakeShell(
+                mutableListOf(0),
+                onCmd = {
+                    started.complete(Unit)
+                    gate.await()
+                },
+            )
+        val session = FakeSession(shell)
+        val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
+
+        val job =
+            launch {
+                executor(session, backgroundScope, activeSessions).execute(command(), context(workdir), TestFixtures.mockSpan())
+            }
+        // Bounded wait, and the job is cancelled even when the assertion fails, so a mutant that
+        // never reaches the target command cannot leave the test waiting out its dispatch timeout.
+        try {
+            withTimeout(10.seconds) { started.await() }
+            assertEquals(1, activeSessions.size())
+        } finally {
+            job.cancelAndJoin()
+        }
+
+        assertEquals(0, activeSessions.size())
     }
 }

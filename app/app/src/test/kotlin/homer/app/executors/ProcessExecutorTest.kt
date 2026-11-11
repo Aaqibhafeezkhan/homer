@@ -932,25 +932,73 @@ class ProcessExecutorTest {
     fun `execute should set FAILED for lock collision with consistent telemetry`() =
         runBlocking {
             coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
             val exception = homer.app.exceptions.AnotherProcessStillActive(999)
             coEvery { mockProcess.execute(any(), any()) } throws exception
 
             // Status is not KILLED (process never ran)
             coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.CREATED
 
-            processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            executeAndJoin()
 
             // Should set status to FAILED
             coVerify {
                 mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED)
             }
 
-            // Telemetry should ALSO be FAILED (fixes inconsistency)
+            // Telemetry should ALSO be FAILED (fixes inconsistency), reported as a cancellation
+            // because the run never started.
             verify { mockSpan.setAttribute("process.status", "FAILED") }
+            verify { mockSpan.addEvent("process.status.failed") }
+            verify { mockSpan.setStatus(StatusCode.ERROR, "Agent execution cancelled: ${exception.message}") }
+            verify { mockSpan.recordException(exception) }
+            verify { mockLogger.error("Process {} cancelled: {}", 1, exception.message) }
+        }
+
+    @Test
+    fun `a REJECT parallel-run cap is reported as a cancellation, not as a run failure`() =
+        runBlocking {
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
+            val exception = MaxParallelRunsExceededException("demo", 3)
+            coEvery { mockProcess.execute(any(), any()) } throws exception
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+
+            executeAndJoin()
+
+            verify { mockSpan.recordException(exception) }
+            verify { mockLogger.error("Process {} cancelled: {}", 1, exception.message) }
+        }
+
+    @Test
+    fun `a mid-run failure is reported as a run failure on the span and in the log`() =
+        runBlocking {
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            val exception = IllegalStateException("boom")
+            coEvery { mockProcess.execute(any(), any()) } throws exception
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.FAILED
+
+            executeAndJoin()
+
+            verify { mockSpan.setAttribute("process.status", "FAILED") }
+            verify { mockSpan.addEvent("process.status.failed") }
+            verify { mockSpan.setStatus(StatusCode.ERROR, "Agent execution failed: boom") }
+            verify { mockSpan.recordException(exception) }
+            verify { mockLogger.error("Process {} failed: {}", 1, "boom", exception) }
         }
 
     // ========== Pre-start failure reason (ADR-0020) ==========
+
+    /**
+     * Runs [processExecutor.execute] and joins the job it launched, so the failure path has
+     * committed before the assertions: a fixed `delay` lets a mutated path land after them.
+     */
+    private suspend fun executeAndJoin() {
+        val job = slot<Job>()
+        coEvery { mockProcessManager.assignJob(any(), capture(job)) } just Runs
+        processExecutor.execute(mockProcess, testContext)
+        job.captured.join()
+    }
 
     /** Runs [e] through the failure path and returns what the executor stored as the reason. */
     private suspend fun storedReasonFor(
@@ -964,8 +1012,7 @@ class ProcessExecutorTest {
         coEvery { mockProcess.execute(any(), any()) } throws e
         coEvery { mockProcessManager.setFailureReason(1, capture(reason), any()) } returns true
 
-        processExecutor.execute(mockProcess, testContext)
-        delay(150)
+        executeAndJoin()
 
         return if (reason.isCaptured) reason.captured else null
     }
@@ -979,8 +1026,7 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws AnotherProcessStillActive(999)
             coEvery { mockProcessManager.setFailureReason(1, any(), any()) } returns true
 
-            processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            executeAndJoin()
 
             coVerify { mockProcessManager.setFailureReason(1, match { it.contains("SKIP_CURRENT") }, 999) }
         }
@@ -1076,8 +1122,7 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws ClaimQueueFullException(100)
             coEvery { mockProcessManager.setFailureReason(any(), any(), any()) } throws RuntimeException("db down")
 
-            processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            executeAndJoin()
 
             coVerify { mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED) }
             verify { mockSpan.end() }

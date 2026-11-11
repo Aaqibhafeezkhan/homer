@@ -42,6 +42,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -53,6 +54,7 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.relativeTo
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Unit tests for AgentExecutor
@@ -2948,6 +2950,129 @@ class AgentExecutorTest {
         )
     }
 
+    // ========== Active-session bookkeeping (ADR-0033) ==========
+
+    /** An executor over [workspace] whose opened session is tracked in [activeSessions]. */
+    private fun executorTracking(
+        activeSessions: ActiveSessionsRegistry,
+        workspace: Workspace = mockWorkspace,
+    ): AgentExecutor {
+        every {
+            mockTelemetryService.tracer
+                .spanBuilder(any())
+                .setParent(any())
+                .startSpan()
+        } returns TestFixtures.mockSpan()
+        every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+        return AgentExecutor(
+            agent = AgentFixtures.simpleAgent(),
+            workspace = workspace,
+            executorFactory = mockExecutorFactory,
+            telemetryService = mockTelemetryService,
+            config = config,
+            parentContext = Context.current(),
+            stepRecords = mockProcessManager,
+            processId = testProcessId,
+            runner = mockRunner,
+            activeSessions = activeSessions,
+        )
+    }
+
+    @Test
+    fun `a run holds its session in the registry while a command runs and releases it after success`() =
+        runTest {
+            val session = RecordingSession(mockShell)
+            val activeSessions = ActiveSessionsRegistry()
+            val sizesWhileRunning = mutableListOf<Int>()
+            coEvery { mockRunner.openSession(any()) } returns session
+            coEvery { mockExecutor.execute(any(), any(), any()) } coAnswers {
+                sizesWhileRunning += activeSessions.size()
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            executorTracking(activeSessions).execute()
+
+            assertEquals(listOf(1), sizesWhileRunning, "the session must be registered before its command runs")
+            assertEquals(0, activeSessions.size(), "the session must be released when the run ends")
+        }
+
+    @Test
+    fun `a failed run releases its session from the registry`() =
+        runTest {
+            val session = RecordingSession(mockShell)
+            val activeSessions = ActiveSessionsRegistry()
+            coEvery { mockRunner.openSession(any()) } returns session
+            coEvery { mockExecutor.execute(any(), any(), any()) } returns TestFixtures.mockCommandResult(exitCode = 1)
+
+            assertThrows<CommandExecutionException> { executorTracking(activeSessions).execute() }
+
+            assertEquals(0, activeSessions.size())
+        }
+
+    @Test
+    fun `a killed run releases its session from the registry`() =
+        runTest {
+            val session = RecordingSession(mockShell)
+            val activeSessions = ActiveSessionsRegistry()
+            val started = CompletableDeferred<Unit>()
+            coEvery { mockRunner.openSession(any()) } returns session
+            coEvery { mockExecutor.execute(any(), any(), any()) } coAnswers {
+                started.complete(Unit)
+                delay(Long.MAX_VALUE)
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            val job = launch { runCatching { executorTracking(activeSessions).execute() } }
+            // Bounded waits, and the job is cancelled even when an assertion fails: a leaked
+            // child would keep `runTest` waiting out its whole dispatch timeout first.
+            try {
+                withTimeout(10.seconds) { started.await() }
+                assertEquals(1, activeSessions.size())
+            } finally {
+                job.cancelAndJoin()
+            }
+
+            assertEquals(0, activeSessions.size())
+        }
+
+    @Test
+    fun `a session env is appended to the workspace env before the first command runs`() =
+        runTest {
+            val sessionEnv = mapOf("SESSION_VAR" to "s1")
+            val session = RecordingSession(mockShell, env = sessionEnv)
+            val appended = mutableListOf<Map<String, String>>()
+            every { mockWorkspace.appendToEnv(capture(appended)) } just Runs
+            coEvery { mockRunner.openSession(any()) } returns session
+            coEvery { mockExecutor.execute(any(), any(), any()) } returns TestFixtures.mockCommandResult(exitCode = 0)
+
+            executorTracking(ActiveSessionsRegistry()).execute()
+
+            // The session's own env comes first, so the command sees it; then the step's
+            // AGENT_NAME, then the command's result env (empty without a resultEnvParam).
+            assertEquals(
+                listOf(sessionEnv, mapOf(EnvConstants.AGENT_NAME to "test_agent"), emptyMap()),
+                appended,
+            )
+        }
+
+    @Test
+    fun `a session with an empty env appends no session env of its own`() =
+        runTest {
+            val session = RecordingSession(mockShell)
+            val appended = mutableListOf<Map<String, String>>()
+            every { mockWorkspace.appendToEnv(capture(appended)) } just Runs
+            coEvery { mockRunner.openSession(any()) } returns session
+            coEvery { mockExecutor.execute(any(), any(), any()) } returns TestFixtures.mockCommandResult(exitCode = 0)
+
+            executorTracking(ActiveSessionsRegistry()).execute()
+
+            // No session-env append at all: the first call is the step's own AGENT_NAME one.
+            assertEquals(
+                listOf(mapOf(EnvConstants.AGENT_NAME to "test_agent"), emptyMap()),
+                appended,
+            )
+        }
+
     // ========== Runner State Tests ==========
 
     @Test
@@ -3107,6 +3232,7 @@ private class RecordingSession(
     private val failCleanWorkspace: Boolean = false,
     override val extraUploads: List<ExtraUploadSpec> = emptyList(),
     override val runnerAlias: String = "recording",
+    override val env: Map<String, String> = emptyMap(),
 ) : RunnerSession {
     val calls = mutableListOf<String>()
     val uploadLocals = mutableListOf<java.nio.file.Path>()
