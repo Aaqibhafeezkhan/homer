@@ -441,6 +441,33 @@ class RunAgentExecutorTest {
             assertEquals("[]", resolvedParams.captured["payload"])
         }
 
+    // Same clause as `resultEnvParam`: an env value that does not parse as JSON at all omits the
+    // parameter instead of failing the run or the hop.
+    @Test
+    fun `param mapping with JsonPath transformer omits the param when the env value is not JSON`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to "not valid json"))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$.key"),
+                            ),
+                        ),
+                )
+
+            val result = executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals(0, result.exitCode)
+            assertNull(resolvedParams.captured["payload"])
+        }
+
     @Test
     fun `param mapping with Regex transformer forwards captured group`() =
         runTest {
