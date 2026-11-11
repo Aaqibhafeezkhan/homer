@@ -517,6 +517,49 @@ class LangGraphRunStatusServiceTest {
         }
 
     @Test
+    fun `status picks the LangGraph command whose module matches the run's identity`() =
+        runBlocking {
+            // The matching command is not the first one, so picking "the first" reports the wrong label.
+            val agentWithTwoCommands =
+                Agent(
+                    name = "lg_agent",
+                    commands =
+                        listOf(
+                            Command.LangGraph(module = "other.mod:graph", label = "Other Flow"),
+                            langGraphCmd,
+                        ),
+                )
+
+            val result = service(fileOperations = fileOperationsFor()).status(processInfo(), agentWithTwoCommands, includeGraph = false)
+
+            assertEquals("Graph Flow", result?.label)
+            assertEquals("pkg.mod:graph", result?.module)
+            assertNull(result?.error)
+        }
+
+    @Test
+    fun `status falls back to the first LangGraph command when none matches the identity module`() =
+        runBlocking {
+            val agentWithoutMatchingModule =
+                Agent(
+                    name = "lg_agent",
+                    commands =
+                        listOf(
+                            Command.LangGraph(module = "first.mod:graph", label = "First Flow"),
+                            Command.LangGraph(module = "second.mod:graph", label = "Second Flow"),
+                        ),
+                )
+
+            val result =
+                service(fileOperations = fileOperationsFor())
+                    .status(processInfo(), agentWithoutMatchingModule, includeGraph = false)
+
+            assertEquals("First Flow", result?.label)
+            assertEquals("pkg.mod:graph", result?.module)
+            assertNull(result?.error)
+        }
+
+    @Test
     fun `subs keeps a resolved node's history from interruptsSeen and a DISPATCHED continuation`() =
         runBlocking {
             val fileOperations = fileOperationsFor()

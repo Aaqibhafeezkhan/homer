@@ -2119,6 +2119,8 @@ class ProcessVisibilityTest {
         broadcaster: ProcessEventBroadcaster,
         response: io.ktor.client.statement.HttpResponse,
         added: List<String> = listOf("deploy", "other"),
+        updated: List<String> = emptyList(),
+        removed: List<String> = emptyList(),
     ): String? =
         coroutineScope {
             val trigger =
@@ -2127,8 +2129,8 @@ class ProcessVisibilityTest {
                     broadcaster.emit(
                         ProcessEvent.AgentsReloaded(
                             added = added,
-                            updated = emptyList(),
-                            removed = emptyList(),
+                            updated = updated,
+                            removed = removed,
                         ),
                     )
                 }
@@ -2192,6 +2194,37 @@ class ProcessVisibilityTest {
         }
 
     @Test
+    fun `SSE agents reload frame filters the updated and removed lists by grant too`() =
+        testApplication {
+            val broadcaster = ProcessEventBroadcaster()
+            val tokens = mapOf("reader" to readToken)
+            application {
+                installGrantsApp(tokens, deps(authorizerFor(tokens), processEventBroadcaster = broadcaster))
+            }
+
+            client
+                .prepareGet("/api/v1/stream/agents") {
+                    header(HttpHeaders.Authorization, "Bearer read-token")
+                }.execute { response ->
+                    // Only "added" carries a diff in the other cases: updated and removed are
+                    // filtered by the same grant rule and must be narrowed here as well.
+                    val dataLine =
+                        firstAgentReloadDataLine(
+                            broadcaster,
+                            response,
+                            added = emptyList(),
+                            updated = listOf("deploy", "other"),
+                            removed = listOf("deploy", "other"),
+                        )
+                    assertTrue(dataLine != null, "reload frame must be sent")
+                    val payload = dataLine.replace(" ", "")
+                    assertTrue("\"updated\":[\"deploy\"]" in payload, "updated must keep only the granted agent: $dataLine")
+                    assertTrue("\"removed\":[\"deploy\"]" in payload, "removed must keep only the granted agent: $dataLine")
+                    assertTrue("\"added\":[]" in payload, "expected an empty added list: $dataLine")
+                }
+        }
+
+    @Test
     fun `SSE agents reload frame shows all agents to an admin`() =
         testApplication {
             val broadcaster = ProcessEventBroadcaster()
@@ -2206,6 +2239,35 @@ class ProcessVisibilityTest {
                 }.execute { response ->
                     val dataLine = firstAgentReloadDataLine(broadcaster, response)
                     assertTrue(dataLine != null && "deploy" in dataLine && "other" in dataLine, "admin must see all: $dataLine")
+                }
+        }
+
+    @Test
+    fun `SSE agents reload frame shows all three lists to an admin`() =
+        testApplication {
+            val broadcaster = ProcessEventBroadcaster()
+            val tokens = mapOf("root" to adminToken)
+            application {
+                installGrantsApp(tokens, deps(authorizerFor(tokens), processEventBroadcaster = broadcaster))
+            }
+
+            client
+                .prepareGet("/api/v1/stream/agents") {
+                    header(HttpHeaders.Authorization, "Bearer admin-token")
+                }.execute { response ->
+                    val dataLine =
+                        firstAgentReloadDataLine(
+                            broadcaster,
+                            response,
+                            added = listOf("deploy"),
+                            updated = listOf("other"),
+                            removed = listOf("deploy", "other"),
+                        )
+                    assertTrue(dataLine != null, "reload frame must be sent")
+                    val payload = dataLine.replace(" ", "")
+                    assertTrue("\"added\":[\"deploy\"]" in payload, "admin must see every added agent: $dataLine")
+                    assertTrue("\"updated\":[\"other\"]" in payload, "admin must see every updated agent: $dataLine")
+                    assertTrue("\"removed\":[\"deploy\",\"other\"]" in payload, "admin must see every removed agent: $dataLine")
                 }
         }
 
