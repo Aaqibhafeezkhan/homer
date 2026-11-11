@@ -21,9 +21,10 @@ import kotlin.test.assertTrue
 /**
  * The two containment layers of [WorkspaceSync.containedChild] pinned apart
  * (ADR-0047): the name guard refuses every remote-supplied name that is not one
- * plain segment, and every name it lets through resolves to a direct child of
- * the base. The example cases live in `WorkspaceSyncTest`; these properties
- * cover the names an editor would not think of.
+ * plain segment, every name it lets through resolves to a direct child of the
+ * base, and the containment layer alone refuses a name that resolves outside it.
+ * The example cases live in `WorkspaceSyncTest`; these properties cover the
+ * names an editor would not think of.
  */
 class WorkspaceSyncGuardPropertyTest {
     /** The separators a remote-supplied name can carry, plus NUL, which `Path.resolve` refuses outright. */
@@ -44,6 +45,10 @@ class WorkspaceSyncGuardPropertyTest {
             .map { it.joinToString("") }
             .filter { it != "." && it != ".." }
 
+    /** A name the name guard refuses and that also resolves outside the base: a `..` segment or an absolute path. */
+    private val escapingNames: Arb<String> =
+        Arb.bind(plainNames, Arb.of("../", "../../", "/")) { suffix, prefix -> prefix + suffix }
+
     @Test
     fun `every name that is not one plain segment is refused by the name guard`(
         @TempDir base: Path,
@@ -53,6 +58,22 @@ class WorkspaceSyncGuardPropertyTest {
             assertTrue(
                 refusal.message.orEmpty().contains("is not a plain file name"),
                 "name '$name' must be refused by the name guard, got: ${refusal.message}",
+            )
+        }
+    }
+
+    @Test
+    fun `every name that resolves outside the base is refused by the containment layer alone`(
+        @TempDir base: Path,
+    ) = runTest {
+        // resolveContained is the name guard bypassed, so the refusal below can
+        // only come from `child.parent != base` — the layer the name-guard cases
+        // above never reach for these names.
+        checkAll(escapingNames) { name ->
+            val refusal = assertFailsWith<SecurityException> { WorkspaceSync.resolveContained(base, name) }
+            assertTrue(
+                refusal.message.orEmpty().contains("resolves outside"),
+                "name '$name' must be refused by the containment layer, got: ${refusal.message}",
             )
         }
     }

@@ -65,6 +65,19 @@ class WorkspaceSync(
             if (!isPlainFileName(filename)) {
                 throw SecurityException("Remote SFTP entry name '$filename' is not a plain file name")
             }
+            return resolveContained(localDir, filename)
+        }
+
+        /**
+         * The containment layer of [containedChild] on its own: [filename]
+         * resolved under [localDir] must land on a direct child of it. Split out
+         * so a test can pin this layer with the name guard bypassed — the two
+         * are defence in depth, and neither may be dropped unnoticed (ADR-0047).
+         */
+        internal fun resolveContained(
+            localDir: Path,
+            filename: String,
+        ): Path {
             val base = localDir.toAbsolutePath().normalize()
             val child = base.resolve(filename).normalize()
             if (child.parent != base) {

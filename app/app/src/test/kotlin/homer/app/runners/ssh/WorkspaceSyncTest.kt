@@ -821,6 +821,25 @@ class WorkspaceSyncTest {
         )
     }
 
+    @Test
+    fun `the containment layer refuses a name that resolves outside with the name guard bypassed`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        for (name in listOf("../evil.sh", "..", "sub/../../evil.sh", "/etc/cron.d/x")) {
+            // The composed check stops each of these at the name guard, so it
+            // never reaches the containment layer — that is what the cases above
+            // pin. resolveContained is the guard bypassed, and the refusal it
+            // throws can then only come from `child.parent != base`; its own
+            // message says which layer did (ADR-0047, defence in depth).
+            assertRefusedByName(local, name)
+            val refusal = assertThrows<SecurityException> { WorkspaceSync.resolveContained(local, name) }
+            assertTrue(
+                refusal.message.orEmpty().contains("resolves outside"),
+                "expected the containment layer to refuse '$name', got: ${refusal.message}",
+            )
+        }
+    }
+
     // ===== Pre-existing local symlinks must not redirect writes =====
 
     @Test
