@@ -274,16 +274,7 @@ class KubernetesRunnerTest {
             stubCreatePod(api)
             stubPodStatus(api, readyPod())
 
-            val span = mockk<Span>(relaxed = true)
-            val builder =
-                mockk<SpanBuilder>(relaxed = true) {
-                    every { setParent(any()) } returns this
-                    every { startSpan() } returns span
-                }
-            val tracer =
-                mockk<Tracer> {
-                    every { spanBuilder(any()) } returns builder
-                }
+            val (tracer, span) = mockTracer()
 
             val runner =
                 KubernetesRunner(
@@ -319,16 +310,7 @@ class KubernetesRunnerTest {
                     now += 1_000
                 }
             }
-            val span = mockk<Span>(relaxed = true)
-            val builder =
-                mockk<SpanBuilder>(relaxed = true) {
-                    every { setParent(any()) } returns this
-                    every { startSpan() } returns span
-                }
-            val tracer =
-                mockk<Tracer> {
-                    every { spanBuilder(any()) } returns builder
-                }
+            val (tracer, span) = mockTracer()
             val runner = KubernetesRunner("k8s-dev", config, api, dummyExecClient(), clock = clock, tracer = tracer)
 
             runner.openSession(params)
@@ -350,16 +332,7 @@ class KubernetesRunnerTest {
             stubEvents(api, listOf("Warning/Failed: init-setup exited 1"))
             stubDeletePod(api)
 
-            val span = mockk<Span>(relaxed = true)
-            val builder =
-                mockk<SpanBuilder>(relaxed = true) {
-                    every { setParent(any()) } returns this
-                    every { startSpan() } returns span
-                }
-            val tracer =
-                mockk<Tracer> {
-                    every { spanBuilder(any()) } returns builder
-                }
+            val (tracer, span) = mockTracer()
 
             val runner =
                 KubernetesRunner(
@@ -846,6 +819,17 @@ class KubernetesRunnerTest {
         }
 
     private fun dummyExecClient(): KubernetesExecClient = KubernetesExecClient { _, _, _, _ -> mockk(relaxed = true) }
+
+    /** A tracer whose single span is handed back with it, so a test can assert on both. */
+    private fun mockTracer(): Pair<Tracer, Span> {
+        val span = mockk<Span>(relaxed = true)
+        val builder =
+            mockk<SpanBuilder>(relaxed = true) {
+                every { setParent(any()) } returns this
+                every { startSpan() } returns span
+            }
+        return mockk<Tracer> { every { spanBuilder(any()) } returns builder } to span
+    }
 
     private fun stubCreatePod(api: CoreV1Api) {
         val req =
