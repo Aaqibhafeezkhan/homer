@@ -166,6 +166,14 @@ class ContinuationServiceTest {
             assertEquals("ttlSec", zero.field)
         }
 
+    // A non-positive default ttl cannot reach `validate`: DispatchConfig refuses it at
+    // construction, so the effective-ttl refusal above is only ever the caller's ttl.
+    @Test
+    fun `a non-positive default ttl is refused by DispatchConfig, never reaching validate`() {
+        val refused = assertFailsWith<IllegalArgumentException> { DispatchConfig(defaultTtlSec = 0) }
+        assertTrue(refused.message?.contains("server.dispatch.defaultTtlSec") == true)
+    }
+
     @Test
     fun `validateJoin reports an unauthorized non-dispatchable sub as not found`() =
         runTest {
