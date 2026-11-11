@@ -29,7 +29,7 @@ import { parseJUnit } from './architecture-backend.mjs';
 import { exitCode, formatTable } from './gate.mjs';
 import { changedFiles, worktreeChanges } from './git-diff.mjs';
 import { diagnostic, parseLog } from './kotlin-warnings.mjs';
-import { repoRelative, runMain } from './lib.mjs';
+import { escapeRegExp, repoRelative, runMain } from './lib.mjs';
 import { parseReport as queryPlans } from './query-plans.mjs';
 import { parseReport as queryRepeats } from './query-repeats.mjs';
 
@@ -97,7 +97,6 @@ export function declaredNames(text) {
 }
 
 // A file name may hold any character but `/` (`A(1).kt`); declared names are \w+ already.
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const packageOf = (text) => /^\s*package\s+([\w.]+)/m.exec(text)?.[1];
 const isTestClass = (file) => file.sourceSet === 'test' && file.name.endsWith('Test');
 

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import fc from 'fast-check';
 import { execFileSync } from 'node:child_process';
-import { DEFAULT_BUDGET_SEC, budgetSeconds, budgetText, changedSources, classGlobs, codeLineNumbers, codeLines, pitPath, withinChanged } from './pit-changed.mjs';
+import { codeLineNumbers } from './lib.mjs';
+import { DEFAULT_BUDGET_SEC, budgetSeconds, budgetText, changedSources, classGlobs, codeLines, pitPath, withinChanged } from './pit-changed.mjs';
 import { parseMutations, withKeys, writeReport } from './pit.mjs';
 
 const SRC = 'app/app/src/main/kotlin';

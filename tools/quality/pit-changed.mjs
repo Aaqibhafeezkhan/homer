@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { declaredNames } from './changed.mjs';
 import { changedLines, gitDiff, worktreeChanges } from './git-diff.mjs';
-import { runMain, writeCheck } from './lib.mjs';
+import { codeLineNumbers, runMain, writeCheck } from './lib.mjs';
 import { BACKEND_EXCEPTIONS, loadExceptions } from './mutation-exceptions.mjs';
 import { CHECK, REPORT_DIR, SOURCE_ROOT, pitPath, readMutations, writeReport } from './pit.mjs';
 
@@ -44,81 +44,6 @@ export function classGlobs(file, source) {
   if (!pkg) return [];
   const names = [`${path.posix.basename(file, '.kt').replace(/\W/g, '')}Kt`, ...declaredNames(source)];
   return [...new Set(names)].filter(Boolean).flatMap((name) => [`${pkg}.${name}`, `${pkg}.${name}$*`]);
-}
-
-const quoteAt = (source, i) => (source.startsWith('"""', i) ? '"""' : source[i] === '"' || source[i] === "'" ? source[i] : null);
-
-// One step inside a string or char literal; returns the index of the step's last character.
-function stepInLiteral(source, i, stack) {
-  const { quote } = stack.at(-1);
-  if (source[i] === '\\' && quote !== '"""') return i + 1;
-  if (quote !== "'" && source.startsWith('${', i)) {
-    stack.push({ braces: 0 });
-    return i + 1;
-  }
-  if (!source.startsWith(quote, i)) return i;
-  stack.pop();
-  // A raw string closes at the last three of a run of quotes: `""""` is a quote, then the end.
-  let end = i + quote.length - 1;
-  while (quote === '"""' && source[end + 1] === '"') end++;
-  return end;
-}
-
-// One step in code or in a `${…}` template expression; returns the index of the step's last character.
-function stepInCode(source, i, stack) {
-  // A backticked name (`fun \`it's fine\`()`) may hold quotes and comment openers: skip it whole.
-  if (source[i] === '`') {
-    const close = source.indexOf('`', i + 1);
-    if (close >= 0) return close;
-    stack.push({ quote: '`' }); // never closed: leave the source unclean, so the fail-safe applies
-    return source.length;
-  }
-  const quote = quoteAt(source, i);
-  if (quote) {
-    stack.push({ quote });
-    return i + quote.length - 1;
-  }
-  const template = stack.at(-1);
-  if (template && source[i] === '{') template.braces++;
-  else if (template && source[i] === '}') {
-    if (template.braces === 0) stack.pop();
-    else template.braces--;
-  }
-  return i;
-}
-
-/**
- * The lines of a Kotlin source holding anything outside a comment. Lexes just enough for that:
- * block comments nest; a comment opener inside a string or char literal is text; a `${…}` template
- * is code again, its own literals included. A source this lexer cannot read to a clean end (an
- * unclosed literal or comment, which valid Kotlin never has) counts as code on every line.
- */
-export function codeLineNumbers(source) {
-  const code = new Set();
-  const stack = [];
-  let line = 1;
-  let depth = 0;
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    if (c === '\n') {
-      line++;
-    } else if (depth > 0) {
-      const marker = source.slice(i, i + 2);
-      if (marker === '/*' || marker === '*/') [depth, i] = [depth + (marker === '/*' ? 1 : -1), i + 1];
-    } else if (stack.at(-1)?.quote) {
-      code.add(line);
-      i = stepInLiteral(source, i, stack);
-    } else if (source.startsWith('//', i)) {
-      while (i + 1 < source.length && source[i + 1] !== '\n') i++;
-    } else if (source.startsWith('/*', i)) {
-      [depth, i] = [1, i + 1];
-    } else if (!/\s/.test(c)) {
-      code.add(line);
-      i = stepInCode(source, i, stack);
-    }
-  }
-  if (stack.length > 0 || depth > 0) return new Set(source.split('\n').map((_, n) => n + 1));
-  return code;
 }
 
 /** The changed lines of `source` that hold code PIT can mutate: not comments, blank, package or import lines. */

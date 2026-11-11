@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { mutationScore, runMain, writeCheck } from './lib.mjs';
+import { codeText, escapeRegExp, mutationScore, runMain, writeCheck } from './lib.mjs';
 import { BACKEND_EXCEPTIONS, applyExceptions, countFindings, loadExceptions, staleFindings, writeAccepted } from './mutation-exceptions.mjs';
 
 export const CHECK = 'mutation-backend';
@@ -141,9 +141,15 @@ export function mutationKey(m, read) {
 
 /**
  * The mutants with their `key` and their `unitReturn`, built from their PIT path: do it before any
- * rewrite of `path`, so the predicates that filter them need no reader.
+ * rewrite of `path`, so the predicates that filter them need no reader. The Unit decision is asked
+ * only of a null-return mutant — the only kind the filter reads it for — and, for a suspend
+ * descriptor, decided once per `path#method`, so a full run's many mutants of one method do not
+ * repeat the source scan.
  */
-export const withKeys = (mutations, read) => mutations.map((m) => ({ ...m, key: mutationKey(m, read), unitReturn: returnsUnit(m, sourceLines(m, read)) }));
+export const withKeys = (mutations, read) => {
+  const unit = new Map(); // `path#method` of a suspend declaration -> whether it returns Unit
+  return mutations.map((m) => ({ ...m, key: mutationKey(m, read), unitReturn: NULL_RETURN.test(m.description) ? returnsUnit(m, sourceLines(m, read), unit) : false }));
+};
 
 /** Whether the mutant only removes a call the Kotlin compiler added. */
 export const isCompilerCallMutant = (m) => COMPILER_CALL.test(m.description);
@@ -158,7 +164,6 @@ const UNIT_DESCRIPTOR = /\)(?:V|Lkotlin\/Unit;)$/;
 // descriptor says nothing: the declaration decides. A suspend lambda's `invokeSuspend` takes the
 // lambda instance, not a Continuation, and has no declaration — it matches nothing here.
 const SUSPEND_DESCRIPTOR = /Lkotlin\/coroutines\/Continuation;\)Ljava\/lang\/Object;$/;
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The index of the `)` closing the `(` at `open`, or -1 when the source does not close it. */
 function closingParen(source, open) {
@@ -173,20 +178,22 @@ function closingParen(source, open) {
 /** Whether a declaration whose parameter list ends at `close` returns Unit. */
 function unitAfter(source, close) {
   const rest = source.slice(close + 1).replace(/^\s+/, '');
-  if (rest.startsWith('{') || /^where\b/.test(rest)) return true; // a block body, or a where clause before one
+  if (rest.startsWith('{')) return true; // a block body
+  if (/^where\b/.test(rest)) return rest.slice(rest.search(/[={]/)).startsWith('{'); // a where clause: Unit only before a block body, never before an inferred `=` body
   if (!rest.startsWith(':')) return false; // `=` infers the type, and nothing else declares Unit
   return /^Unit(?![?<.\w])/.test(rest.slice(1).trimStart()); // `Unit?` is observable, `Unit` is not
 }
 
 /**
  * Whether the source declares `fun <name>(…)` returning Unit: a block body or a `: Unit` after the
- * parameter list. An inferred `=` body, another type, no matching declaration and an overload the
- * name cannot tell apart all mean not Unit.
+ * parameter list. Read from code text only (`codeText`): a declaration example in a KDoc or a
+ * parenthesis inside a string literal decides nothing. An inferred `=` body, another type, no
+ * matching declaration and an overload the name cannot tell apart all mean not Unit.
  */
 export function declaresUnitReturn(lines, name) {
   if (!lines || !name) return false;
-  const source = lines.join('\n');
-  const declarations = [...source.matchAll(new RegExp(`\\bfun\\s+${escapeRegExp(name)}\\s*\\(`, 'g'))];
+  const source = codeText(lines.join('\n'));
+  const declarations = [...source.matchAll(new RegExp(`\\bfun\\s+(?:<[^>]*>\\s*)?${escapeRegExp(name)}\\s*\\(`, 'g'))];
   if (declarations.length !== 1) return false;
   const [declaration] = declarations;
   const close = closingParen(source, declaration.index + declaration[0].length - 1);
@@ -195,12 +202,18 @@ export function declaresUnitReturn(lines, name) {
 
 /**
  * Whether the mutated function's own result is Unit: its JVM descriptor returns void or a boxed
- * `Unit`, or it is a suspend function whose declaration the source gives as Unit.
+ * `Unit`, or it is a suspend function whose declaration the source gives as Unit. The suspend
+ * declaration scan is memoized under `path#method` in `memo`, when the caller shares one.
  */
-export function returnsUnit(m, lines) {
+export function returnsUnit(m, lines, memo = null) {
   const descriptor = m.descriptor ?? '';
   if (UNIT_DESCRIPTOR.test(descriptor)) return true;
-  return SUSPEND_DESCRIPTOR.test(descriptor) && declaresUnitReturn(lines, m.method);
+  if (!SUSPEND_DESCRIPTOR.test(descriptor)) return false;
+  const key = `${m.path}#${m.method}`;
+  if (memo?.has(key)) return memo.get(key);
+  const unit = declaresUnitReturn(lines, m.method);
+  memo?.set(key, unit);
+  return unit;
 }
 
 /** Whether the mutant replaces a `return` whose value nothing reads, so no test can kill it. */

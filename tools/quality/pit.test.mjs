@@ -150,6 +150,22 @@ test('a null-return mutant on a suspend function is ignored only when its declar
   assert.match(summaryOf(dir), /ignored=0\n/);
 });
 
+test('the Unit branches of the suspend decision: every body form but a block or : Unit keeps the mutant', () => {
+  const suspend = (method) => mutation('SURVIVED', { method, descriptor: '(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;', description: `replaced return value with null for homer/app/config/A::${method}#private suspend fun ${method}(` });
+  const unit = (lines) => withKeys(parsed(suspend('tick')), lines)[0].unitReturn;
+  // Kept: an inferred `=` body, an overload the name cannot tell apart, a parameter list that never
+  // closes, a where clause before an inferred body, and a source the reader cannot answer.
+  assert.equal(unit(lineOf('private suspend fun tick() = Unit')), false);
+  assert.equal(unit(lineOf('private suspend fun tick(x: Int) {', 'private suspend fun tick(x: Long) {')), false);
+  assert.equal(unit(lineOf('private suspend fun tick(delay: Long')), false);
+  assert.equal(unit(lineOf('private suspend fun <T> tick(x: T) where T : Any = x')), false);
+  assert.equal(unit(() => null), false);
+  // Ignored: nested parentheses in a default argument close right, and a where clause can precede
+  // the block body of a Unit function.
+  assert.equal(unit(lineOf('private suspend fun tick(delay: Long = wait(1)) {')), true);
+  assert.equal(unit(lineOf('private suspend fun <T> tick(x: T) where T : Any {')), true);
+});
+
 test('the mutated method name never decides: an invokeSuspend mutant is not ignored without a Unit declaration', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pit-unit-invoke-'));
   const invoke = mutation('SURVIVED', { method: 'invokeSuspend', descriptor: '(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;', description: 'replaced return value with null for homer/app/config/A$1::invokeSuspend#}' });
