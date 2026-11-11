@@ -1,0 +1,17 @@
+name: cooldown-lock-skip
+description: SKIP_CURRENT lock skip under afterFailure; the skipped duplicate must not arm the cooldown for another subject
+inputs:
+  - paramName: subject
+    envName: SUBJECT
+    src: query
+    type: string
+    required: true
+lockStrategy:
+  key: "e2e-cooldown-skip-{{SUBJECT}}"
+  onCollision: SKIP_CURRENT
+cooldown:
+  afterFailure: 1h
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 3

@@ -2754,7 +2754,7 @@ commands:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `minInterval` | `String?` | No | `null` | Minimum time since the previous run of this agent **started**. Spaces out every run, healthy or not. |
-| `afterFailure` | `String?` | No | `null` | Minimum time since the previous run **ended**, applied only when that run `FAILED`. Backs off a failing agent without slowing down a healthy one. |
+| `afterFailure` | `String?` | No | `null` | Minimum time since the previous run **ended**, applied only when that run `FAILED` while executing a command. A run refused before it started — a `SKIP_CURRENT` lock skip, a `REJECT`, a full wait queue, a claim timeout, a full claim queue — ends `FAILED` without arming the window. Backs off a failing agent without slowing down a healthy one. |
 
 Durations use the same grammar as `workspace.purgeAfter`: an integer plus
 `m` / `h` / `d` / `w` (there is no seconds unit). At least one field must be
