@@ -96,7 +96,6 @@ export function declaredNames(text) {
   return [...new Set([...text.matchAll(types), ...text.matchAll(functions)].map((m) => m[1]))];
 }
 
-// A file name may hold any character but `/` (`A(1).kt`); declared names are \w+ already.
 const packageOf = (text) => /^\s*package\s+([\w.]+)/m.exec(text)?.[1];
 const isTestClass = (file) => file.sourceSet === 'test' && file.name.endsWith('Test');
 
@@ -127,6 +126,7 @@ export function relatedTests(changed, testFiles, read) {
     const inModule = testClasses.filter((t) => t.module === file.module);
     let related = inModule.filter((t) => t.dir === file.dir && t.name.startsWith(file.name));
     if (related.length === 0) {
+      // A file name may hold any character but `/` (`A(1).kt`); declared names are \w+ already.
       const names = new RegExp(String.raw`\b(?:${[file.name, ...declaredNames(read(changedPath))].map(escapeRegExp).join('|')})\b`);
       related = inModule.filter((t) => names.test(read(t.path)));
     }

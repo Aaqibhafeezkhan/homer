@@ -154,12 +154,16 @@ test('the Unit branches of the suspend decision: every body form but a block or 
   const suspend = (method) => mutation('SURVIVED', { method, descriptor: '(Lkotlin/coroutines/Continuation;)Ljava/lang/Object;', description: `replaced return value with null for homer/app/config/A::${method}#private suspend fun ${method}(` });
   const unit = (lines) => withKeys(parsed(suspend('tick')), lines)[0].unitReturn;
   // Kept: an inferred `=` body, an overload the name cannot tell apart, a parameter list that never
-  // closes, a where clause before an inferred body, and a source the reader cannot answer.
+  // closes, a where clause before an inferred body, and a source the reader cannot answer. The scan
+  // reads code text, so a `: Unit` inside a string literal and a declaration example in a KDoc decide
+  // nothing — both cases fail on a raw join of the lines.
   assert.equal(unit(lineOf('private suspend fun tick() = Unit')), false);
   assert.equal(unit(lineOf('private suspend fun tick(x: Int) {', 'private suspend fun tick(x: Long) {')), false);
   assert.equal(unit(lineOf('private suspend fun tick(delay: Long')), false);
   assert.equal(unit(lineOf('private suspend fun <T> tick(x: T) where T : Any = x')), false);
   assert.equal(unit(() => null), false);
+  assert.equal(unit(lineOf('private suspend fun tick(s: String = "): Unit") = s')), false);
+  assert.equal(unit(lineOf('/**', ' * Example: `fun tick()` returns no value.', ' */', 'private suspend fun tick() {')), true);
   // Ignored: nested parentheses in a default argument close right, and a where clause can precede
   // the block body of a Unit function.
   assert.equal(unit(lineOf('private suspend fun tick(delay: Long = wait(1)) {')), true);
