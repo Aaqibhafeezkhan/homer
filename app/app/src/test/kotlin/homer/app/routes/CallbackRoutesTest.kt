@@ -891,6 +891,32 @@ class CallbackRoutesTest {
         }
 
     @Test
+    fun `result fetch with a transformer at exactly the transform cap still transforms`() =
+        testApplication {
+            // The cap is inclusive: an artifact of exactly RESULT_TRANSFORM_MAX_BYTES is the
+            // largest one that still transforms, so `>` (not `>=`) is the boundary to pin.
+            val file = Files.createTempFile("result", ".out").also { it.writeText("""{"summary":"DONE"}""") }
+            val transformer = ResultEnvParam(SrcType.STD_OUT, "OUT", ResultTransformer.JsonPath("$.summary"))
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { resultTokenService.resolve("tok-1") } returns record(transformer = transformer)
+                coEvery { artifactService.resolveArtifactPath(42, "cmd_0.out") } returns Result.success(file)
+                every { fileOperations.fileExists(any()) } returns true
+                every { artifactService.checkArtifactSize(any()) } returns Result.success(RESULT_TRANSFORM_MAX_BYTES)
+            }
+
+            val response =
+                client.get("/api/v1/callback/results/tok-1") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("DONE", response.bodyAsText())
+        }
+
+    @Test
     fun `result fetch with a transformer over the transform cap responds 413 without reading the file`() =
         testApplication {
             val transformer = ResultEnvParam(SrcType.STD_OUT, "OUT", ResultTransformer.JsonPath("$.summary"))

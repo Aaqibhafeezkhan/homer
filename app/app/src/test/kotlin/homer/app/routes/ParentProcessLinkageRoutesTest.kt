@@ -163,6 +163,25 @@ class ParentProcessLinkageRoutesTest {
         }
 
     @Test
+    fun `run request with an empty or blank parent header starts an unlinked run`() =
+        testApplication {
+            mount()
+
+            // An absent link and an empty one are the same request: only a value that parses
+            // as a positive integer names a parent, so a blank header must not reach the
+            // positive-integer check and answer 400.
+            for (value in listOf("", "   ")) {
+                val response = client.post("/api/v1/agent/echo") { header(EnvConstants.PARENT_PROCESS_HEADER, value) }
+
+                assertEquals(HttpStatusCode.OK, response.status, "value '$value'")
+                coVerify(exactly = 0) { processManager.getProcessInfo(any()) }
+            }
+            coVerify {
+                agentRunStarter.start(any(), any(), eq("http"), any(), any(), any(), any(), isNull(), isNull(), any(), any())
+            }
+        }
+
+    @Test
     fun `run request with a malformed parent header is a 400`() =
         testApplication {
             mount()
