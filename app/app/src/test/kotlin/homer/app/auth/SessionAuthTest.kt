@@ -71,7 +71,11 @@ class SessionAuthTest {
             }
         }
         val client = createClient { install(HttpCookies) }
-        client.get("/seed")
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get("/seed").status,
+            "seeding the boundary session must succeed",
+        )
         assertEquals(expected, client.get("/api/v1/agents").status)
     }
 
@@ -155,7 +159,11 @@ class SessionAuthTest {
                 }
             }
             val client = createClient { install(HttpCookies) }
-            client.get("/seed-expired")
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("/seed-expired").status,
+                "seeding the expired session must succeed",
+            )
             val resp = client.get("/api/v1/agents")
             assertEquals(HttpStatusCode.Unauthorized, resp.status)
         }
@@ -184,7 +192,11 @@ class SessionAuthTest {
                 }
             }
             val client = createClient { install(HttpCookies) }
-            client.get("/seed-ghost")
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("/seed-ghost").status,
+                "seeding the unknown-user session must succeed",
+            )
             val resp = client.get("/api/v1/agents")
             assertEquals(HttpStatusCode.Unauthorized, resp.status)
         }

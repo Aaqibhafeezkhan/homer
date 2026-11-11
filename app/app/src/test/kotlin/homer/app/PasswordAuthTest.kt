@@ -361,7 +361,11 @@ class PasswordAuthTest {
                     install(HttpCookies)
                     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
                 }
-            client.get("/seed-expired")
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("/seed-expired").status,
+                "seeding the expired session must succeed",
+            )
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/auth/me").status)
         }
 
@@ -393,7 +397,11 @@ class PasswordAuthTest {
                 install(HttpCookies)
                 install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
             }
-        client.get("/seed-session")
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get("/seed-session").status,
+            "seeding the boundary session must succeed",
+        )
         assertEquals(expected, client.get("/api/v1/auth/me").status)
     }
 
