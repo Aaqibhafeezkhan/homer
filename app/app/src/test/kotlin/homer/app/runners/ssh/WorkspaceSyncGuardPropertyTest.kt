@@ -23,9 +23,7 @@ import kotlin.test.assertTrue
  * every remote-supplied name that is not one plain segment is refused, and every
  * name it lets through resolves to a direct child of the base. The example cases
  * live in `WorkspaceSyncTest`; these properties cover the names an editor would
- * not think of. The containment check behind the guard is unreachable while the
- * guard passes, so its survivor is accepted in the mutation exceptions instead
- * (ADR-0082).
+ * not think of.
  */
 class WorkspaceSyncGuardPropertyTest {
     /** The separators a remote-supplied name can carry, plus NUL, which `Path.resolve` refuses outright. */

@@ -1,7 +1,5 @@
 package homer.app.runners.ssh
 
-import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.read.ListAppender
 import homer.app.runners.DownloadMode
 import io.mockk.every
 import io.mockk.mockk
@@ -20,7 +18,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
-import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -34,8 +31,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
-import ch.qos.logback.classic.Level as LogbackLevel
-import ch.qos.logback.classic.Logger as LogbackLogger
 
 class WorkspaceSyncTest {
     private lateinit var server: EmbeddedSshServer
@@ -251,7 +246,7 @@ class WorkspaceSyncTest {
         Files.createLink(local.resolve("stolen.txt"), secret)
 
         val remote = server.rootDir.resolve("hardlink-dir").toString()
-        val warnings = captureWarnings { sync.uploadDir(local, remote) }
+        val warnings = captureWarnings(WorkspaceSync::class.java) { sync.uploadDir(local, remote) }
 
         assertEquals("keep-me", server.rootDir.resolve("hardlink-dir/keep.txt").readText())
         assertTrue(Files.notExists(server.rootDir.resolve("hardlink-dir/stolen.txt")), "hard-linked file must not upload")
@@ -297,7 +292,7 @@ class WorkspaceSyncTest {
         Files.createSymbolicLink(local.resolve("s.txt"), Path.of("h.txt"))
 
         val remote = server.rootDir.resolve("symlink-hardlink-dir").toString()
-        val warnings = captureWarnings { sync.uploadDir(local, remote) }
+        val warnings = captureWarnings(WorkspaceSync::class.java) { sync.uploadDir(local, remote) }
 
         assertTrue(Files.notExists(server.rootDir.resolve("symlink-hardlink-dir/h.txt")), "hard-linked file must not upload")
         assertTrue(Files.notExists(server.rootDir.resolve("symlink-hardlink-dir/s.txt")), "symlink to it must not upload")
@@ -441,7 +436,10 @@ class WorkspaceSyncTest {
 
         repeat(2) { run ->
             val remote = server.rootDir.resolve("alias-$run")
-            val warnings = captureWarnings { withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) } }
+            val warnings =
+                captureWarnings(WorkspaceSync::class.java) {
+                    withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) }
+                }
 
             assertEquals("lib-content", remote.resolve("lib/f.txt").readText(), "run $run: the real directory is always uploaded")
             assertTrue(Files.notExists(remote.resolve("lib64/f.txt")), "run $run: the alias is skipped")
@@ -512,7 +510,10 @@ class WorkspaceSyncTest {
         last.resolve("kept.txt").writeText("at the cap")
 
         val remote = server.rootDir.resolve("deep")
-        val warnings = captureWarnings { withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) } }
+        val warnings =
+            captureWarnings(WorkspaceSync::class.java) {
+                withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) }
+            }
 
         val remoteLast = levels.take(64).fold(remote) { dir, name -> dir.resolve(name) }
         assertEquals("at the cap", remoteLast.resolve("kept.txt").readText())
@@ -761,12 +762,9 @@ class WorkspaceSyncTest {
         assertEquals(local.toAbsolutePath().normalize().resolve("out.bin"), resolved)
     }
 
-    // One case per unsafe name, each pinned to the name guard's own message. The
-    // containment check behind the guard (`child.parent != base`) is unreachable
-    // while the guard passes — `base.resolve(name).normalize()` is then always a
-    // direct child of the base — so no test can tell its behaviour-neutral mutant
-    // from the original; it is accepted in
-    // tools/quality/mutation-exceptions/backend.json instead (ADR-0047, ADR-0082).
+    // One case per unsafe name, each pinned to the name guard's own message; the
+    // containment throw behind the guard is accepted as defence in depth in
+    // tools/quality/mutation-exceptions/backend.json (ADR-0047, ADR-0082).
 
     @Test
     fun `containedChild rejects an empty name as not a plain file name`(
@@ -1045,7 +1043,7 @@ class WorkspaceSyncTest {
             val sync = WorkspaceSync(session, transferTimeout = 2.seconds) { failing }
 
             val warnings =
-                captureWarnings {
+                captureWarnings(WorkspaceSync::class.java) {
                     // A release failure is swallowed: the operation's own outcome stands
                     // and no exception escapes to the caller.
                     sync.mkdirs("/hdh9-ok")
@@ -1071,7 +1069,7 @@ class WorkspaceSyncTest {
             every { failing.close() } throws IOException("peer refused the release")
             val sync = WorkspaceSync(session, transferTimeout = 2.seconds) { failing }
 
-            captureWarnings { sync.mkdirs("/hdh9-shed") }
+            captureWarnings(WorkspaceSync::class.java) { sync.mkdirs("/hdh9-shed") }
 
             assertTrue(session.isClosed(), "a failed release must shed the session so nothing reuses it")
         }
@@ -1131,22 +1129,6 @@ class WorkspaceSyncTest {
     ) {
         val deadline = System.nanoTime() + cap.inWholeNanoseconds
         while (!session.isClosed && System.nanoTime() < deadline) Thread.sleep(20)
-    }
-
-    /** Run [body] with WorkspaceSync's WARN output captured. */
-    private suspend fun captureWarnings(body: suspend () -> Unit): List<ILoggingEvent> {
-        val appender = ListAppender<ILoggingEvent>().also { it.start() }
-        val logback = LoggerFactory.getLogger(WorkspaceSync::class.java) as LogbackLogger
-        val level = logback.level
-        logback.level = LogbackLevel.WARN
-        logback.addAppender(appender)
-        try {
-            body()
-        } finally {
-            logback.detachAppender(appender)
-            logback.level = level
-        }
-        return appender.list
     }
 
     @Test
