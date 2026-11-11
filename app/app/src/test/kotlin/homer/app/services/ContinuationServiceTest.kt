@@ -131,6 +131,41 @@ class ContinuationServiceTest {
             assertEquals(unknown.message?.replace("missing", "disabled"), hidden.message)
         }
 
+    // ADR-0023: the ttl is refused on the non-positive side of the boundary only.
+    @Test
+    fun `validate refuses a non-positive ttl and accepts the smallest positive one`() =
+        runTest {
+            dispatchableTarget()
+
+            val zero =
+                assertFailsWith<ValidationException> {
+                    service().validate(7, "h", resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = 0)
+                }
+            assertEquals("ttlSec", zero.field)
+            assertTrue(zero.message?.contains("must be > 0") == true)
+
+            // ttlSec = 1 is the accepted side of the same boundary: no throw.
+            service().validate(7, "h", resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = 1)
+        }
+
+    // The caller's ttl wins over the configured default, and a null default means no expiry.
+    @Test
+    fun `validate refuses a non-positive caller ttl even when a default is configured`() =
+        runTest {
+            dispatchableTarget()
+
+            service().validate(7, "h", resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = null)
+            service(DispatchConfig(defaultTtlSec = 300))
+                .validate(7, "h", resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = null)
+
+            val zero =
+                assertFailsWith<ValidationException> {
+                    service(DispatchConfig(defaultTtlSec = 300))
+                        .validate(7, "h", resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = 0)
+                }
+            assertEquals("ttlSec", zero.field)
+        }
+
     @Test
     fun `validateJoin reports an unauthorized non-dispatchable sub as not found`() =
         runTest {
@@ -408,6 +443,61 @@ class ContinuationServiceTest {
             service().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, ttlSec = 60)
 
             assertEquals("ci", continuationSlot.captured.owner)
+        }
+
+    // The stored row is built once, from the live registration and the target's definition:
+    // every field a fire later reads is pinned here.
+    @Test
+    fun `create stores the full PENDING row taken from the live registration and target`() =
+        runTest {
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
+            val target =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo"))),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    inputs = listOf(Param(paramName = "token", envName = "API_TOKEN", secret = true)),
+                )
+            every { agents.agents } returns mapOf("h" to target)
+            coEvery { processManager.getProcessInfo(7) } returns
+                mockk(relaxed = true) { every { owner } returns "alice" }
+            coEvery { processManager.getProcessStatus(42) } returns ProcessStatus.WORKING
+            val stored = slot<Continuation>()
+            coEvery { repo.create(capture(stored), any()) } returns 11
+
+            service().create(7, 42, "h", mapOf("HMR_LG_THREAD" to "t"), "HMR_LG_RESUME", null, ttlSec = 60)
+
+            val row = stored.captured
+            assertEquals(ContinuationStatus.PENDING, row.status)
+            assertEquals(42, row.watchedProcessId)
+            assertEquals("h", row.targetAgentName)
+            assertEquals("asker", row.originAgentName)
+            assertEquals(7, row.originProcessId)
+            assertEquals("alice", row.owner)
+            assertEquals(mapOf("HMR_LG_THREAD" to "t"), row.params)
+            assertEquals("HMR_LG_RESUME", row.resumeParam)
+            // The target's `secret: true` flags as they stand at registration. ADR-0052.
+            assertEquals(setOf("API_TOKEN"), row.secretInputKeys)
+            assertEquals(setOf("token"), row.secretParamNames)
+            assertEquals(1060L, row.expiresAt)
+            assertEquals(1000L, row.createdAt)
+            assertEquals(ContinuationKind.SINGLE, row.kind)
+        }
+
+    @Test
+    fun `create stores the default ttl as expiresAt, and null when no ttl applies`() =
+        runTest {
+            dispatchableTarget()
+            val stored = slot<Continuation>()
+            coEvery { repo.create(capture(stored), any()) } returns 11
+
+            service(DispatchConfig(defaultTtlSec = 300))
+                .create(7, 42, "h", emptyMap(), "HMR_LG_RESUME", null, ttlSec = null)
+            assertEquals(1300L, stored.captured.expiresAt)
+
+            service()
+                .create(7, 42, "h", emptyMap(), "HMR_LG_RESUME", null, ttlSec = null)
+            assertNull(stored.captured.expiresAt)
         }
 
     @Test
@@ -1194,9 +1284,19 @@ class ContinuationServiceTest {
     fun `validateJoin rejects an empty sub list`() =
         runTest {
             dispatchableTarget()
-            assertFailsWith<ValidationException> {
-                service().validateJoin(7, "h", subAgents = emptyList(), resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = null)
-            }
+            val ex =
+                assertFailsWith<ValidationException> {
+                    service().validateJoin(
+                        7,
+                        "h",
+                        subAgents = emptyList(),
+                        resumeParam = "HMR_LG_RESUME",
+                        params = emptyMap(),
+                        ttlSec = null,
+                    )
+                }
+            assertEquals("subs", ex.field)
+            assertTrue(ex.message?.contains("at least one sub") == true)
         }
 
     @Test
@@ -1209,7 +1309,32 @@ class ContinuationServiceTest {
                     service(DispatchConfig(maxJoinSubs = 4))
                         .validateJoin(7, "h", subAgents = tooMany, resumeParam = "HMR_LG_RESUME", params = emptyMap(), ttlSec = null)
                 }
+            assertEquals("subs", ex.field)
             assertTrue(ex.message?.contains("maxJoinSubs") == true || ex.message?.contains("4") == true)
+        }
+
+    // The accepted side of the boundary the rejection above pins: exactly maxJoinSubs
+    // fan-out is allowed through.
+    @Test
+    fun `validateJoin accepts a sub list of exactly maxJoinSubs`() =
+        runTest {
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
+            val target = mockk<Agent>(relaxed = true).also { every { it.dispatch } returns AgentDispatchConfig(enabled = true) }
+            val subs = (1..4).map { "sub$it" }
+            val subAgents =
+                subs.associateWith {
+                    mockk<Agent>(relaxed = true).also { sub -> every { sub.dispatch } returns AgentDispatchConfig(enabled = true) }
+                }
+            every { agents.agents } returns subAgents + mapOf("h" to target)
+
+            service(DispatchConfig(maxJoinSubs = 4)).validateJoin(
+                7,
+                "h",
+                subAgents = subs,
+                resumeParam = "HMR_LG_RESUME",
+                params = emptyMap(),
+                ttlSec = null,
+            )
         }
 
     @Test
@@ -1254,7 +1379,8 @@ class ContinuationServiceTest {
         runTest {
             dispatchableTarget()
             val watches = listOf(JoinWatch(10, "int-a"), JoinWatch(11, "int-b"))
-            coEvery { repo.createJoin(any(), any(), any()) } returns 12
+            val stored = slot<Continuation>()
+            coEvery { repo.createJoin(capture(stored), any(), any()) } returns 12
             coEvery { processManager.getProcessStatus(any()) } returns ProcessStatus.WORKING
 
             val id =
@@ -1275,6 +1401,16 @@ class ContinuationServiceTest {
                     100,
                 )
             }
+            // The JOIN row is the same PENDING row create builds, with the sentinel watch id.
+            val row = stored.captured
+            assertEquals(ContinuationStatus.PENDING, row.status)
+            assertEquals(0, row.watchedProcessId)
+            assertEquals("h", row.targetAgentName)
+            assertEquals("asker", row.originAgentName)
+            assertEquals(7, row.originProcessId)
+            assertEquals(mapOf("HMR_LG_THREAD" to "t"), row.params)
+            assertEquals("HMR_LG_RESUME", row.resumeParam)
+            assertEquals(ContinuationKind.JOIN, row.kind)
             coVerify(exactly = 0) { repo.claim(any()) }
         }
 

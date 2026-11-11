@@ -4,6 +4,7 @@ import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
+import homer.app.exceptions.HomerException
 import homer.app.exceptions.QuestionsClosedForProcessException
 import homer.app.exceptions.TooManyPendingDispatchesException
 import homer.app.exceptions.ValidationException
@@ -18,6 +19,7 @@ import homer.app.models.ParamSource
 import homer.app.models.ParamType
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.QuestionsConfig
 import homer.app.models.Transformer
 import homer.app.services.persistence.DispatchRepository
 import io.mockk.coEvery
@@ -147,6 +149,79 @@ class DispatchServiceTest {
             assertFailsWith<ValidationException> {
                 service().create(7, "q", emptyList(), "h", "PATH", emptyMap(), null)
             }
+        }
+
+    // ADR-0019: create enforces the question contract `ask` enforces, through
+    // QuestionsService.validateQuestionInput — without that call a dispatch registers a
+    // question the ask path would have refused.
+    @Test
+    fun `create refuses question input the questions service rejects and registers nothing`() =
+        runTest {
+            every { questions.registrationFor(7) } returns
+                QuestionsService.Registration("asker", closed = false)
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agents.agents } returns mapOf("h" to agent)
+            val limits = QuestionsConfig()
+            // One case per refusal validateQuestionInput raises: blank text, over-limit
+            // text, blank option, duplicate options, over-cap option count.
+            val refusals =
+                listOf(
+                    Triple("", emptyList(), "text"),
+                    Triple("x".repeat(limits.maxTextLength + 1), emptyList(), "text"),
+                    Triple("q", listOf(" "), "options"),
+                    Triple("q", listOf("a", "a"), "options"),
+                    Triple("q", List(limits.maxOptions + 1) { "o$it" }, "options"),
+                )
+
+            for ((text, options, field) in refusals) {
+                every { questions.validateQuestionInput(text, options) } throws
+                    ValidationException("question input refused", field)
+                val refused =
+                    assertFailsWith<ValidationException> {
+                        service().create(7, text, options, "h", "answer", emptyMap(), null)
+                    }
+                assertEquals(field, refused.field)
+            }
+            coVerify(exactly = 0) { repo.create(any(), any(), any()) }
+        }
+
+    // ADR-0023: the ttl is refused on the non-positive side of the boundary only, the
+    // caller's ttl wins over the configured default, and the expiry is counted from now.
+    @Test
+    fun `create refuses a non-positive ttl and stores the ttl-derived expiry`() =
+        runTest {
+            every { questions.registrationFor(7) } returns
+                QuestionsService.Registration("asker", closed = false)
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agents.agents } returns mapOf("h" to agent)
+            val stored = slot<Dispatch>()
+            coEvery { repo.create(any(), capture(stored), any()) } returns 5
+
+            val zero =
+                assertFailsWith<ValidationException> {
+                    service().create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = 0)
+                }
+            assertEquals("ttlSec", zero.field)
+            coVerify(exactly = 0) { repo.create(any(), any(), any()) }
+
+            // ttlSec = 1 is the accepted side of the boundary.
+            service().create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = 1)
+            assertEquals(1001L, stored.captured.expiresAt)
+
+            // A caller-supplied ttl wins over the default; the default applies only without one.
+            service(DispatchConfig(defaultTtlSec = 60))
+                .create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = 60)
+            assertEquals(1060L, stored.captured.expiresAt)
+            service(DispatchConfig(defaultTtlSec = 300))
+                .create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = null)
+            assertEquals(1300L, stored.captured.expiresAt)
+
+            // No ttl and no default: the dispatch never expires.
+            service(DispatchConfig(defaultTtlSec = null))
+                .create(7, "q", emptyList(), "h", "answer", emptyMap(), ttlSec = null)
+            assertNull(stored.captured.expiresAt)
         }
 
     @Test
@@ -977,6 +1052,46 @@ class DispatchServiceTest {
 
             coVerify { repo.markFailed(5, any(), 1000L) }
             assertEquals(DispatchStatus.FAILED, result?.status)
+        }
+
+    // A failure that carries no message still settles the dispatch FAILED, under the
+    // named fallback rather than an empty reason.
+    @Test
+    fun `fire names the fallback reason when a Homer failure carries no message`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "answer", emptyMap(), 7, "asker", null, 1)
+            coEvery { repo.claim(5) } returns true
+            val messageLess = mockk<HomerException>()
+            every { messageLess.message } returns null
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+                messageLess
+
+            val result = service().fire("q1", "yes")
+
+            coVerify { repo.markFailed(5, "Dispatch failed", 1000L) }
+            assertEquals(DispatchStatus.FAILED, result?.status)
+        }
+
+    @Test
+    fun `fire names the fallback reason when an unexpected failure carries no message`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "answer", emptyMap(), 7, "asker", null, 1)
+            coEvery { repo.claim(5) } returns true
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+                RuntimeException()
+
+            val result = service().fire("q1", "yes")
+
+            coVerify { repo.markFailed(5, "Unexpected dispatch failure", 1000L) }
+            assertEquals("Unexpected dispatch failure", result?.error)
         }
 
     @Test
