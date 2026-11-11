@@ -1101,7 +1101,7 @@ Each entry in `queryParams` maps a value from the current execution environment 
 | `paramName` | `String` | Yes | - | Query parameter name to pass to the child agent |
 | `transformer` | `ResultTransformer` | No | `pass` | Transform the value before passing (pass, jsonPath, regex). A `regex` match is evaluated with a wall-clock time bound; a match that exceeds it is aborted and the parameter is omitted, like a non-match. Once one `regex` match is shed, later `regex` transformers in the same `queryParams` list are omitted without being evaluated |
 
-If an env var referenced by `envName` is not present in the execution environment, or its `transformer` yields no value (a `jsonPath` that does not match or fails to parse, a `regex` that does not match, times out or does not compile), that parameter is silently omitted from the child agent call — the dispatch proceeds without it. After a `regex` match is shed (its time bound exceeded), the remaining `regex` transformers of that `queryParams` list are omitted without being evaluated — including ones whose own match would have succeeded; the other transformer kinds still run. Forwarded values are routed to the child's declared input src: query inputs arrive as query params, body inputs as JSON body fields (validated against the child's inputSchema when present, as strings). header inputs can never be satisfied by a parent agent.
+If an env var referenced by `envName` is not present in the execution environment, or its `transformer` yields no value (a `jsonPath` whose document fails to parse or whose **definite** path matches nothing, a `regex` that does not match, times out or does not compile), that parameter is silently omitted from the child agent call — the dispatch proceeds without it. On a document that parsed, an indefinite `jsonPath` (filter, wildcard) that matches nothing instead forwards the literal `[]`; a selected object or array arrives as compact JSON — the same value shape as a `resultEnvParam` transformer. After a `regex` match is shed (its time bound exceeded), the remaining `regex` transformers of that `queryParams` list are omitted without being evaluated — including ones whose own match would have succeeded; the other transformer kinds still run. Forwarded values are routed to the child's declared input src: query inputs arrive as query params, body inputs as JSON body fields (validated against the child's inputSchema when present, as strings). header inputs can never be satisfied by a parent agent.
 
 #### Example: Orchestrating Agents
 
@@ -1792,6 +1792,14 @@ resultEnvParam:
 **Fields:**
 - `path`: JSONPath expression
 
+**Value shape:** a path that selects a JSON **object** or **array** yields compact JSON
+(`{"a":1,"b":"x"}`, `[1,2]`) — text a later command can pass to a tool or a graph node
+unchanged. A selected **string** arrives raw, a **number** or **boolean** as its JSON text,
+and a document that fails to parse, a JSON `null` or a **definite** path that matches nothing
+leaves the variable unset; an **indefinite** path (filter, wildcard) that matches nothing on a
+document that parsed yields `[]` — the variable is set to that literal, so an absence guard does
+not fire.
+
 **JSONPath Syntax Examples:**
 
 ```yaml
@@ -2016,6 +2024,10 @@ transformer: !<pass> {}
 transformer: !<jsonPath>
   path: "$.id"
 ```
+
+An input `jsonPath` transformer has the same value shape as a `resultEnvParam` one: an object
+or array it selects becomes compact JSON, a string stays raw, and a number or boolean is its
+JSON text.
 
 ### Parameter Examples
 

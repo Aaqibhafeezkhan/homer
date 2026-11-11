@@ -151,7 +151,10 @@ class ProcessExecutorTest {
             }
 
             processExecutor.execute(mockProcess, testContext)
-            delay(300)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Both statuses should have been set
             coVerify {
@@ -177,7 +180,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockLogger.info(match { it.contains("completed successfully") }, 5) }
         }
@@ -191,7 +197,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("Test error")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerify {
                 mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED)
@@ -206,7 +215,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws exception
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify {
                 mockLogger.error(
@@ -228,7 +240,10 @@ class ProcessExecutorTest {
             val result = processExecutor.execute(mockProcess, testContext)
 
             assertEquals(1, result.processId)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
         }
 
     @Test
@@ -323,7 +338,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerify { mockProcessManager.removeJob(1) }
         }
@@ -335,7 +353,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("Test error")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerify { mockProcessManager.removeJob(1) }
         }
@@ -349,7 +370,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify(atLeast = 1) { mockTelemetryService.tracer }
         }
@@ -361,7 +385,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.setAttribute("process.id", 42L) }
         }
@@ -373,7 +400,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.setAttribute("process.status", "CREATED") }
         }
@@ -385,7 +415,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.setAttribute("process.status", "FINISHED") }
         }
@@ -397,7 +430,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("Test error")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.setAttribute("process.status", "FAILED") }
         }
@@ -409,7 +445,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.setStatus(StatusCode.OK) }
         }
@@ -421,7 +460,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("Test error")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify {
                 mockSpan.setStatus(
@@ -439,7 +481,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws exception
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.recordException(exception) }
         }
@@ -451,7 +496,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.end() }
         }
@@ -463,7 +511,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("Test error")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             verify { mockSpan.end() }
         }
@@ -475,7 +526,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerify { mockProcess.execute(123, mockSpan) }
         }
@@ -502,7 +556,10 @@ class ProcessExecutorTest {
             assertEquals(5, ids.toSet().size)
 
             // Wait for all to complete
-            delay(200)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // All should have been executed
             coVerify(exactly = 5) { mockProcess.execute(any(), any()) }
@@ -529,7 +586,10 @@ class ProcessExecutorTest {
             processExecutor.execute(successProcess, testContext)
             processExecutor.execute(failProcess, testContext)
 
-            delay(300)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Should have both FINISHED and FAILED statuses
             coVerify(atLeast = 1) {
@@ -641,7 +701,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } just Runs
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerifyOrder {
                 mockQuestionsService.expireForProcess(1)
@@ -657,7 +720,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws RuntimeException("boom")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerifyOrder {
                 mockQuestionsService.expireForProcess(2)
@@ -677,7 +743,10 @@ class ProcessExecutorTest {
             coEvery { mockProcessManager.getProcessStatus(3) } returns ProcessStatus.KILLED
 
             processExecutor.execute(mockProcess, testContext)
-            delay(200)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerifyOrder {
                 mockQuestionsService.expireForProcess(3)
@@ -694,7 +763,10 @@ class ProcessExecutorTest {
             coEvery { mockRunMessages.closeForProcess(4) } throws RuntimeException("db down")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             coVerify { mockProcessManager.removeJob(4) }
         }
@@ -717,7 +789,10 @@ class ProcessExecutorTest {
             val beforeCall = System.currentTimeMillis() / 1000
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             val afterCall = System.currentTimeMillis() / 1000
 
@@ -748,7 +823,10 @@ class ProcessExecutorTest {
             val beforeCall = System.currentTimeMillis() / 1000
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             val afterCall = System.currentTimeMillis() / 1000
 
@@ -784,7 +862,10 @@ class ProcessExecutorTest {
             coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.KILLED
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Should NOT set status to FAILED
             coVerify(exactly = 0) {
@@ -805,7 +886,10 @@ class ProcessExecutorTest {
             coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.WORKING
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Should set status to FAILED
             coVerify {
@@ -831,7 +915,10 @@ class ProcessExecutorTest {
             coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.KILLED
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Should NOT overwrite KILLED status
             coVerify(exactly = 0) {
@@ -860,7 +947,10 @@ class ProcessExecutorTest {
             coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.KILLED
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Must not bypass the guard with a plain setProcessStatus(FINISHED).
             coVerify(exactly = 0) {
@@ -891,7 +981,10 @@ class ProcessExecutorTest {
             }
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Must not bypass the guard with a plain setProcessStatus(FAILED).
             coVerify(exactly = 0) {
@@ -923,7 +1016,10 @@ class ProcessExecutorTest {
             coEvery { mockProcess.execute(any(), any()) } throws CancellationException("killed")
 
             processExecutor.execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             assertEquals(ProcessStatus.KILLED, status)
         }
@@ -1183,7 +1279,10 @@ class ProcessExecutorTest {
             val seen = slot<Pair<Int, ProcessStatus>>()
             executorWithOnTerminal { id, status -> seen.captured = id to status }
                 .execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             assertEquals(1 to ProcessStatus.FINISHED, seen.captured)
         }
@@ -1197,7 +1296,10 @@ class ProcessExecutorTest {
 
             executorWithOnTerminal { _, _ -> throw RuntimeException("hook boom") }
                 .execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             // Teardown must complete despite the hook failure.
             verify { mockSpan.end() }
@@ -1232,7 +1334,10 @@ class ProcessExecutorTest {
             val seen = slot<Pair<Int, ProcessStatus>>()
             executorWithOnTerminal { id, status -> seen.captured = id to status }
                 .execute(mockProcess, testContext)
-            delay(150)
+            testScope.coroutineContext[Job]!!
+                .children
+                .toList()
+                .forEach { it.join() }
 
             assertEquals(1 to ProcessStatus.KILLED, seen.captured)
         }

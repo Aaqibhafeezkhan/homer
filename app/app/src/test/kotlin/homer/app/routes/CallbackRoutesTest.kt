@@ -890,6 +890,33 @@ class CallbackRoutesTest {
             assertEquals("DONE", response.bodyAsText())
         }
 
+    // The by-reference fetch reads through the same mapper as `resultEnvParam` (ADR-0025), so an
+    // object-selecting transformer serves compact JSON as `text/plain` — opaque data, never a path.
+    @Test
+    fun `result fetch serializes a selected object as compact JSON`() =
+        testApplication {
+            val file = Files.createTempFile("result", ".out").also { it.writeText("""{"summary":{"a":1,"b":"x"}}""") }
+            val transformer = ResultEnvParam(SrcType.STD_OUT, "OUT", ResultTransformer.JsonPath("$.summary"))
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { resultTokenService.resolve("tok-1") } returns record(transformer = transformer)
+                coEvery { artifactService.resolveArtifactPath(42, "cmd_0.out") } returns Result.success(file)
+                every { fileOperations.fileExists(any()) } returns true
+                every { artifactService.checkArtifactSize(any()) } returns Result.success(24L)
+            }
+
+            val response =
+                client.get("/api/v1/callback/results/tok-1") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("""{"a":1,"b":"x"}""", response.bodyAsText())
+            assertEquals(ContentType.Text.Plain, response.contentType()?.withoutParameters())
+        }
+
     @Test
     fun `result fetch with a transformer over the transform cap responds 413 without reading the file`() =
         testApplication {

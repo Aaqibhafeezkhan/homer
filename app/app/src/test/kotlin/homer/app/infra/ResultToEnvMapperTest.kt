@@ -308,6 +308,145 @@ class ResultToEnvMapperTest {
         assertTrue(env.isEmpty() || !env.containsKey("VALUE"))
     }
 
+    // ========== JsonPath Value Shape Tests ==========
+
+    // The defect: a selected object came back as Java map text (`{a=1, b=x}`) because the
+    // provider's Map.toString() is not JSON. A selected object or array is now compact JSON;
+    // scalars are unchanged, so a worker already returning JSON text keeps working.
+    private val objectShapeStdout = """{"result":{"a":1,"b":"x","c":[1,2],"d":{"e":true}},"list":[{"a":1}],"s":"hi"}"""
+
+    private fun envFor(
+        stdout: String,
+        path: String,
+    ): Map<String, String> {
+        Files.writeString(stdOutFile, stdout)
+        Files.writeString(stdErrFile, "")
+        val result = TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOutFile, stdErr = stdErrFile)
+        return ResultToEnvMapper(result).mapToEnv(
+            listOf(
+                ResultEnvParam(
+                    src = SrcType.STD_OUT,
+                    envName = "VALUE",
+                    transformer = ResultTransformer.JsonPath(path = path),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `mapToEnv serializes a selected object as compact JSON`() {
+        val env = envFor(objectShapeStdout, "$.result")
+
+        assertEquals("""{"a":1,"b":"x","c":[1,2],"d":{"e":true}}""", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv serializes a selected nested object as compact JSON`() {
+        val env = envFor(objectShapeStdout, "$.result.d")
+
+        assertEquals("""{"e":true}""", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv serializes an object inside an array as compact JSON`() {
+        val env = envFor(objectShapeStdout, "$.list[0]")
+
+        assertEquals("""{"a":1}""", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv serializes a selected array as compact JSON`() {
+        val env = envFor(objectShapeStdout, "$.result.c")
+
+        assertEquals("[1,2]", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv keeps a selected string raw`() {
+        val env = envFor(objectShapeStdout, "$.s")
+
+        assertEquals("hi", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv renders a selected number as its JSON text`() {
+        val env = envFor(objectShapeStdout, "$.result.a")
+
+        assertEquals("1", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv renders a selected boolean as its JSON text`() {
+        val env = envFor(objectShapeStdout, "$.result.d.e")
+
+        assertEquals("true", env["VALUE"])
+    }
+
+    @Test
+    fun `mapToEnv omits a selected JSON null`() {
+        val env = envFor("""{"value":null}""", "$.value")
+
+        assertFalse(env.containsKey("VALUE"), "a JSON null stays unset, as before")
+    }
+
+    @Test
+    fun `mapToEnv omits a selected value when stdout is not JSON`() {
+        val env = envFor("not valid json", "$.value")
+
+        assertFalse(env.containsKey("VALUE"))
+    }
+
+    // An arbitrarily deep value must serialize without throwing (§12 rule 2: agent-written
+    // stdout is attacker-controlled, and the helper must survive any shape).
+    @Test
+    fun `mapToEnv serializes a deeply nested selected value without throwing`() {
+        val depth = 40
+        val nested = """{"n":""" + "{\"n\":".repeat(depth) + "1" + "}".repeat(depth) + "}"
+
+        val env = envFor(nested, "$.n")
+
+        assertEquals("{\"n\":".repeat(depth) + "1" + "}".repeat(depth), env["VALUE"])
+    }
+
+    // §12 rule 7: the selected value can hold a secret, so it must never reach a log line.
+    @Test
+    fun `mapToEnv does not log the selected value`() {
+        val mapperLogger = LoggerFactory.getLogger(ResultToEnvMapper::class.java) as LogbackLogger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        mapperLogger.addAppender(appender)
+        try {
+            val env = envFor("""{"secret":{"token":"MARKER-abc123"}}""", "$.secret")
+
+            assertEquals("""{"token":"MARKER-abc123"}""", env["VALUE"])
+            val logged = appender.list.map { it.formattedMessage }
+            assertTrue(logged.none { it.contains("MARKER-abc123") }, "the selected value must not be logged: $logged")
+        } finally {
+            mapperLogger.detachAppender(appender)
+        }
+    }
+
+    // ADR-0063: Claude's stream-json stdout is re-assembled into a JSON array, so an object
+    // inside that array is selected through the same helper and serialized as JSON too.
+    @Test
+    fun `mapToEnv serializes an object selected out of re-assembled Claude NDJSON`() {
+        Files.writeString(stdOutFile, claudeNdjsonStdout)
+        Files.writeString(stdErrFile, "")
+        val result = TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOutFile, stdErr = stdErrFile)
+
+        val params =
+            listOf(
+                ResultEnvParam(
+                    src = SrcType.STD_OUT,
+                    envName = "MESSAGE",
+                    transformer = ResultTransformer.JsonPath(path = "$[1].message"),
+                ),
+            )
+
+        val env = ResultToEnvMapper(result).mapToEnv(params)
+
+        assertEquals("""{"content":"hi"}""", env["MESSAGE"])
+    }
+
     // ========== Claude NDJSON (stream-json) JsonPath Tests ==========
 
     private val claudeNdjsonStdout =

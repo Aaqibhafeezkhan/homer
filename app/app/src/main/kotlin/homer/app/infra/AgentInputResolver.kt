@@ -465,7 +465,7 @@ private fun transform(
         is Transformer.JsonPath -> {
             val parsed = runCatching { JsonPath.parse(raw) }.getOrNull()
             try {
-                parsed?.read<Any>(transformer.path)?.toString()
+                jsonPathText(parsed?.read<Any>(transformer.path))
             } catch (_: PathNotFoundException) {
                 null
             }

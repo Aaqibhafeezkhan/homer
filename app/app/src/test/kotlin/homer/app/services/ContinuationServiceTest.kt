@@ -887,6 +887,53 @@ class ContinuationServiceTest {
         }
     }
 
+    // A result transformer selecting an object puts compact JSON inside the payload's `result`
+    // field — which stays a JSON *string* primitive, the shape `homer_langgraph` decodes (ADR-0023).
+    @Test
+    fun `onProcessTerminal wraps a selected object result as a JSON string primitive`(
+        @TempDir dir: Path,
+    ) = runTest {
+        dir.resolve("cmd_0.out").writeText("""{"answer":{"a":1,"b":"x"}}""")
+        dir.resolve("cmd_0.err").writeText("")
+        val transformer = ResultEnvParam(SrcType.STD_OUT, "RESULT", ResultTransformer.JsonPath("$.answer"))
+        stubFireable(pending(transformer = transformer))
+        coEvery { processManager.getProcessExecutions(42) } returns
+            listOf(ExecutionInfo("cmd", 0, 1, 0, Path.of("cmd_0.out"), Path.of("cmd_0.err"), null))
+        coEvery { processManager.getProcessInfo(42) } returns mockk(relaxed = true) { every { artifactsDir } returns dir }
+        val resolve = slot<suspend () -> Map<String, String>>()
+        coEvery {
+            runStarter.start(
+                any(),
+                any(),
+                eq("continuation"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                capture(resolve),
+            )
+        } returns
+            99
+
+        service().onProcessTerminal(42, ProcessStatus.FINISHED)
+
+        resolve.captured.invoke()
+        verify {
+            inputResolver.resolveFromParams(
+                match<Map<String, String>> {
+                    val result = Json.parseToJsonElement(it["HMR_LG_RESUME"]!!).jsonObject["result"]!!.jsonPrimitive
+                    result.isString &&
+                        Json.parseToJsonElement(result.content) == Json.parseToJsonElement("""{"a":1,"b":"x"}""")
+                },
+                any(),
+                true,
+            )
+        }
+    }
+
     @Test
     fun `onProcessTerminal resumes an over-cap result by reference with a minted token`(
         @TempDir dir: Path,
