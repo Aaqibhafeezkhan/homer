@@ -68,7 +68,7 @@ class ResultToEnvMapper(
                 SrcType.RESULT_CODE -> null
             }
         return try {
-            jsonPath?.read<Any>(transformer.path)?.toString()
+            jsonPathText(jsonPath?.read<Any>(transformer.path))
         } catch (_: PathNotFoundException) {
             null
         }

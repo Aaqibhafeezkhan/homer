@@ -389,6 +389,85 @@ class RunAgentExecutorTest {
             assertEquals("val", resolvedParams.captured["version"])
         }
 
+    // The `!<agent>` queryParams copy of the conversion is the same helper as `resultEnvParam`:
+    // an env value holding a JSON object is forwarded as compact JSON, not Java map text.
+    @Test
+    fun `param mapping with JsonPath transformer forwards a selected object as compact JSON`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to """{"obj":{"a":1,"b":[true,null]}}"""))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$.obj"),
+                            ),
+                        ),
+                )
+
+            executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals("""{"a":1,"b":[true,null]}""", resolvedParams.captured["payload"])
+        }
+
+    // Same helper as `resultEnvParam`: an indefinite path (filter) matching nothing forwards the
+    // literal `[]`, not unset, so an absence guard on the param does not fire.
+    @Test
+    fun `param mapping with JsonPath transformer forwards an indefinite no-match as empty array`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to """{"a":1,"b":"x"}"""))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$[?(@.nope=='x')]"),
+                            ),
+                        ),
+                )
+
+            executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals("[]", resolvedParams.captured["payload"])
+        }
+
+    // Same clause as `resultEnvParam`: an env value that does not parse as JSON at all omits the
+    // parameter instead of failing the run or the hop.
+    @Test
+    fun `param mapping with JsonPath transformer omits the param when the env value is not JSON`() =
+        runTest {
+            val workspaceConfig = TestFixtures.mockWorkspaceConfig(env = mapOf("DATA" to "not valid json"))
+            val context = executionContext.copy(workspace = TestFixtures.mockWorkspace(config = workspaceConfig))
+
+            val command =
+                Command.RunAgent(
+                    agentName = "target_agent",
+                    queryParams =
+                        listOf(
+                            AgentCommandParam(
+                                envName = "DATA",
+                                paramName = "payload",
+                                transformer = ResultTransformer.JsonPath("$.key"),
+                            ),
+                        ),
+                )
+
+            val result = executor.execute(command, context, TestFixtures.mockSpan())
+
+            assertEquals(0, result.exitCode)
+            assertNull(resolvedParams.captured["payload"])
+        }
+
     @Test
     fun `param mapping with Regex transformer forwards captured group`() =
         runTest {

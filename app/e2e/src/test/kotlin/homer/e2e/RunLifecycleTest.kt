@@ -55,6 +55,10 @@ class RunLifecycleTest : E2eTestBase() {
             assertEquals(2, info.executions.size)
             assertEquals(1, info.executions[0].resultCode, "first command exits 1 via `false`")
             assertTrue(stdout(info, 1).contains("value=4 code=1"), "jsonPath + RESULT_CODE captures must reach command 2's env")
+            assertTrue(
+                stdout(info, 1).contains("""obj={"k":1,"s":"v"}"""),
+                "an object capture must reach command 2's env as compact JSON, not Java map text",
+            )
         }
 
     @Test

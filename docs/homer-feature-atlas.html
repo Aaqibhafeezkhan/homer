@@ -1434,7 +1434,8 @@ cmd: "/opt/claude/bin/claude"   # default: claude / codex / opencode</code></pre
 
         <article class="f">
           <h3>JSONPath transformer <span class="where">transformer</span></h3>
-          <p>Extracts from JSON output — single fields, array elements, wildcards and filters.</p>
+          <p>Extracts from JSON output — single fields, array elements, wildcards and filters. A
+            selected object or array arrives as compact JSON.</p>
           <pre><code>transformer: !&lt;jsonPath&gt;
   path: "$.users[?(@.active == true)].name"</code></pre>
         </article>

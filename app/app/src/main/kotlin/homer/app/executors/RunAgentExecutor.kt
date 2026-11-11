@@ -6,6 +6,7 @@ import homer.app.exceptions.HomerException
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.BoundedRegex
 import homer.app.infra.TextCompiler
+import homer.app.infra.jsonPathText
 import homer.app.models.Command
 import homer.app.models.CommandResult
 import homer.app.models.ResultTransformer
@@ -122,7 +123,7 @@ internal class RunAgentExecutor(
 
             is ResultTransformer.JsonPath -> {
                 runCatching {
-                    JsonPath.parse(value).read<Any>(transformer.path)?.toString()
+                    jsonPathText(JsonPath.parse(value).read<Any>(transformer.path))
                 }.getOrNull()
             }
 

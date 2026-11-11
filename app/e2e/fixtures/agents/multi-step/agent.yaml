@@ -3,15 +3,19 @@ description: continueIfFail plus resultEnvParam chaining (STD_OUT jsonPath and R
 commands:
   - !<script>
     label: emit-json
-    content: 'echo "{\"a\": [1,2,3,4,5,6]}" ; false'
+    content: 'echo "{\"a\": [1,2,3,4,5,6], \"o\": {\"k\": 1, \"s\": \"v\"}}" ; false'
     continueIfFail: true
     resultEnvParam:
       - src: STD_OUT
         envName: VALUE_JSON
         transformer: !<jsonPath>
           path: $.a[3]
+      - src: STD_OUT
+        envName: VALUE_OBJ
+        transformer: !<jsonPath>
+          path: $.o
       - src: RESULT_CODE
         envName: PREV_CODE
   - !<script>
     label: echo-captured
-    content: echo "value=$VALUE_JSON code=$PREV_CODE"
+    content: echo "value=$VALUE_JSON code=$PREV_CODE obj=$VALUE_OBJ"
