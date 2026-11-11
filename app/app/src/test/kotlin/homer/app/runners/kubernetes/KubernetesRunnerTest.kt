@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class KubernetesRunnerTest {
@@ -273,16 +274,7 @@ class KubernetesRunnerTest {
             stubCreatePod(api)
             stubPodStatus(api, readyPod())
 
-            val span = mockk<Span>(relaxed = true)
-            val builder =
-                mockk<SpanBuilder>(relaxed = true) {
-                    every { setParent(any()) } returns this
-                    every { startSpan() } returns span
-                }
-            val tracer =
-                mockk<Tracer> {
-                    every { spanBuilder(any()) } returns builder
-                }
+            val (tracer, span) = mockTracer()
 
             val runner =
                 KubernetesRunner(
@@ -304,6 +296,34 @@ class KubernetesRunnerTest {
         }
 
     @Test
+    fun `openSession reports the pod start duration as the clock time the startup took`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubCreatePod(api)
+            stubPodStatus(api, readyPod())
+
+            val reads = mutableListOf<Long>()
+            var now = 1_000L
+            val clock = {
+                now.also {
+                    reads.add(it)
+                    now += 1_000
+                }
+            }
+            val (tracer, span) = mockTracer()
+            val runner = KubernetesRunner("k8s-dev", config, api, dummyExecClient(), clock = clock, tracer = tracer)
+
+            runner.openSession(params)
+
+            val duration = slot<Long>()
+            verify { span.setAttribute("pod.start_duration_ms", capture(duration)) }
+            // The span opens before the clock read the duration is measured from, so a sum of the two
+            // reads cannot pass: the attribute is the elapsed time.
+            assertEquals(reads.last() - reads.first(), duration.captured)
+            assertTrue(duration.captured > 0, "the start duration must be positive, got ${duration.captured}")
+        }
+
+    @Test
     fun `openSession records exception on pod startup failure span`() =
         runTest {
             val api = mockk<CoreV1Api>(relaxed = true)
@@ -312,16 +332,7 @@ class KubernetesRunnerTest {
             stubEvents(api, listOf("Warning/Failed: init-setup exited 1"))
             stubDeletePod(api)
 
-            val span = mockk<Span>(relaxed = true)
-            val builder =
-                mockk<SpanBuilder>(relaxed = true) {
-                    every { setParent(any()) } returns this
-                    every { startSpan() } returns span
-                }
-            val tracer =
-                mockk<Tracer> {
-                    every { spanBuilder(any()) } returns builder
-                }
+            val (tracer, span) = mockTracer()
 
             val runner =
                 KubernetesRunner(
@@ -454,6 +465,59 @@ class KubernetesRunnerTest {
         assertEquals(PodPhase.FAILED, captured.last().podPhase)
         assertEquals("DeadlineExceeded", captured.last().termination?.reason)
         assertEquals(5L, captured.last().endedAt)
+    }
+
+    @Test
+    fun `a pod stopped mid-run dates the terminated state from the session open time`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubCreatePod(api)
+        stubEvents(api, emptyList())
+        var stopped = false
+        val req =
+            mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>(relaxed = true) {
+                every { execute() } answers { if (stopped) podWithStatus("Failed", "DeadlineExceeded", "too long") else readyPod() }
+            }
+        every { api.readNamespacedPodStatus(any(), any()) } returns req
+        val reads = mutableListOf<Long>()
+        var now = 10_000L
+        val clock = {
+            now.also {
+                reads.add(it)
+                now += 5_000
+            }
+        }
+        val captured = mutableListOf<RunnerState>()
+        // A sink that never hands back the stored state: the termination rebuilds the state from the
+        // session's open time, not from the provisioning conversion the READY state was written with.
+        val sink = RunnerStateSink { _, update -> captured.add(update(null)) }
+        val runner =
+            KubernetesRunner(
+                "k8s-dev",
+                config.copy(maxRunSeconds = 60),
+                api,
+                { _, _, _, _ -> exitingProcess(137) },
+                clock = clock,
+                stateSink = sink,
+            )
+        val session = runner.openSession(params)
+        stopped = true
+
+        assertThrows<homer.app.exceptions.PodFailedDuringExecutionException> {
+            session.shell.cmd(listOf("sleep"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+        }
+
+        val openStartMs = reads.first()
+        val terminated = captured.last()
+        assertEquals(PodPhase.FAILED, terminated.podPhase)
+        assertEquals("DeadlineExceeded", terminated.termination?.reason)
+        assertEquals(openStartMs / 1000, terminated.createdAt)
+        assertNotEquals(
+            reads[1] / 1000,
+            terminated.createdAt,
+            "createdAt must be the open time's conversion, not the provisioning one",
+        )
     }
 
     @Test
@@ -755,6 +819,17 @@ class KubernetesRunnerTest {
         }
 
     private fun dummyExecClient(): KubernetesExecClient = KubernetesExecClient { _, _, _, _ -> mockk(relaxed = true) }
+
+    /** A tracer whose single span is handed back with it, so a test can assert on both. */
+    private fun mockTracer(): Pair<Tracer, Span> {
+        val span = mockk<Span>(relaxed = true)
+        val builder =
+            mockk<SpanBuilder>(relaxed = true) {
+                every { setParent(any()) } returns this
+                every { startSpan() } returns span
+            }
+        return mockk<Tracer> { every { spanBuilder(any()) } returns builder } to span
+    }
 
     private fun stubCreatePod(api: CoreV1Api) {
         val req =

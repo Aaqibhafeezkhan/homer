@@ -380,6 +380,45 @@ class KubernetesShellExecutorTest {
     }
 
     @Test
+    fun `the stdout tail a late-closing exec stream delivers is in the result when cmd returns`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        // The pod keeps stdout open past the exit and delivers its last line only then, while stderr
+        // closed with the command: only joining the stdout pump gets that line into the result file.
+        val exited = CountDownLatch(1)
+        val lateClosing = lateClosingProcess(exited, lateStdout = "last stdout line\n")
+        val executor =
+            KubernetesShellExecutor({ _, _, _, _ -> lateClosing }, mockk(relaxed = true), "homer", "pod-1", pumpJoinMs = 2_000)
+
+        val out = tmp.resolve("out")
+        val err = tmp.resolve("err")
+        val result = executor.cmd(command = listOf("x"), stdOut = out, stdErr = err, timeout = 5.seconds)
+
+        assertEquals(0, result.exitCode)
+        assertTrue(out.readText().endsWith("last stdout line\n"), "lost the stdout tail: '${out.readText()}'")
+        assertEquals("early stderr\n", err.readText())
+    }
+
+    @Test
+    fun `the stderr tail a late-closing exec stream delivers is in the result when cmd returns`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        // The same, with stderr the stream the pod holds open: joining the stdout pump alone is not enough.
+        val exited = CountDownLatch(1)
+        val lateClosing = lateClosingProcess(exited, lateStderr = "last stderr line\n")
+        val executor =
+            KubernetesShellExecutor({ _, _, _, _ -> lateClosing }, mockk(relaxed = true), "homer", "pod-1", pumpJoinMs = 2_000)
+
+        val out = tmp.resolve("out")
+        val err = tmp.resolve("err")
+        val result = executor.cmd(command = listOf("x"), stdOut = out, stdErr = err, timeout = 5.seconds)
+
+        assertEquals(0, result.exitCode)
+        assertEquals("early stdout\n", out.readText())
+        assertTrue(err.readText().endsWith("last stderr line\n"), "lost the stderr tail: '${err.readText()}'")
+    }
+
+    @Test
     fun `an exited command whose pod never drained its stdin returns within the bound`(
         @TempDir tmp: Path,
     ) = runTest {
@@ -464,6 +503,58 @@ class KubernetesShellExecutorTest {
 
                 override fun close() = released.countDown()
             }
+    }
+
+    /**
+     * An exec stream whose [tail] and EOF arrive once [gate] opens — i.e. after the command exited —
+     * and late enough that the pump has to be joined for the tail to be written before it is read.
+     */
+    private class LateTailStream(
+        private val gate: CountDownLatch,
+        private val tail: String,
+    ) : InputStream() {
+        private var sent = false
+
+        override fun read(): Int = throw UnsupportedOperationException()
+
+        override fun read(
+            b: ByteArray,
+            off: Int,
+            len: Int,
+        ): Int {
+            if (sent) return -1
+            gate.await(5, TimeUnit.SECONDS)
+            Thread.sleep(100)
+            val bytes = tail.toByteArray()
+            bytes.copyInto(b, off)
+            sent = true
+            return bytes.size
+        }
+    }
+
+    /**
+     * An exiting process whose [lateStdout] or [lateStderr] stream stays open past the exit and
+     * delivers that tail once [exited] opens; the other stream closed with the command.
+     */
+    private fun lateClosingProcess(
+        exited: CountDownLatch,
+        lateStdout: String? = null,
+        lateStderr: String? = null,
+    ): Process {
+        fun stream(
+            late: String?,
+            early: String,
+        ) = if (late == null) ByteArrayInputStream(early.toByteArray()) else LateTailStream(exited, late)
+        return mockk(relaxed = true) {
+            every { inputStream } returns stream(lateStdout, "early stdout\n")
+            every { errorStream } returns stream(lateStderr, "early stderr\n")
+            every { outputStream } returns ByteArrayOutputStream()
+            every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                exited.countDown()
+                true
+            }
+            every { exitValue() } returns 0
+        }
     }
 
     private fun blockingUntilClosed() = BlockingStream()
