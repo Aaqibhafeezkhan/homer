@@ -218,9 +218,10 @@ class DatabaseMigrationTest {
                 "processes_status|processes_record_purge|processes_legacy_record_purge",
             "UPDATE processes SET purge_at = 1, record_purge_at = 1, retain_artifacts = NULL WHERE id IN (1, 2)" to
                 "INTEGER PRIMARY KEY",
-            // ProcessRepository.latestFailureEndedAtTx, inside obtainProcessId's write transaction
-            "SELECT ended_at FROM processes WHERE agent_name = 'a' AND status = 'FAILED' ORDER BY ended_at DESC LIMIT 1" to
-                "processes_agent_status_ended",
+            // ProcessRepository.latestFailureEndedAtTx, inside obtainProcessId's write transaction.
+            // `failure_reason IS NULL` keeps only runs that executed, and stays residual on the index.
+            "SELECT ended_at FROM processes WHERE agent_name = 'a' AND status = 'FAILED' AND failure_reason IS NULL " +
+                "ORDER BY ended_at DESC LIMIT 1" to "processes_agent_status_ended",
             // ProcessRepository.latestRunStartedAtTx keeps the agent_name index, which is already in id order
             "SELECT created_at FROM processes WHERE agent_name = 'a' ORDER BY id DESC LIMIT 1" to "processes_agent_name",
             // ProcessRepository.createdRunsOf, on /agents/reload

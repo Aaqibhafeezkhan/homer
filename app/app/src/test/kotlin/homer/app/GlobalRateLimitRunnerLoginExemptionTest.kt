@@ -35,6 +35,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import org.koin.ktor.ext.get
 import java.io.File
@@ -52,6 +53,7 @@ import kotlin.time.Duration.Companion.seconds
  * still rides the drained global bucket and gets `429`, a valid-token flood still
  * hits its own domain's bucket, and login is still bounded by the `login` bucket.
  */
+@ExtendWith(ResetDrainingExtension::class)
 class GlobalRateLimitRunnerLoginExemptionTest {
     @TempDir
     lateinit var agentsDir: File

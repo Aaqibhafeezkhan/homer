@@ -13,6 +13,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import org.sqlite.SQLiteException
 import java.io.File
@@ -28,6 +29,7 @@ import kotlin.test.assertTrue
  * directory scan. If `migrate()` has not run yet, the read fails with
  * "no such table: server_meta" and the agent is skipped. See ADR-0020.
  */
+@ExtendWith(ResetDrainingExtension::class)
 class ServerMetaFirstBootTest {
     @TempDir
     lateinit var agentsDir: File

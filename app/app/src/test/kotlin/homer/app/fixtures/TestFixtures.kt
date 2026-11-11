@@ -18,6 +18,7 @@ import org.slf4j.Logger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import java.time.Instant
 import kotlin.io.path.Path
 
 /**
@@ -31,6 +32,17 @@ object TestFixtures {
     fun mkfifoOrSkip(fifo: Path) {
         val made = runCatching { ProcessBuilder("mkfifo", fifo.toString()).start().waitFor() == 0 }.getOrDefault(false)
         Assumptions.assumeTrue(made && Files.exists(fifo), "mkfifo unavailable; skipping FIFO case")
+    }
+
+    /**
+     * The current epoch second, read just after a wall-clock second boundary, so a caller has almost a
+     * full second before `Instant.now().epochSecond` advances. A session `exp` boundary test needs that
+     * margin: production compares `exp` against `Instant.now()` with no clock seam, so a tick between
+     * seeding the session and the request would move the comparison off the boundary the test pins.
+     */
+    fun atFreshSecond(): Long {
+        Thread.sleep(1_000L - Instant.now().nano / 1_000_000L)
+        return Instant.now().epochSecond
     }
 
     /**

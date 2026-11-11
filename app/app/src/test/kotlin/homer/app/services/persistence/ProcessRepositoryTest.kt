@@ -1883,6 +1883,124 @@ class ProcessRepositoryTest {
             assertEquals(null, repo.latestFailureEndedAt("flaky"))
         }
 
+    // ========== Only a run that actually executed arms afterFailure (GH-141) ==========
+
+    /** A run refused before it started: FAILED with no execution, carrying its stored reason. */
+    private suspend fun refusedRun(
+        repo: ProcessRepository,
+        agentName: String,
+        reason: String,
+        endedAt: Long,
+    ): Int {
+        val id = repo.obtainProcessId(agentName, emptyMap(), 100, nowSec = endedAt).processId
+        repo.transitionStatus(id, ProcessStatus.FAILED, endedAt, guard = null)
+        assertTrue(repo.setFailureReason(id, reason, null))
+        return id
+    }
+
+    /** A run that failed while executing a command: an execution is recorded, so its reason stays NULL. */
+    private suspend fun executedFailure(
+        repo: ProcessRepository,
+        agentName: String,
+        endedAt: Long,
+    ): Int {
+        val id = repo.obtainProcessId(agentName, emptyMap(), 100, nowSec = endedAt).processId
+        repo.transitionStatus(id, ProcessStatus.WORKING, endedAt, setOf(ProcessStatus.CREATED))
+        repo.addExecution(
+            id,
+            ExecutionInfo(label = "cmd", start = endedAt, end = endedAt, resultCode = 1, stdOut = null, stdErr = null, errMsg = null),
+        )
+        repo.transitionStatus(id, ProcessStatus.FAILED, endedAt, setOf(ProcessStatus.WORKING))
+        return id
+    }
+
+    @Test
+    fun `a pre-start refusal does not arm afterFailure`() =
+        runTest {
+            // Every pre-start cause stores a reason (ADR-0098) — all five of
+            // PreStartFailureReason's causes. Such a run never executed, and dropping a
+            // duplicate is the healthy path — it must not back the agent off, for itself
+            // or another subject.
+            val repo = repo()
+            val cooldown = Cooldown(afterFailure = "1m")
+            val reasons =
+                listOf(
+                    "Lock skip (lockStrategy.onCollision: SKIP_CURRENT): another run still holds this agent's lock",
+                    "Parallel-run cap (maxParallelRuns: 1, onMaxParallelRuns: REJECT)",
+                    "Parallel-run wait queue full (maxQueuedRuns: 2)",
+                    "No runner claimed this run within 30 s (pinned runner filter): no runner matched",
+                    "Runner claim queue full (maxPendingRunnerClaims: 8): that many runs were already waiting",
+                )
+            reasons.forEachIndexed { i, reason ->
+                val agent = "refused-$i"
+                val refused = refusedRun(repo, agent, reason, endedAt = 1_000)
+
+                // The pre-flight gate's read sees no failure at all...
+                assertEquals(null, repo.latestFailureEndedAt(agent), "a refusal must not arm the window: $reason")
+                // ...and the authoritative read inside the INSERT transaction agrees.
+                val started = repo.obtainProcessId(agent, emptyMap(), 100, cooldown = cooldown, nowSec = 1_030).processId
+                assertTrue(started > refused, "the start after a refusal must be admitted")
+            }
+        }
+
+    @Test
+    fun `a run that failed while executing a command still arms afterFailure`() =
+        runTest {
+            // A pre-v30 row and a kill-raced failure read exactly like this one — FAILED
+            // with a recorded execution and a NULL reason — so the discriminator is the
+            // column, not history parsing.
+            val repo = repo()
+            val cooldown = Cooldown(afterFailure = "1m")
+            val id = executedFailure(repo, "a", endedAt = 1_000)
+            // The guarded write refuses a row that ran, so its reason stays NULL.
+            assertFalse(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", null))
+
+            assertEquals(1_000, repo.latestFailureEndedAt("a"))
+            assertFailsWith<CooldownActiveException> {
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, nowSec = 1_030)
+            }
+            assertEquals(2, repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, nowSec = 1_060).processId)
+        }
+
+    @Test
+    fun `afterFailure keys on the last executed failure when a newer refusal sits above it`() =
+        runTest {
+            // The refusal is the NEWER row, so ordering by id would read its ended_at and
+            // hold the agent back for a window its own refusal never opened.
+            val repo = repo()
+            val cooldown = Cooldown(afterFailure = "1m")
+            val ran = executedFailure(repo, "flaky", endedAt = 200)
+            val refused = refusedRun(repo, "flaky", "Lock skip (SKIP_CURRENT)", endedAt = 250)
+            assertTrue(refused > ran)
+
+            assertEquals(200, repo.latestFailureEndedAt("flaky"))
+            // t=255 is inside the executed failure's window (200+60) and past the refusal's.
+            assertFailsWith<CooldownActiveException> {
+                repo.obtainProcessId("flaky", emptyMap(), 100, cooldown = cooldown, nowSec = 255)
+            }
+            repo.obtainProcessId("flaky", emptyMap(), 100, cooldown = cooldown, nowSec = 261)
+        }
+
+    @Test
+    fun `a FAILED row arms afterFailure until its reason write lands`() =
+        runTest {
+            // The reason is written in a second transaction after FAILED commits (ADR-0098),
+            // so a read in that gap still sees NULL and counts the row as an executed
+            // failure. Fail-closed: the gap arms the window, it never opens a hole in it.
+            val repo = repo()
+            val cooldown = Cooldown(afterFailure = "1m")
+            val id = repo.obtainProcessId("a", emptyMap(), 100, nowSec = 1_000).processId
+            repo.transitionStatus(id, ProcessStatus.FAILED, 1_000, guard = null)
+
+            assertFailsWith<CooldownActiveException> {
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, nowSec = 1_030)
+            }
+
+            assertTrue(repo.setFailureReason(id, "Lock skip (SKIP_CURRENT)", null))
+            assertEquals(null, repo.latestFailureEndedAt("a"))
+            assertEquals(2, repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, nowSec = 1_030).processId)
+        }
+
     @Test
     fun `inputParams round-trip through getInfo and every getAll path from the side table`() =
         runTest {

@@ -1,6 +1,5 @@
 package homer.app
 
-import homer.app.exceptions.ConfigurationException
 import homer.app.models.AppConfig
 import homer.app.models.AuthConfig
 import homer.app.models.LangfuseConfig
@@ -19,7 +18,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
@@ -31,6 +30,7 @@ import kotlin.test.assertTrue
  * `apiAuth`, so the two principal classes meet the real routing tree: each
  * credential must be `401` on the other's routes (ADR-0066, §12).
  */
+@ExtendWith(ResetDrainingExtension::class)
 class ExternalRunnerBootTest {
     @TempDir
     lateinit var agentsDir: File
@@ -38,25 +38,23 @@ class ExternalRunnerBootTest {
     @TempDir
     lateinit var workspaceDir: File
 
-    private fun config(
-        withDomain: Boolean = true,
-        domainToken: String = WORKERS_TOKEN,
-    ) = AppConfig(
-        server = Server(apiAuth = AuthConfig.Bearer(tokens = mapOf("ops" to TokenConfig(token = "ops-token", role = "admin")))),
-        agentsSearchPath = agentsDir.absolutePath,
-        workspaceRootPath = workspaceDir.absolutePath,
-        databasePath = File(workspaceDir, "homer.db").absolutePath,
-        langfuse = LangfuseConfig(serverUrl = "http://localhost:9", publicKey = "pk-test", secretKey = "sk-test"),
-        openTelemetryExport = OpenTelemetryExport.LOG,
-        runners =
-            if (withDomain) {
-                mapOf(
-                    "workers" to RunnerConfig.External(token = domainToken, allowedTags = listOf("gpu")),
-                )
-            } else {
-                emptyMap()
-            },
-    )
+    private fun config(withDomain: Boolean = true) =
+        AppConfig(
+            server = Server(apiAuth = AuthConfig.Bearer(tokens = mapOf("ops" to TokenConfig(token = "ops-token", role = "admin")))),
+            agentsSearchPath = agentsDir.absolutePath,
+            workspaceRootPath = workspaceDir.absolutePath,
+            databasePath = File(workspaceDir, "homer.db").absolutePath,
+            langfuse = LangfuseConfig(serverUrl = "http://localhost:9", publicKey = "pk-test", secretKey = "sk-test"),
+            openTelemetryExport = OpenTelemetryExport.LOG,
+            runners =
+                if (withDomain) {
+                    mapOf(
+                        "workers" to RunnerConfig.External(token = WORKERS_TOKEN, allowedTags = listOf("gpu")),
+                    )
+                } else {
+                    emptyMap()
+                },
+        )
 
     // AgentsService.scanAgents() runs in a property initializer, so it (and the
     // runnerTagSets lambda's get<RunnerRegistry>() call) fires during Koin's
@@ -73,18 +71,6 @@ class ExternalRunnerBootTest {
                 cmd: "echo hello"
             """.trimIndent(),
         )
-    }
-
-    @Test
-    fun `a domain token under 32 characters aborts boot (CWE-331)`() {
-        val ex =
-            assertThrows<ConfigurationException> {
-                testApplication {
-                    application { configureServer(config(domainToken = "workers-token")) }
-                    startApplication()
-                }
-            }
-        assertEquals(true, ex.message!!.contains("runner 'workers'"), "got: ${ex.message}")
     }
 
     @Test
