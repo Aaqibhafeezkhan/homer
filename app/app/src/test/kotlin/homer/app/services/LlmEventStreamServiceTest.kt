@@ -10,6 +10,10 @@ import homer.app.models.LlmEvent
 import homer.app.models.LlmEventJson
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.int
+import io.kotest.property.arbitrary.long
+import io.kotest.property.checkAll
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -948,11 +952,82 @@ class LlmEventStreamServiceTest {
     @Test
     fun `cursor parses and prints its id`() {
         assertEquals(StreamCursor(2, 1, 40, 3), StreamCursor.parse("2:1:40:3"))
+        // Every guard is `>= 0`, so an all-zero id is a valid cursor, not a rejected one.
+        assertEquals(StreamCursor(0, 0, 0, 0), StreamCursor.parse("0:0:0:0"))
+        // lineOffset is the only Long component: a resume past 2 GB still parses, at both ends of its range.
+        assertEquals(StreamCursor(0, 0, Int.MAX_VALUE + 1L, 0), StreamCursor.parse("0:0:${Int.MAX_VALUE + 1L}:0"))
+        assertEquals(StreamCursor(0, 0, Long.MAX_VALUE, 0), StreamCursor.parse("0:0:${Long.MAX_VALUE}:0"))
+        // The other three are Int: a component past Int.MAX_VALUE is rejected, never truncated into one.
+        assertNull(StreamCursor.parse("${Int.MAX_VALUE + 1L}:0:0:0"))
+        assertNull(StreamCursor.parse("0:${Int.MAX_VALUE + 1L}:0:0"))
+        assertNull(StreamCursor.parse("0:0:0:${Int.MAX_VALUE + 1L}"))
         assertNull(StreamCursor.parse("2:1:40"))
+        assertNull(StreamCursor.parse("0:0:0:0:0"))
         assertNull(StreamCursor.parse("garbage"))
+        assertNull(StreamCursor.parse("0:x:0:0"))
         assertNull(StreamCursor.parse("-1:0:0:0"))
+        assertNull(StreamCursor.parse("0:-1:0:0"))
+        assertNull(StreamCursor.parse("0:0:-1:0"))
         assertNull(StreamCursor.parse("0:0:0:-1"))
         assertNull(StreamCursor.parse(null))
         assertEquals("2:1:40:3", StreamCursor(2, 1, 40, 3).id)
+        assertEquals("0:0:0:0", StreamCursor(0, 0, 0, 0).id)
+        assertEquals("0:0:${Int.MAX_VALUE + 1L}:0", StreamCursor(0, 0, Int.MAX_VALUE + 1L, 0).id)
+    }
+
+    @Test
+    fun `cursor parses exactly the four-part ids whose components are all non-negative`() =
+        runTest {
+            // The offset draws from the whole Long range, so the property also covers ids past Int.MAX_VALUE.
+            checkAll(Arb.int(-3..3), Arb.int(-3..3), Arb.long(), Arb.int(-3..3)) { c, a, o, e ->
+                val id = "$c:$a:$o:$e"
+                val expected = if (c >= 0 && a >= 0 && o >= 0 && e >= 0) StreamCursor(c, a, o, e) else null
+                assertEquals(expected, StreamCursor.parse(id), "id: $id")
+            }
+        }
+
+    @Test
+    fun `streamCommand and streamProcess each emit exactly one End, after the follow`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val out =
+            tmp.resolve("cmd_0.out").also {
+                it.writeText(line("""{"type":"thread.started","thread_id":"t"}""") + line("""{"type":"turn.completed","usage":{}}"""))
+            }
+        val pm = liveProcess(tmp, mapOf(0 to codexArtifact(out)), AtomicReference(ProcessStatus.FINISHED))
+        val service = LlmEventStreamService(pm, harnesses, TestFixtures.mockLogger(), pollIntervalMs = 10)
+
+        val command = service.streamCommand(1, 0, null).toList()
+        val process = service.streamProcess(1, null).toList()
+
+        assertEquals(listOf(LlmStreamEvent.End), command.filter { it == LlmStreamEvent.End })
+        assertEquals(listOf(LlmStreamEvent.End), process.filter { it == LlmStreamEvent.End })
+        assertEquals(listOf("session_start", "turn_end"), command.filterIsInstance<LlmStreamEvent.Event>().map { typeOf(it.event) })
+        assertEquals(listOf("session_start", "turn_end"), process.filterIsInstance<LlmStreamEvent.Event>().map { typeOf(it.event) })
+    }
+
+    @Test
+    fun `a skipped unrecorded command is stepped past only once a later command started`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val tracked = ConcurrentHashMap<Int, CommandArtifactPaths>()
+        val status = AtomicReference(ProcessStatus.WORKING)
+        val service = LlmEventStreamService(liveProcess(tmp, tracked, status), harnesses, TestFixtures.mockLogger(), pollIntervalMs = 10)
+
+        val received = mutableListOf<LlmStreamEvent>()
+        val job = launch { service.streamProcess(1, null).collect { received += it } }
+        // Command 0 recorded nothing and no later command started: the follow waits on it, terminal check included.
+        testScheduler.advanceTimeBy(200)
+        testScheduler.runCurrent()
+        assertEquals(emptyList(), received)
+        // Command 2 registers without 0 or 1 ever recording: both are stepped past, then command 2 is followed.
+        val out2 = tmp.resolve("cmd_2.out").also { it.writeText(line("""{"type":"thread.started","thread_id":"t"}""")) }
+        tracked[2] = codexArtifact(out2)
+        testScheduler.advanceTimeBy(50)
+        testScheduler.runCurrent()
+        assertEquals(listOf(2), received.filterIsInstance<LlmStreamEvent.Event>().map { it.cmdIndex })
+        status.set(ProcessStatus.FINISHED)
+        job.join()
+        assertEquals(1, received.count { it == LlmStreamEvent.End })
     }
 }

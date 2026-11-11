@@ -1,7 +1,9 @@
 package homer.app.routes
 
 import homer.app.exceptions.BodylessBadRequestException
+import homer.app.fixtures.mountApiV1Routes
 import homer.app.models.LlmEvent
+import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.services.LlmStreamEvent
 import homer.app.services.LogTailService
@@ -11,8 +13,17 @@ import io.kotest.property.Arb
 import io.kotest.property.arbitrary.int
 import io.kotest.property.arbitrary.string
 import io.kotest.property.checkAll
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.testing.testApplication
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import kotlin.io.path.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
@@ -157,4 +168,69 @@ class StreamingRoutesTest {
         assertEquals(true, "slow down" in frame.data, frame.data)
         assertEquals(SseFrame("llm.end", "{}"), llmEventFrame(7, LlmStreamEvent.End))
     }
+
+    @Test
+    fun `process logs stream defaults cmd to zero and honours an explicit index`() =
+        testApplication {
+            val resolved = mutableListOf<Pair<Int, LogTailService.Stream>>()
+            val tailService =
+                mockk<LogTailService>(relaxed = true) {
+                    coEvery { resolve(any(), any(), any()) } answers {
+                        resolved += secondArg<Int>() to thirdArg<LogTailService.Stream>()
+                        // Null answers 404, so the handler never opens an SSE body.
+                        null
+                    }
+                }
+            val pm =
+                mockk<ProcessManager>(relaxed = true) {
+                    coEvery { getProcessInfo(42) } returns
+                        ProcessInfo(id = 42, status = ProcessStatus.FINISHED, agentName = "deploy", owner = "alice")
+                }
+            mountApiV1Routes {
+                every { processManager } returns pm
+                every { logTailService } returns tailService
+            }
+
+            for (query in listOf("", "?cmd=3")) {
+                val response = client.get("/api/v1/stream/processes/42/logs$query")
+                assertEquals(HttpStatusCode.NotFound, response.status, "query=$query")
+            }
+
+            assertEquals(listOf(0 to LogTailService.Stream.OUT, 3 to LogTailService.Stream.OUT), resolved)
+        }
+
+    @Test
+    fun `process logs stream resumes from a Last-Event-ID past the Int range and drops a malformed one`() =
+        testApplication {
+            val offsets = mutableListOf<Long?>()
+            val tailService =
+                mockk<LogTailService>(relaxed = true) {
+                    coEvery { resolve(any(), any(), any()) } returns Path("/tmp/cmd_0.out")
+                    every { tail(any(), any(), any()) } answers {
+                        offsets += thirdArg<Long?>()
+                        emptyFlow()
+                    }
+                }
+            val pm =
+                mockk<ProcessManager>(relaxed = true) {
+                    coEvery { getProcessInfo(42) } returns
+                        ProcessInfo(id = 42, status = ProcessStatus.FINISHED, agentName = "deploy", owner = "alice")
+                }
+            mountApiV1Routes {
+                every { processManager } returns pm
+                every { logTailService } returns tailService
+            }
+
+            // The resume offset is a Long, so an offset past 2 GB reaches the tail uncut; a
+            // malformed header is no resume at all, never a truncated offset.
+            for (lastId in listOf("${Int.MAX_VALUE + 1L}", "not-a-number")) {
+                val response =
+                    client.get("/api/v1/stream/processes/42/logs?cmd=0") {
+                        header("Last-Event-ID", lastId)
+                    }
+                assertEquals(HttpStatusCode.OK, response.status, "Last-Event-ID=$lastId")
+            }
+
+            assertEquals(listOf(Int.MAX_VALUE + 1L, null), offsets)
+        }
 }
