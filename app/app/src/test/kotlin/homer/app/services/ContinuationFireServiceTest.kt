@@ -149,6 +149,51 @@ class ContinuationFireServiceTest {
             assertEquals("thread-1", params.captured["HMR_LG_THREAD"])
         }
 
+    // Which run a fire starts: the continuation's target agent, the stored params plus the
+    // resume payload under its resumeParam, and the registration-time secret snapshot. ADR-0052.
+    @Test
+    fun `fire starts the continuation's target with its params and registration secret snapshot`() =
+        runTest {
+            val target = plainAgent()
+            val params = resolvedParams(target)
+
+            fires.fire(pending().copy(secretInputKeys = setOf("API_TOKEN")), ProcessStatus.FINISHED)
+
+            coVerify {
+                runStarter.start(
+                    eq(target),
+                    eq(emptyList()),
+                    eq("continuation"),
+                    any(),
+                    any(),
+                    any(),
+                    eq(setOf("API_TOKEN")),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                )
+            }
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+            assertEquals("thread-1", params.captured["HMR_LG_THREAD"])
+            val resume = Json.parseToJsonElement(params.captured.getValue("HMR_LG_RESUME")).jsonObject
+            assertEquals("FINISHED", resume.getValue("status").jsonPrimitive.content)
+        }
+
+    // A row predating the secret columns carries no snapshot: the fire hands over exactly the
+    // keys it inherited, never a null for the starter to trip on.
+    @Test
+    fun `a null registration secret snapshot hands over exactly the inherited keys`() =
+        runTest {
+            resolvedParams(inheritingAgent())
+            coEvery { processManager.getProcessInfo(7) } returns originInfo()
+
+            fires.fire(pending().copy(originAgentName = "h"), ProcessStatus.FINISHED)
+
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+            assertEquals(setOf("SECRET_TOKEN"), secretKeys.captured)
+        }
+
     @Test
     fun `a fire's parent link is the origin run, with the flag the maintenance gate reads`() =
         runTest {

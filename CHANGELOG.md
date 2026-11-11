@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Fixed: a failed dispatch's reported error reason** — A failure carrying no message now reports the same `Dispatch failed` fallback the stored row keeps, instead of an empty error.
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.
 - **Added: a load-time warning for a Claude step that limits tools only with `allowedTools`** — A step that skips permissions and sets neither `tools` nor `disallowedTools` restricts nothing; Homer warns at agent load and `agentdebug validate` reports it on the command's line.
 - **Changed: a run's Langfuse trace name and tags reach every span it exports** — Langfuse v4 reads both off each observation, so the run's name and subject tags now ride on every span and the exporter declares OTLP ingestion version 4. See [ADR-0050](docs/adr/0050-per-agent-telemetry-block.md).
