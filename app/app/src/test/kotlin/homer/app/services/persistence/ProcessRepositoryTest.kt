@@ -1917,9 +1917,10 @@ class ProcessRepositoryTest {
     @Test
     fun `a pre-start refusal does not arm afterFailure`() =
         runTest {
-            // Every pre-start cause stores a reason (ADR-0098); these are the three the
-            // ticket names. Such a run never executed, and dropping a duplicate is the
-            // healthy path — it must not back the agent off, for itself or another subject.
+            // Every pre-start cause stores a reason (ADR-0098) — all five of
+            // PreStartFailureReason's causes. Such a run never executed, and dropping a
+            // duplicate is the healthy path — it must not back the agent off, for itself
+            // or another subject.
             val repo = repo()
             val cooldown = Cooldown(afterFailure = "1m")
             val reasons =
@@ -1927,6 +1928,8 @@ class ProcessRepositoryTest {
                     "Lock skip (lockStrategy.onCollision: SKIP_CURRENT): another run still holds this agent's lock",
                     "Parallel-run cap (maxParallelRuns: 1, onMaxParallelRuns: REJECT)",
                     "Parallel-run wait queue full (maxQueuedRuns: 2)",
+                    "No runner claimed this run within 30 s (pinned runner filter): no runner matched",
+                    "Runner claim queue full (maxPendingRunnerClaims: 8): that many runs were already waiting",
                 )
             reasons.forEachIndexed { i, reason ->
                 val agent = "refused-$i"

@@ -294,10 +294,8 @@ class ProcessRepository(
     // null ended_at and are skipped by MAX. See ADR-0051.
     //
     // Only a run that failed while executing a command arms the window: a run refused
-    // before it started (a SKIP_CURRENT lock skip, a REJECT, a full queue, a claim
-    // timeout) ends FAILED without ever running and carries a `failure_reason`, written
-    // only in that case (ADR-0098). A duplicate trigger correctly dropped by the lock
-    // must not back the agent off, for itself or for another subject.
+    // before it started never ran and carries a `failure_reason`, written only in that
+    // case (ADR-0098 — PreStartFailureReason holds the five causes).
     private fun latestFailureEndedAtTx(agentName: String): Long? =
         Processes
             .select(Processes.endedAt)

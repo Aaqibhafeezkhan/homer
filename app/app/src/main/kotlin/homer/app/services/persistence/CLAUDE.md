@@ -295,7 +295,8 @@ Editor-facing constraints the row's ADR does not state:
   immediately — an accepted trade, recorded in ADR-0098. A non-null value also keeps
   the row out of `cooldown.afterFailure`'s latest-failure lookup
   (`latestFailureEndedAtTx`): only a run that failed while executing arms the window,
-  so a refusal that never ran does not back the agent off.
+  so a refusal that never ran — a duplicate trigger the lock correctly dropped, for
+  this subject or another — does not back the agent off.
 
 `transitionStatus` and `killTransition` project `status`, `history` and
 `agent_name` instead of `selectAll()`: they run under the write lock, and pulling
