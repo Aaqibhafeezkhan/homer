@@ -3,6 +3,7 @@ package homer.app
 import homer.app.auth.HomerSession
 import homer.app.auth.installPasswordSessions
 import homer.app.auth.passwordSessionProvider
+import homer.app.fixtures.TestFixtures
 import homer.app.infra.PasswordVerifier
 import homer.app.models.Action
 import homer.app.models.AuthConfig
@@ -34,6 +35,7 @@ import io.ktor.server.plugins.ratelimit.RateLimitName
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.server.sessions.get
 import io.ktor.server.sessions.sessions
 import io.ktor.server.sessions.set
 import io.ktor.server.testing.testApplication
@@ -146,6 +148,45 @@ class PasswordAuthTest {
 
             val body = Json.decodeFromString(LoginResponse.serializer(), resp.bodyAsText())
             assertEquals("alice", body.username)
+        }
+
+    @Test
+    fun `login issues a session expiring sessionTtlMin minutes after the login second`() =
+        testApplication {
+            // sessionTtlMin = 7 keeps `*` and `/` apart: 7 / 60 is 0, so a mutant that divides
+            // would stamp the login second itself instead of a lifetime of 420 s (UnsecuredRoutes.kt:99).
+            val ttlScheme = scheme.copy(sessionTtlMin = 7)
+            application {
+                installAuthRoutes(ttlScheme)
+                routing {
+                    // Test-only: reads back the session the login response just issued.
+                    get("/peek-session") {
+                        val session = call.sessions.get<HomerSession>()
+                        call.respondText(if (session == null) "no-session" else session.exp.toString())
+                    }
+                }
+            }
+            val client =
+                createClient {
+                    install(HttpCookies)
+                    install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+                }
+            val before = Instant.now().epochSecond
+            val login =
+                client.post("/api/v1/auth/login") {
+                    contentType(ContentType.Application.Json)
+                    setBody(jsonClient().format("alice", "correct-horse"))
+                }
+            assertEquals(HttpStatusCode.OK, login.status, "login should succeed with correct password")
+            val after = Instant.now().epochSecond
+
+            val exp = client.get("/peek-session").bodyAsText().toLong()
+            // A window, not an equality: the login route reads its own Instant.now(), which may fall
+            // in the second after `before` or before `after`.
+            assertTrue(
+                exp in (before + 420)..(after + 420),
+                "session exp $exp must be the login second + sessionTtlMin * 60, i.e. ${before + 420}..${after + 420}",
+            )
         }
 
     @Test
@@ -320,9 +361,55 @@ class PasswordAuthTest {
                     install(HttpCookies)
                     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
                 }
-            client.get("/seed-expired")
+            assertEquals(
+                HttpStatusCode.OK,
+                client.get("/seed-expired").status,
+                "seeding the expired session must succeed",
+            )
             assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/auth/me").status)
         }
+
+    /**
+     * Seeds a session expiring [offsetSec] seconds after a fresh wall-clock second, then reads `/me`:
+     * the route must refuse `exp == now` and accept `exp == now + 1`, the two sides of its
+     * `session.exp <= Instant.now()` boundary (UnsecuredRoutes.kt:112).
+     */
+    private fun meWithSessionExpiringIn(
+        offsetSec: Long,
+        expected: HttpStatusCode,
+    ) = testApplication {
+        application {
+            installAuthRoutes(scheme)
+            routing {
+                get("/seed-session") {
+                    call.sessions.set(
+                        HomerSession(
+                            username = "alice",
+                            exp = TestFixtures.atFreshSecond() + offsetSec,
+                        ),
+                    )
+                    call.respondText("ok")
+                }
+            }
+        }
+        val client =
+            createClient {
+                install(HttpCookies)
+                install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            }
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get("/seed-session").status,
+            "seeding the boundary session must succeed",
+        )
+        assertEquals(expected, client.get("/api/v1/auth/me").status)
+    }
+
+    @Test
+    fun `me with a session expiring exactly now returns 401`() = meWithSessionExpiringIn(0, HttpStatusCode.Unauthorized)
+
+    @Test
+    fun `me with a session expiring one second from now returns 200`() = meWithSessionExpiringIn(1, HttpStatusCode.OK)
 
     @Test
     fun `login rate-limited at 5 per minute returns 429 on 6th attempt from same host`() =

@@ -1114,7 +1114,7 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
 
         <article class="f">
           <h3>Tool allow/deny lists <span class="where">claude</span></h3>
-          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code>.</p>
+          <p>Scope what Claude may do. <code>allowedTools</code> only pre-approves tools; once permissions are skipped it restricts nothing, so contain a step with <code>disallowedTools</code> or <code>tools</code> — Homer warns at load for a step that sets neither.</p>
           <pre><code>options:
   allowedTools: [Read, Grep, Glob]
   disallowedTools: [Bash, Write]</code></pre>
@@ -1638,9 +1638,11 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
         <article class="f">
           <h3>Cooldown between runs <span class="where">agent.yaml</span></h3>
           <p>The third bound, and the one about frequency rather than overlap. <code>minInterval</code> spaces out
-            every start; <code>afterFailure</code> backs off only after a failed run, so a fast-failing watcher on a
-            one-minute schedule stops repeating its side effect while a healthy one keeps its cadence. A refused start
-            launches nothing: an HTTP run, retry, resume or debug start returns <code>429</code>, a cron tick and
+            every start; <code>afterFailure</code> backs off only after a run that failed while executing a command —
+            a run refused before it started (a lock skip, a rejected parallel run, a full wait queue, a claim timeout, a full claim queue) never arms it — so a
+            fast-failing watcher on a one-minute schedule stops repeating its side effect while a healthy one keeps
+            its cadence. A refused start launches nothing: an HTTP run, retry, resume or debug start returns
+            <code>429</code>, a cron tick and
             <code>cron-run</code> only log it, a <code>!&lt;agent&gt;</code> step exits <code>255</code>, an MCP start
             returns an error result, a refused continuation fire is retried, and a refused ask-and-dispatch fire ends
             the dispatch <code>FAILED</code> — the operator's answer is consumed, with no retry. The window is measured from
@@ -3578,8 +3580,12 @@ docker compose up -d          # console :3000, API :8080</code></pre>
 
         <article class="f">
           <h3>Graceful shutdown <span class="where">server config</span></h3>
-          <p>On SIGTERM <code>/readyz</code> flips to 503 while in-flight runs finish, up to the drain window. Keep it
-            below <code>terminationGracePeriodSeconds</code>.</p>
+          <p>On SIGTERM <code>/readyz</code> flips to 503 while in-flight runs finish, up to the drain window. The
+            window covers the runs those runs start — a <code>!&lt;agent&gt;</code> hop, a dispatch, a continuation
+            fired by a run that just ended — and runs already waiting for a runner claim, which still get one; a new
+            top-level start is refused with 503 (a manual cron-run fire swallows the refusal and still answers 204).
+            Keep it below <code>terminationGracePeriodSeconds</code>, since a
+            shutdown with such work in flight can use the whole window.</p>
           <pre><code>server:
   shutdownDrainSec: 30</code></pre>
         </article>

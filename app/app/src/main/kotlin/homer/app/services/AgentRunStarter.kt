@@ -138,17 +138,18 @@ internal class AgentRunStarter(
     }
 
     /**
-     * Whether this start is part of work the maintenance window already admitted: [serverDerivedParent]
-     * is set (the caller derived the link from a run it knows is live — a `!<agent>` hop, a dispatch, a
-     * continuation fire), the mode is on, **and** that run's own row still reads `WORKING`. A parent
-     * that is absent or already terminal parks as before.
+     * Whether this start is part of work the maintenance window — or the shutdown drain — already
+     * admitted: [serverDerivedParent] is set (the caller derived the link from a run it knows is
+     * live — a `!<agent>` hop, a dispatch, a continuation fire), the mode is on or the drain is
+     * running, **and** that run's own row still reads `WORKING`. A parent that is absent or already
+     * terminal is refused (drain) or parked (maintenance) as before.
      *
      * [information_disclosure / CWE-200] The status is read from the row, never taken from the caller's
      * link, and a false flag short-circuits **before** the read: a caller-supplied parent admits nothing
      * and probes nothing, so naming a parent cannot turn this into an existence check on a row the caller
-     * cannot see (root §12 rule 3). The in-memory mode check runs before the read, so the steady
-     * state — mode off, the row's answer discarded anyway — pays no database round-trip.
-     * See ADR-0092.
+     * cannot see (root §12 rule 3). The in-memory mode/drain check runs before the read, so the steady
+     * state — neither set, the row's answer discarded anyway — pays no database round-trip.
+     * See ADR-0092, ADR-0102.
      */
     private suspend fun admittedByLiveParent(
         serverDerivedParent: Boolean,
@@ -156,7 +157,7 @@ internal class AgentRunStarter(
     ): Boolean =
         serverDerivedParent &&
             parentProcessId != null &&
-            maintenanceGate.isEnabled() &&
+            (maintenanceGate.isEnabled() || maintenanceGate.isDraining()) &&
             processReads.getProcessStatus(parentProcessId) == ProcessStatus.WORKING
 
     /**

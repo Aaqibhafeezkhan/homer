@@ -6,6 +6,7 @@ import homer.app.models.Agent
 import homer.app.models.AppConfig
 import homer.app.models.Command
 import homer.app.models.LlmPrompt
+import homer.app.models.bypassesPermissionsWithoutToolLimit
 import homer.app.models.kind
 import org.slf4j.LoggerFactory
 
@@ -47,10 +48,19 @@ class ValidateCommand(
         when (cmd) {
             is Command.Cmd -> "cmd: valid"
             is Command.Script -> "script: valid"
-            is Command.LlmCommand -> "${cmd.kind}: valid${langfuseNote(cmd.prompt)}"
+            is Command.LlmCommand -> "${cmd.kind}: valid${langfuseNote(cmd.prompt)}${toolContainmentNote(cmd)}"
             is Command.RunAgent -> "agent: valid (note: will be SKIPPED in debug run)"
             is Command.LangGraph -> "langgraph: valid (note: will be SKIPPED in debug run)"
             is Command.RunnerCmd -> "runnerCmd: valid (note: will be SKIPPED in debug run)"
+        }
+
+    /** The note a Claude step that skips permissions with only `allowedTools` gets: it restricts nothing. */
+    private fun toolContainmentNote(cmd: Command.LlmCommand): String =
+        if (cmd is Command.Claude && cmd.options.bypassesPermissionsWithoutToolLimit()) {
+            " (warning: skips permissions, so 'allowedTools' restricts nothing; contain it with " +
+                "'tools' or 'disallowedTools: [Agent, Task]')"
+        } else {
+            ""
         }
 
     private fun printInputs(agent: Agent) {

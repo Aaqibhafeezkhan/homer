@@ -1,7 +1,5 @@
 package homer.app.runners.ssh
 
-import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.core.read.ListAppender
 import homer.app.runners.DownloadMode
 import io.mockk.every
 import io.mockk.mockk
@@ -20,7 +18,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
-import org.slf4j.LoggerFactory
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -34,8 +31,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
-import ch.qos.logback.classic.Level as LogbackLevel
-import ch.qos.logback.classic.Logger as LogbackLogger
 
 class WorkspaceSyncTest {
     private lateinit var server: EmbeddedSshServer
@@ -251,7 +246,7 @@ class WorkspaceSyncTest {
         Files.createLink(local.resolve("stolen.txt"), secret)
 
         val remote = server.rootDir.resolve("hardlink-dir").toString()
-        val warnings = captureWarnings { sync.uploadDir(local, remote) }
+        val warnings = captureWarnings(WorkspaceSync::class.java) { sync.uploadDir(local, remote) }
 
         assertEquals("keep-me", server.rootDir.resolve("hardlink-dir/keep.txt").readText())
         assertTrue(Files.notExists(server.rootDir.resolve("hardlink-dir/stolen.txt")), "hard-linked file must not upload")
@@ -297,7 +292,7 @@ class WorkspaceSyncTest {
         Files.createSymbolicLink(local.resolve("s.txt"), Path.of("h.txt"))
 
         val remote = server.rootDir.resolve("symlink-hardlink-dir").toString()
-        val warnings = captureWarnings { sync.uploadDir(local, remote) }
+        val warnings = captureWarnings(WorkspaceSync::class.java) { sync.uploadDir(local, remote) }
 
         assertTrue(Files.notExists(server.rootDir.resolve("symlink-hardlink-dir/h.txt")), "hard-linked file must not upload")
         assertTrue(Files.notExists(server.rootDir.resolve("symlink-hardlink-dir/s.txt")), "symlink to it must not upload")
@@ -441,7 +436,10 @@ class WorkspaceSyncTest {
 
         repeat(2) { run ->
             val remote = server.rootDir.resolve("alias-$run")
-            val warnings = captureWarnings { withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) } }
+            val warnings =
+                captureWarnings(WorkspaceSync::class.java) {
+                    withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) }
+                }
 
             assertEquals("lib-content", remote.resolve("lib/f.txt").readText(), "run $run: the real directory is always uploaded")
             assertTrue(Files.notExists(remote.resolve("lib64/f.txt")), "run $run: the alias is skipped")
@@ -512,7 +510,10 @@ class WorkspaceSyncTest {
         last.resolve("kept.txt").writeText("at the cap")
 
         val remote = server.rootDir.resolve("deep")
-        val warnings = captureWarnings { withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) } }
+        val warnings =
+            captureWarnings(WorkspaceSync::class.java) {
+                withTimeout(20.seconds) { sync.uploadDir(local, remote.toString()) }
+            }
 
         val remoteLast = levels.take(64).fold(remote) { dir, name -> dir.resolve(name) }
         assertEquals("at the cap", remoteLast.resolve("kept.txt").readText())
@@ -761,18 +762,85 @@ class WorkspaceSyncTest {
         assertEquals(local.toAbsolutePath().normalize().resolve("out.bin"), resolved)
     }
 
+    // One case per unsafe name, each pinned to the name guard's own message; the
+    // containment throw behind the guard is accepted as defence in depth in
+    // tools/quality/mutation-exceptions/backend.json (ADR-0047, ADR-0082).
+
     @Test
-    fun `containedChild rejects traversal, absolute, and multi-segment names`(
+    fun `containedChild rejects an empty name as not a plain file name`(
         @TempDir local: Path,
     ) = runBlocking {
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "../evil.sh") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "/etc/cron.d/x") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "sub/child.txt") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "evil\\..\\x") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "..") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, ".") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "") }
-        assertThrows<SecurityException> { WorkspaceSync.containedChild(local, "nul\u0000l") }
+        assertRefusedByName(local, "")
+    }
+
+    @Test
+    fun `containedChild rejects a dot name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, ".")
+    }
+
+    @Test
+    fun `containedChild rejects a dotdot name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "..")
+    }
+
+    @Test
+    fun `containedChild rejects a name with a slash as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "a/b")
+    }
+
+    @Test
+    fun `containedChild rejects a name with a backslash as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "a\\b")
+    }
+
+    @Test
+    fun `containedChild rejects a name with NUL as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        // The only listed name the containment check cannot catch on its own:
+        // Path.resolve would throw InvalidPathException instead of a refusal.
+        assertRefusedByName(local, "a\u0000b")
+    }
+
+    /** [name] must be refused by the name guard itself — the message, not just the throw, is the seam. */
+    private fun assertRefusedByName(
+        local: Path,
+        name: String,
+    ) {
+        val refusal = assertThrows<SecurityException> { WorkspaceSync.containedChild(local, name) }
+        assertTrue(
+            refusal.message.orEmpty().contains("is not a plain file name"),
+            "expected the name guard to refuse '$name', got: ${refusal.message}",
+        )
+    }
+
+    @Test
+    fun `containedChild rejects a traversal name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "../evil.sh")
+    }
+
+    @Test
+    fun `containedChild rejects an absolute path as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "/etc/cron.d/x")
+    }
+
+    @Test
+    fun `containedChild rejects a multi-segment name as not a plain file name`(
+        @TempDir local: Path,
+    ) = runBlocking {
+        assertRefusedByName(local, "sub/child.txt")
     }
 
     // ===== Pre-existing local symlinks must not redirect writes =====
@@ -975,7 +1043,7 @@ class WorkspaceSyncTest {
             val sync = WorkspaceSync(session, transferTimeout = 2.seconds) { failing }
 
             val warnings =
-                captureWarnings {
+                captureWarnings(WorkspaceSync::class.java) {
                     // A release failure is swallowed: the operation's own outcome stands
                     // and no exception escapes to the caller.
                     sync.mkdirs("/hdh9-ok")
@@ -1001,7 +1069,7 @@ class WorkspaceSyncTest {
             every { failing.close() } throws IOException("peer refused the release")
             val sync = WorkspaceSync(session, transferTimeout = 2.seconds) { failing }
 
-            captureWarnings { sync.mkdirs("/hdh9-shed") }
+            captureWarnings(WorkspaceSync::class.java) { sync.mkdirs("/hdh9-shed") }
 
             assertTrue(session.isClosed(), "a failed release must shed the session so nothing reuses it")
         }
@@ -1061,22 +1129,6 @@ class WorkspaceSyncTest {
     ) {
         val deadline = System.nanoTime() + cap.inWholeNanoseconds
         while (!session.isClosed && System.nanoTime() < deadline) Thread.sleep(20)
-    }
-
-    /** Run [body] with WorkspaceSync's WARN output captured. */
-    private suspend fun captureWarnings(body: suspend () -> Unit): List<ILoggingEvent> {
-        val appender = ListAppender<ILoggingEvent>().also { it.start() }
-        val logback = LoggerFactory.getLogger(WorkspaceSync::class.java) as LogbackLogger
-        val level = logback.level
-        logback.level = LogbackLevel.WARN
-        logback.addAppender(appender)
-        try {
-            body()
-        } finally {
-            logback.detachAppender(appender)
-            logback.level = level
-        }
-        return appender.list
     }
 
     @Test

@@ -4,10 +4,12 @@ import homer.e2e.support.Awaits
 import homer.e2e.support.E2e
 import homer.e2e.support.E2eTestBase
 import homer.e2e.support.HomerApi
+import homer.e2e.support.RunResponse
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
@@ -105,6 +107,33 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             )
 
             assertEquals("FINISHED", Awaits.awaitTerminal(firstId).status)
+        }
+
+    @Test
+    fun `a SKIP_CURRENT skip does not arm the afterFailure cooldown`() =
+        runBlocking {
+            // A duplicate correctly dropped by the lock ends FAILED without ever running,
+            // and that row must not back the agent off — including for a start over
+            // another subject, which used to be refused with 429 for the whole window.
+            val firstId = HomerApi.startRun("cooldown-lock-skip", query = mapOf("subject" to "a"))
+            Awaits.awaitStatus(firstId, setOf("WORKING"))
+
+            val skippedId = HomerApi.startRun("cooldown-lock-skip", query = mapOf("subject" to "a"))
+            assertEquals("FAILED", Awaits.awaitTerminal(skippedId).status)
+            val reason =
+                Awaits.awaitNotNull("the skipped run's failure reason") {
+                    Awaits.awaitTerminal(skippedId).failureReason
+                }
+            assertTrue(reason.contains("SKIP_CURRENT"), "the skipped run must say why: $reason")
+
+            // afterFailure is 1h on this fixture; the skip must not have armed it.
+            val other = HomerApi.run("cooldown-lock-skip", query = mapOf("subject" to "b"))
+            assertEquals(
+                HttpStatusCode.OK,
+                other.status,
+                "a skipped duplicate must not refuse another subject: ${other.bodyAsText()}",
+            )
+            Awaits.awaitStatus(HomerApi.decode<RunResponse>(other).processId, setOf("WORKING"))
         }
 
     @Test

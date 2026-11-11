@@ -5,6 +5,7 @@ import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.HomerException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.ProcessManagerAtCapacityException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.ResultToEnvMapper
 import homer.app.infra.reservedControlParams
@@ -340,7 +341,10 @@ internal class ContinuationFireService(
         e is CooldownActiveException ||
             e is CostCapExceededException ||
             e is ProcessManagerAtCapacityException ||
-            e is MaxQueuedRunsExceededException
+            e is MaxQueuedRunsExceededException ||
+            // A fire refused because the drain started is released for the next boot's sweep
+            // rather than settled FAILED: the origin ended and its resume must not be lost.
+            e is ServerDrainingException
 
     private companion object {
         // Inline results over this size resume by reference (result = null) rather than

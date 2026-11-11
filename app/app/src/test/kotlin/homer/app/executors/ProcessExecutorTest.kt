@@ -1187,18 +1187,41 @@ class ProcessExecutorTest {
                 .toList()
                 .forEach { it.join() }
 
-            coVerify { mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED) }
-            verify { mockSpan.end() }
-            coVerify { mockProcessManager.removeJob(1) }
-            verify {
-                mockLogger.error(
-                    match { it.contains("Storing the failure reason") },
-                    1,
-                    "db down",
-                    any<Throwable>(),
-                )
+            awaitVerified {
+                coVerify { mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED) }
+                verify { mockSpan.end() }
+                coVerify { mockProcessManager.removeJob(1) }
+                verify {
+                    mockLogger.error(
+                        match { it.contains("Storing the failure reason") },
+                        1,
+                        "db down",
+                        any<Throwable>(),
+                    )
+                }
             }
         }
+
+    /**
+     * Re-runs [block] until it passes or 5 s elapse, rethrowing its last failure: the paths
+     * under test run on a launched coroutine, so one fixed sleep outruns them on a loaded
+     * JVM (and under the mutation check's instrumented one) however correct the code.
+     */
+    private suspend fun awaitVerified(block: () -> Unit) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (true) {
+            try {
+                block()
+                return
+            } catch (e: RuntimeException) {
+                if (System.currentTimeMillis() >= deadline) throw e
+                delay(50)
+            } catch (e: AssertionError) {
+                if (System.currentTimeMillis() >= deadline) throw e
+                delay(50)
+            }
+        }
+    }
 
     // ========== onTerminal Callback Tests (ADR-0023) ==========
 
