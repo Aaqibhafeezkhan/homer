@@ -264,4 +264,31 @@ class DispatchRoutesTest {
             }
             assertEquals(HttpStatusCode.OK, client.get("/api/v1/dispatches?limit=1000").status)
         }
+
+    @Test
+    fun `GET dispatches rejects a status outside the enum`() =
+        testApplication {
+            val h = Harness()
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { dispatchService } returns h.dispatches
+            }
+
+            // A typo in the filter must not silently page over every status.
+            assertEquals(HttpStatusCode.BadRequest, client.get("/api/v1/dispatches?status=NOPE").status)
+            assertEquals(HttpStatusCode.OK, client.get("/api/v1/dispatches?status=pending").status)
+        }
+
+    @Test
+    fun `dispatch by id rejects a non-integer id`() =
+        testApplication {
+            val h = Harness()
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { dispatchService } returns h.dispatches
+            }
+
+            assertEquals(HttpStatusCode.BadRequest, client.get("/api/v1/dispatches/not-a-number").status)
+            assertEquals(HttpStatusCode.BadRequest, client.delete("/api/v1/dispatches/not-a-number").status)
+        }
 }

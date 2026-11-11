@@ -665,4 +665,31 @@ class ContinuationRoutesTest {
             }
             assertEquals(HttpStatusCode.OK, client.get("/api/v1/continuations?limit=1000").status)
         }
+
+    @Test
+    fun `GET continuations rejects a status outside the enum`() =
+        testApplication {
+            val h = Harness()
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { continuationService } returns h.continuations
+            }
+
+            // A typo in the filter must not silently page over every status.
+            assertEquals(HttpStatusCode.BadRequest, client.get("/api/v1/continuations?status=NOPE").status)
+            assertEquals(HttpStatusCode.OK, client.get("/api/v1/continuations?status=pending").status)
+        }
+
+    @Test
+    fun `continuation by id rejects a non-integer id`() =
+        testApplication {
+            val h = Harness()
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { continuationService } returns h.continuations
+            }
+
+            assertEquals(HttpStatusCode.BadRequest, client.get("/api/v1/continuations/not-a-number").status)
+            assertEquals(HttpStatusCode.BadRequest, client.delete("/api/v1/continuations/not-a-number").status)
+        }
 }

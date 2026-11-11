@@ -1,6 +1,7 @@
 package homer.app
 
 import homer.app.exceptions.CostCapExceededException
+import homer.app.executors.ParallelRunsManager
 import homer.app.executors.Process
 import homer.app.executors.ProcessExecutor
 import homer.app.executors.ProcessFactory
@@ -1658,6 +1659,57 @@ class ApplicationTest {
         assertEquals("Artifact file not found", response.errorMsg())
     }
 
+    @Test
+    fun `GET artifacts streams a terminal process's artifact and marks it complete`(
+        @TempDir dir: java.nio.file.Path,
+    ) = testApplication {
+        dir.resolve("cmd_0.out").toFile().writeText("done\n")
+        coEvery { mockProcessManager.getProcessStatus(123) } returns ProcessStatus.FINISHED
+        mountArtifactRoutes(finishedProcessWithArtifacts(123, dir))
+
+        val response = client.get("/api/v1/artifacts?processId=123&path=cmd_0.out")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("done\n", response.bodyAsText())
+        // Clients poll these two headers to know which run the bytes belong to and whether
+        // more are still coming; the status is the process row's, the flag is its liveness.
+        assertEquals("FINISHED", response.headers["X-Process-Status"])
+        assertEquals("true", response.headers["X-File-Complete"])
+    }
+
+    @Test
+    fun `GET artifacts marks a still-running process's artifact incomplete`(
+        @TempDir dir: java.nio.file.Path,
+    ) = testApplication {
+        dir.resolve("cmd_0.out").toFile().writeText("partial\n")
+        coEvery { mockProcessManager.getProcessStatus(123) } returns ProcessStatus.WORKING
+        mountArtifactRoutes(finishedProcessWithArtifacts(123, dir).copy(status = ProcessStatus.WORKING))
+
+        val response = client.get("/api/v1/artifacts?processId=123&path=cmd_0.out")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("WORKING", response.headers["X-Process-Status"])
+        assertEquals("false", response.headers["X-File-Complete"])
+    }
+
+    @Test
+    fun `GET artifacts marks a queued process's artifact incomplete`(
+        @TempDir dir: java.nio.file.Path,
+    ) = testApplication {
+        // CREATED is an active status too: a run still queued has produced nothing
+        // final, so dropping it from the active check would serve its artifact as
+        // complete before the run even started.
+        dir.resolve("cmd_0.out").toFile().writeText("partial\n")
+        coEvery { mockProcessManager.getProcessStatus(123) } returns ProcessStatus.CREATED
+        mountArtifactRoutes(finishedProcessWithArtifacts(123, dir).copy(status = ProcessStatus.CREATED))
+
+        val response = client.get("/api/v1/artifacts?processId=123&path=cmd_0.out")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("CREATED", response.headers["X-Process-Status"])
+        assertEquals("false", response.headers["X-File-Complete"])
+    }
+
     // ========== POST /agents/reload Tests ==========
 
     @Test
@@ -1673,7 +1725,8 @@ class ApplicationTest {
             every { mockAgentsService.reload() } returns reloadResult
             coEvery { mockProcessManager.createdRunsOf(any()) } returns
                 listOf(10 to "changed_agent", 11 to "old_agent")
-            mountWithServiceMocks()
+            val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
+            mountWithServiceMocks { every { this@mountWithServiceMocks.parallelRunsManager } returns parallelRunsManager }
 
             val response = client.post("/api/v1/agents/reload")
 
@@ -1684,6 +1737,8 @@ class ApplicationTest {
             coVerify(exactly = 1) { mockProcessManager.killProcess(10, "Agent 'changed_agent' was reloaded") }
             coVerify(exactly = 1) { mockProcessManager.killProcess(11, "Agent 'old_agent' was reloaded") }
             coVerify(exactly = 2) { mockProcessManager.killProcess(any(), any()) }
+            // The reload diff also releases the per-agent slots the changed definitions held.
+            verify(exactly = 1) { parallelRunsManager.onAgentsReloaded(setOf("changed_agent"), setOf("old_agent")) }
         }
 
     @Test
@@ -1697,12 +1752,15 @@ class ApplicationTest {
                     errors = emptyList(),
                 )
             every { mockAgentsService.reload() } returns reloadResult
-            mountWithServiceMocks()
+            val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
+            mountWithServiceMocks { every { this@mountWithServiceMocks.parallelRunsManager } returns parallelRunsManager }
 
             assertEquals(HttpStatusCode.OK, client.post("/api/v1/agents/reload").status)
 
             coVerify(exactly = 0) { mockProcessManager.createdRunsOf(any()) }
             coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+            // An added-only reload still releases slots — with both diff sets empty.
+            verify(exactly = 1) { parallelRunsManager.onAgentsReloaded(emptySet(), emptySet()) }
         }
 
     @Test
@@ -2637,6 +2695,20 @@ class ApplicationTest {
         assertEquals(listOf("cmd_0.out" to 12L), listing.files.map { it.path to it.size })
     }
 
+    @Test
+    fun `GET artifacts list answers 404 with the service's message when the listing fails`(
+        @TempDir dir: java.nio.file.Path,
+    ) = testApplication {
+        // A directory the process row names but that is gone (purged workspace): the
+        // service reports the reason, and the route must serve it rather than a bare 404.
+        mountArtifactRoutes(finishedProcessWithArtifacts(7, dir.resolve("gone")))
+
+        val response = client.get("/api/v1/artifacts/list?processId=7")
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+        assertEquals("Artifacts directory does not exist", response.errorMsg())
+    }
+
     // ========== POST /processes/{id}/retry Tests ==========
 
     @Test
@@ -2894,6 +2966,36 @@ class ApplicationTest {
                 }
 
             assertEquals(HttpStatusCode.BadRequest, bashEnvResponse.status)
+            verify(exactly = 0) {
+                mockProcessFactory.create(any(), any(), any(), any(), any(), any())
+            }
+        }
+
+    @Test
+    fun `debug endpoint rejects a commandIndex outside the agent's commands`() =
+        testApplication {
+            val agent =
+                Agent(
+                    name = "debug-range",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo", "ok"), timeout = 60)),
+                )
+            every { mockAgentsService.agents } returns mapOf("debug-range" to agent)
+            val mockProcessFactory = mockk<ProcessFactory>(relaxed = true)
+            val mockProcessExecutor = mockk<ProcessExecutor>(relaxed = true)
+            mountWithServiceMocks { stubRunDeps(mockProcessFactory, mockProcessExecutor) }
+
+            // Both ends of `0 until commands.size`: the last valid index is commands.size - 1,
+            // so one below zero and the size itself are out of range and start nothing.
+            for (index in listOf(-1, agent.commands.size)) {
+                val response =
+                    client.post("/api/v1/agents/debug-range/debug") {
+                        contentType(ContentType.Application.Json)
+                        setBody("""{"commandIndex":$index,"env":{},"queryParams":{},"headers":{}}""")
+                    }
+
+                assertEquals(HttpStatusCode.BadRequest, response.status, "commandIndex $index")
+                assertTrue(response.errorMsg().contains("commandIndex out of range"), response.errorMsg())
+            }
             verify(exactly = 0) {
                 mockProcessFactory.create(any(), any(), any(), any(), any(), any())
             }
