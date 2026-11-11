@@ -6,6 +6,7 @@ import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
 import homer.app.exceptions.QuestionsClosedForProcessException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.exceptions.TooManyPendingDispatchesException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.AgentInputResolver
@@ -155,8 +156,10 @@ internal class DispatchService(
      * idempotent, safe for both the answer path and the startup re-fire. After the
      * claim succeeds, ANY failure (HomerException or unexpected) marks the dispatch
      * FAILED immediately — the claim is never left dangling in-process; boot-time
-     * [failOrphanedDispatching] only handles a hard crash mid-fire. Returns the
-     * resulting Dispatch (DISPATCHED/FAILED), or null when there is nothing to fire.
+     * [failOrphanedDispatching] only handles a hard crash mid-fire. The one exception
+     * is a start the shutdown drain refuses: it releases the claim back to PENDING
+     * (see [startTarget]). Returns the resulting Dispatch (DISPATCHED/FAILED, or
+     * PENDING on a drain deferral), or null when there is nothing to fire.
      */
     suspend fun fire(
         questionId: String,
@@ -200,7 +203,12 @@ internal class DispatchService(
         return dispatch.copy(status = DispatchStatus.FAILED, error = msg, dispatchedAt = now)
     }
 
-    /** Starts the claimed [dispatch]'s target run with the operator's [answer]; any failure settles it FAILED. */
+    /**
+     * Starts the claimed [dispatch]'s target run with the operator's [answer]; any failure settles
+     * it FAILED — except a start the shutdown drain refuses, which releases the claim back to
+     * PENDING with the answer intact, so the next boot's [refirePendingAnswered] fires it
+     * (ADR-0102, mirroring the continuation fire's handling).
+     */
     private suspend fun startTarget(
         dispatch: Dispatch,
         agent: Agent,
@@ -208,54 +216,14 @@ internal class DispatchService(
         now: Long,
     ): Dispatch =
         try {
-            // The origin run's stored inputs ride under the dispatch's own params and the
-            // operator's answer (ADR-0101). The read sits inside the try like the
-            // continuation fire's: the claim already happened, so a failure of this
-            // suspend read must settle the dispatch FAILED, not escape `fire`.
-            val inherited =
-                inheritedOriginInputs(
-                    { processManager.getProcessInfo(dispatch.originProcessId) },
-                    dispatch.originAgentName,
-                    dispatch.owner,
-                    agent,
-                    "Dispatch",
-                    logger,
-                )
-            val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
-            val processId =
-                agentRunStarter.start(
-                    agent,
-                    emptyList(),
-                    "dispatch",
-                    owner = dispatch.owner,
-                    extraSecretInputKeys = dispatch.secretInputKeys.orEmpty() + inherited.secretInputKeys,
-                    parentProcessId = dispatch.originProcessId,
-                    // [information_disclosure / CWE-200] The fired run is attributed to the
-                    // dispatch's owner, so the root it inherits is gated on that owner's
-                    // visibility — a foreign flow-root id reaches no row, env or span. §12.
-                    rootProcessId =
-                        processManager.visibleOriginRootProcessId(
-                            dispatch.originProcessId,
-                            dispatch.owner,
-                            authorizer,
-                        ),
-                    // The origin is the run that asked for this dispatch; while it is still
-                    // `WORKING` this start is part of admitted work and does not park at the
-                    // maintenance gate. An origin that ended parks as before. ADR-0092.
-                    serverDerivedParent = true,
-                ) {
-                    // Stored inherited values are already transformed — validate, never re-transform.
-                    agentInputResolver.resolveFromParams(
-                        inputParams,
-                        agent,
-                        skipTransformFor = inherited.storedParamNames(dispatch.params.keys + dispatch.answerParam),
-                    ) + reservedControlParams(inputParams)
-                }
+            val processId = startDispatchRun(dispatch, agent, answer)
             repository.markDispatched(dispatch.id, processId, now)
             logger.info("Dispatch {} fired -> run {}", dispatch.id, processId)
             dispatch.copy(status = DispatchStatus.DISPATCHED, dispatchedProcessId = processId, dispatchedAt = now)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: ServerDrainingException) {
+            deferForDrain(dispatch, e)
         } catch (e: HomerException) {
             repository.markFailed(dispatch.id, e.message ?: "Dispatch failed", now)
             logger.warn("Dispatch {} failed to fire: {}", dispatch.id, e.message)
@@ -266,6 +234,76 @@ internal class DispatchService(
             logger.warn("Dispatch {} failed to fire (unexpected): {}", dispatch.id, msg, e)
             dispatch.copy(status = DispatchStatus.FAILED, error = msg, dispatchedAt = now)
         }
+
+    /**
+     * The drain refused the start. Settling FAILED would consume the operator's answer for a
+     * run that never started, so the claim goes back to PENDING with the answer intact for the
+     * next boot's `refirePendingAnswered` — the same reason a drain-refused continuation fire
+     * is released rather than failed. ADR-0102.
+     */
+    private suspend fun deferForDrain(
+        dispatch: Dispatch,
+        e: ServerDrainingException,
+    ): Dispatch {
+        repository.releaseForRetry(dispatch.id)
+        logger.info(
+            "Dispatch {} deferred: the server is draining ({}); the answer stays pending for the next start-up",
+            dispatch.id,
+            e.message,
+        )
+        return dispatch.copy(status = DispatchStatus.PENDING)
+    }
+
+    /**
+     * The start itself: the origin run's stored inputs ride under the dispatch's own params and
+     * the operator's answer (ADR-0101). The read sits inside the caller's try like the
+     * continuation fire's: the claim already happened, so a failure of this suspend read must
+     * settle the dispatch FAILED, not escape `fire`.
+     */
+    private suspend fun startDispatchRun(
+        dispatch: Dispatch,
+        agent: Agent,
+        answer: String,
+    ): Int {
+        val inherited =
+            inheritedOriginInputs(
+                { processManager.getProcessInfo(dispatch.originProcessId) },
+                dispatch.originAgentName,
+                dispatch.owner,
+                agent,
+                "Dispatch",
+                logger,
+            )
+        val inputParams = inherited.params + dispatch.params + (dispatch.answerParam to answer)
+        return agentRunStarter.start(
+            agent,
+            emptyList(),
+            "dispatch",
+            owner = dispatch.owner,
+            extraSecretInputKeys = dispatch.secretInputKeys.orEmpty() + inherited.secretInputKeys,
+            parentProcessId = dispatch.originProcessId,
+            // [information_disclosure / CWE-200] The fired run is attributed to the
+            // dispatch's owner, so the root it inherits is gated on that owner's
+            // visibility — a foreign flow-root id reaches no row, env or span. §12.
+            rootProcessId =
+                processManager.visibleOriginRootProcessId(
+                    dispatch.originProcessId,
+                    dispatch.owner,
+                    authorizer,
+                ),
+            // The origin is the run that asked for this dispatch; while it is still
+            // `WORKING` this start is part of admitted work and does not park at the
+            // maintenance gate. An origin that ended parks as before. ADR-0092.
+            serverDerivedParent = true,
+        ) {
+            // Stored inherited values are already transformed — validate, never re-transform.
+            agentInputResolver.resolveFromParams(
+                inputParams,
+                agent,
+                skipTransformFor = inherited.storedParamNames(dispatch.params.keys + dispatch.answerParam),
+            ) + reservedControlParams(inputParams)
+        }
+    }
 
     /**
      * Starts [agent] immediately — no operator question, no dispatch row — and returns the

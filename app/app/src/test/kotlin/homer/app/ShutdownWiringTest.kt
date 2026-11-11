@@ -125,10 +125,10 @@ class ShutdownWiringTest {
         verify(exactly = 1) { anyConstructed<DatabaseService>().close() }
 
         verifyOrder {
-            // Claim-queue consumers stop before the drain; their `while (isActive)` loops never
-            // finish on their own (ADR-0066).
-            anyConstructed<RunnerRegistry>().stop()
+            // The drain's end is `closeAll`: the claim-queue consumers keep claiming until it
+            // runs, and only then are they stopped (ADR-0066, ADR-0102).
             anyConstructed<ActiveSessionsRegistry>().closeAll()
+            anyConstructed<RunnerRegistry>().stop()
             // The database closes last, once in-flight writes have drained (ADR-0020).
             anyConstructed<DatabaseService>().close()
         }

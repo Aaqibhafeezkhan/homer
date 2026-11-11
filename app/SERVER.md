@@ -421,7 +421,7 @@ server:
 | `corsAllowedOrigins` | `List<String>` | No | `[]` | Allowed CORS origins, each `http(s)://host[:port]` with no path and a port of 1–65535 if any (e.g. `["http://console.example.com"]`). An entry may contain `@SYSENV:VAR` placeholders, resolved at startup like the auth secrets, so the console's port can come from the environment: `"http://localhost:@SYSENV:FRONTEND_PORT"`. An unset variable, or an entry that does not resolve to an origin, is a **startup error**. Unlike `globalEnv`, a placeholder here does not mark the value secret. Empty list = any host **without** credential reflection (development default; a `*` response can never carry cookies). Pinned origins enable credentialed CORS. Under a `Password` (cookie) auth scheme an empty list is a **startup error** — cookie auth needs credentialed CORS, so explicit origins are required. See [ADR-0016](../docs/adr/0016-cookie-auth-csrf-protection.md). |
 | `maxProcesses` | `Int` | No | `10000` | Maximum number of process rows retained. At the cap a new run evicts the oldest **terminal** row (and deletes its workspace); if none can be evicted the run is refused with `503`. This is the hard ceiling on retention — raising an agent's `workspace.retain.recordFor` only keeps records until this cap forces them out, so raise both together if you want a long record history. |
 | `maxAgentInvocationDepth` | `Int` | No | `5` | Maximum allowed depth of nested `runAgent` invocations. A root run counts as depth 1; an agent that runs another makes that child depth 2, and so on. When a `runAgent` command would exceed the limit, the child run is refused and the command fails (exit 255). Cycles are also refused: if the target agent name already appears in the upstream chain, it is rejected even when depth is below the cap (so `A → B → A` does not waste retries on a guaranteed-loop). The chain is threaded from parent to child by `runAgent`'s in-process dispatch and exposed inside the called process as `HMR_INVOCATION_CHAIN`. Direct external API calls always start a fresh chain at depth 1. See [ADR-0008](../docs/adr/0008-recursion-guard-via-invocation-chain-header.md) and [ADR-0030](../docs/adr/0030-runagent-in-process-dispatch.md). |
-| `shutdownDrainSec` | `Int` | No | `30` | Seconds to wait for in-flight `ProcessExecutor` jobs (agent executions already running when SIGTERM arrives) and background LLM cost settlements to finish before the Ktor engine stops — see [`server.shutdownDrainSec`](#servershutdowndrainsec), and [LLM price](#llm-price) for the higher floor a configured `llmPrice.sessionSpend.callsPath` (or request-window keys) needs. |
+| `shutdownDrainSec` | `Int` | No | `30` | Seconds to wait for in-flight `ProcessExecutor` jobs (agent executions already running when SIGTERM arrives, plus the runs they start during the drain) and background LLM cost settlements to finish before the Ktor engine stops — see [`server.shutdownDrainSec`](#servershutdowndrainsec), and [LLM price](#llm-price) for the higher floor a configured `llmPrice.sessionSpend.callsPath` (or request-window keys) needs. |
 | `requireClaudeCodeVersion` | `String?` | No | `null` | If set, every successful Claude run must report this exact value in its `system` event's `claude_code_version` field. A mismatch (or a missing field when the pin is set) fails the run with `ClaudeCliVersionMismatchException` and is *not* retried. Leave null to skip the check — see [`server.requireClaudeCodeVersion`](#serverrequireclaudecodeversion). |
 | `claudeDropSystemSubtypes` | `List<String>` | No | `["thinking_tokens"]` | `system`-event subtypes dropped from a Claude step's stdout (`cmd_N.out`) before it is written, so `maxOutputBytes` counts conversation rather than telemetry — see [`server.claudeDropSystemSubtypes`](#serverclaudedropsystemsubtypes). |
 | `maxRequestBodyBytes` | `Long` | No | `10485760` (10 MiB) | Maximum request body size in bytes; requests over the cap get `413 Payload Too Large`. Exempted: `/api/v1/runner/sessions/.../tar`, bounded instead by the `maxTransferBytes` of the domain whose token the request presents (this cap still applies when no domain token matches), `/api/v1/runner/sessions/.../output`, bounded by the 1 MiB output chunk cap, and `/api/v1/runner/sessions/.../next`, bounded at 64 KiB — see [External runners (pull mode)](#external-runners-pull-mode). |
@@ -447,11 +447,36 @@ server:
 
 ### `server.shutdownDrainSec`
 
-Seconds to wait for in-flight `ProcessExecutor` jobs (agent executions
-already in flight when SIGTERM arrives) and background LLM cost
-settlements (ADR-0089) to finish before the Ktor engine stops. Default `30`. On a Kubernetes rolling update this should
+Seconds to wait for in-flight `ProcessExecutor` jobs and background LLM
+cost settlements (ADR-0089) to finish before the Ktor engine stops.
+Default `30`. On a Kubernetes rolling update this should
 be ≤ `terminationGracePeriodSeconds`. Set lower for ephemeral debug
 containers, higher if your typical agent takes longer than 30s.
+
+**What the window covers.** On SIGTERM Homer stops taking new top-level
+starts and then drains the work already admitted:
+
+- Runs in flight when SIGTERM arrives, and the runs those runs start
+  during the drain — a `!<agent>` hop, a dispatch, a continuation fired
+  because a drained run just finished. The drain re-reads the run jobs
+  until none are left, so a child started by a run that has just ended
+  is still waited for.
+- Runs already waiting for a runner claim. The claim consumers keep
+  running through the drain, so a run parked in the queue at SIGTERM is
+  claimed and finishes inside the window (ADR-0066).
+- A **new top-level start** — `POST /api/v1/agent/{agentName}` and the
+  other run-start endpoints — is **refused with `503`** while the drain
+  runs, and so is any start whose parent run has already ended. The one
+  silent exception is a manual cron-run fire (`POST
+  /api/v1/agents/{name}/cron-run`): its refusal is only logged, and the
+  caller still gets `204`, exactly as for any other preflight refusal.
+  A start that is part of a run the drain is already waiting for is
+  still admitted, or the drain would wait on a parent blocked by a
+  child it refused. See
+  [ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
+
+The whole drain is bounded by this one value, whatever the shape of the
+run tree: a chain of short-lived runs cannot extend it round by round.
 
 A drain timeout is logged at WARN; the engine then stops regardless,
 mirroring k8s `terminationGracePeriodSeconds` semantics.
@@ -778,6 +803,17 @@ readinessProbe:
   periodSeconds: 5
 terminationGracePeriodSeconds: 60  # ≥ server.shutdownDrainSec
 ```
+
+The margin between the two matters more than it used to. The drain now
+also waits for the runs started during the drain — a `!<agent>` hop, a
+dispatch, a continuation fired by a run that just finished, and a run
+claimed from the queue at SIGTERM — so a shutdown with such work in
+flight can use the **whole** `shutdownDrainSec` rather than a fraction
+of it. Keep `terminationGracePeriodSeconds` comfortably above
+`server.shutdownDrainSec`: if the kubelet's grace period expires first,
+the pod is SIGKILLed mid-drain and every run the drain was waiting for
+ends `UNKNOWN`. See
+[ADR-0102](../docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
 
 For reverse-proxy setups (nginx / Caddy / HAProxy), point the upstream
 health check at `/api/v1/readyz` so the proxy stops sending requests

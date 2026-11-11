@@ -27,6 +27,7 @@ import homer.app.models.ExecutionInfo
 import homer.app.models.HealthResponse
 import homer.app.models.HeartbeatResponse
 import homer.app.models.LangfuseConfig
+import homer.app.models.MaintenanceConfig
 import homer.app.models.MaintenanceResponse
 import homer.app.models.MonthlyCostsResponse
 import homer.app.models.Param
@@ -440,6 +441,123 @@ class ApplicationTest {
             assertEquals(HttpStatusCode.OK, response.status)
             // Maintenance is an admission gate, not a kill switch: the run in flight keeps running.
             assertEquals(ProcessStatus.WORKING, pm.getProcessInfo(id)?.status)
+        }
+
+    // ========== the shutdown drain (ADR-0102) ==========
+
+    /**
+     * A real [AgentRunStarter] over [processExecutor] whose gate is a real [MaintenanceModeService]
+     * reading the production drain flag, exactly as `AppModule` wires it — so the test exercises
+     * the route → starter → gate → `StatusPages` chain, not a stubbed exception.
+     */
+    private fun drainingRunStarter(processExecutor: ProcessExecutor): AgentRunStarter =
+        AgentRunStarter(
+            serverId = "test-server",
+            processExecutor = processExecutor,
+            processFactory = mockk(relaxed = true),
+            telemetryService = mockTelemetryService,
+            costMeter = mockk(relaxed = true),
+            maxInvocationDepth = 5,
+            cooldownGate = mockk(relaxed = true),
+            maintenanceGate =
+                MaintenanceModeService(
+                    repository = mockk(relaxed = true),
+                    config = MaintenanceConfig(),
+                    initialEnabled = false,
+                    logger = logger,
+                    isDraining = homer.app.isDraining::get,
+                ),
+            processReads = mockk(relaxed = true),
+        )
+
+    /** A real gate reading the production drain flag, exactly as `AppModule` wires it (see [drainingRunStarter]). */
+    private fun drainingGate(): MaintenanceModeService =
+        MaintenanceModeService(
+            repository = mockk(relaxed = true),
+            config = MaintenanceConfig(),
+            initialEnabled = false,
+            logger = logger,
+            isDraining = homer.app.isDraining::get,
+        )
+
+    @Test
+    fun `POST agent answers 503 while the drain is running`() =
+        testApplication {
+            val agent = AgentFixtures.simpleAgent(name = "drain_agent")
+            val executor = mockk<ProcessExecutor>(relaxed = true)
+            homer.app.isDraining.set(true)
+            try {
+                mountApiV1Routes {
+                    every { agentsService.agents } returns mapOf("drain_agent" to agent)
+                    every { agentRunStarter } returns drainingRunStarter(executor)
+                    every { isDraining } returns homer.app.isDraining
+                }
+
+                val response = client.post("/api/v1/agent/drain_agent")
+
+                // The process is going away, so a start it cannot serve is shed rather than
+                // queued: a parked start could only end UNKNOWN at the next boot.
+                assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+                coVerify(exactly = 0) { executor.execute(any(), any()) }
+            } finally {
+                // The flag is JVM-global; leaking it would refuse every later test's starts.
+                homer.app.isDraining.set(false)
+            }
+        }
+
+    @Test
+    fun `POST agent still answers 404 to a caller without a run grant while the drain is running`() =
+        testApplication {
+            val agent = AgentFixtures.simpleAgent(name = "drain_agent")
+            val executor = mockk<ProcessExecutor>(relaxed = true)
+            homer.app.isDraining.set(true)
+            try {
+                mountApiV1Routes {
+                    every { agentsService.agents } returns mapOf("drain_agent" to agent)
+                    every { agentRunStarter } returns drainingRunStarter(executor)
+                    every { isDraining } returns homer.app.isDraining
+                    // No grants at all: the handler's own gate runs before the start, so the
+                    // refusal is the denial, not the drain — and no row is probed either way.
+                    every { authorizer } returns Authorizer(emptyMap(), emptyMap(), enabled = true)
+                }
+
+                val response = client.post("/api/v1/agent/drain_agent")
+
+                assertEquals(HttpStatusCode.NotFound, response.status)
+                coVerify(exactly = 0) { executor.execute(any(), any()) }
+            } finally {
+                homer.app.isDraining.set(false)
+            }
+        }
+
+    @Test
+    fun `POST retry answers 503 while the drain is running`() =
+        testApplication {
+            // Retry takes the gate in `respondStartedUnderRootSpan`, not in `AgentRunStarter`,
+            // so the drain refusal needs its own HTTP proof on this call site — the README row
+            // promises the 503. See ADR-0102.
+            val finished =
+                ProcessInfo(id = 42, status = ProcessStatus.FINISHED, agentName = "deploy", inputParams = emptyMap())
+            val executor = mockk<ProcessExecutor>(relaxed = true)
+            homer.app.isDraining.set(true)
+            try {
+                mountApiV1Routes {
+                    every { processManager } returns mockProcessManager
+                    every { agentsService } returns mockAgentsService
+                    coEvery { mockProcessManager.getProcessInfo(42) } returns finished
+                    every { mockAgentsService.agents } returns mapOf("deploy" to AgentFixtures.simpleAgent(name = "deploy"))
+                    every { maintenanceModeService } returns drainingGate()
+                    stubRunDeps(mockk(relaxed = true), executor)
+                }
+
+                val response = client.post("/api/v1/processes/42/retry")
+
+                assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+                coVerify(exactly = 0) { executor.execute(any(), any()) }
+            } finally {
+                // The flag is JVM-global; leaking it would refuse every later test's starts.
+                homer.app.isDraining.set(false)
+            }
         }
 
     // ========== GET /costs Tests ==========

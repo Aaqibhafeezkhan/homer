@@ -5,6 +5,7 @@ import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.QuestionsClosedForProcessException
+import homer.app.exceptions.ServerDrainingException
 import homer.app.exceptions.TooManyPendingDispatchesException
 import homer.app.exceptions.ValidationException
 import homer.app.infra.AgentInputResolver
@@ -959,6 +960,30 @@ class DispatchServiceTest {
 
             coVerify { repo.markFailed(5, any(), 1000L) }
             assertEquals(DispatchStatus.FAILED, result?.status)
+        }
+
+    @Test
+    fun `fire releases a drain-refused dispatch for the next boot's re-fire, not FAILED`() =
+        runTest {
+            // Answering a still-PENDING question whose asking run has already ended reaches
+            // the fire path during the drain, and the gate refuses the start. Settling FAILED
+            // would consume the operator's answer for a run that never started, so the row
+            // goes back to PENDING and the next boot's `refirePendingAnswered` fires it.
+            // See ADR-0102.
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("q1") } returns
+                Dispatch(5, "q1", DispatchStatus.PENDING, "h", "answer", emptyMap(), 7, "asker", null, 1)
+            coEvery { repo.claim(5) } returns true
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+                ServerDrainingException()
+
+            val result = service().fire("q1", "yes")
+
+            coVerify { repo.releaseForRetry(5) }
+            coVerify(exactly = 0) { repo.markFailed(5, any(), any()) }
+            assertEquals(DispatchStatus.PENDING, result?.status)
         }
 
     @Test

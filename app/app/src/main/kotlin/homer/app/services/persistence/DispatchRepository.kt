@@ -162,6 +162,20 @@ class DispatchRepository(
         }
 
     /**
+     * Releases a claimed (DISPATCHING) dispatch back to PENDING, keeping its dispatch-bound
+     * question — the drain-refusal counterpart of [markFailed]: the start never happened, so
+     * the answer must survive for the next boot's `refirePendingAnswered` (ADR-0102). Deliberately
+     * not [transition], which deletes the question on every settled state.
+     */
+    suspend fun releaseForRetry(id: Int): Boolean =
+        db.query {
+            Dispatches
+                .update(
+                    { (Dispatches.id eq id) and (Dispatches.status eq DispatchStatus.DISPATCHING.name) },
+                ) { it[Dispatches.status] = DispatchStatus.PENDING.name } > 0
+        }
+
+    /**
      * Atomically cancels a PENDING dispatch and deletes its (OPEN) question. Returns the
      * cancelled dispatch, or null if it was no longer PENDING.
      */
