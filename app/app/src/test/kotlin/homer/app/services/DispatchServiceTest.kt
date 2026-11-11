@@ -4,7 +4,6 @@ import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
-import homer.app.exceptions.HomerException
 import homer.app.exceptions.QuestionsClosedForProcessException
 import homer.app.exceptions.TooManyPendingDispatchesException
 import homer.app.exceptions.ValidationException
@@ -1065,7 +1064,9 @@ class DispatchServiceTest {
             coEvery { repo.findByQuestionId("q1") } returns
                 Dispatch(5, "q1", DispatchStatus.PENDING, "h", "answer", emptyMap(), 7, "asker", null, 1)
             coEvery { repo.claim(5) } returns true
-            val messageLess = mockk<HomerException>()
+            // MockK cannot subclass the sealed HomerException itself; ValidationException is
+            // the concrete permitted subclass the catch clause sees.
+            val messageLess = mockk<ValidationException>()
             every { messageLess.message } returns null
             coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
                 messageLess
