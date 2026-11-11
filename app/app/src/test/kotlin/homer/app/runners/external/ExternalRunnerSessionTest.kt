@@ -303,6 +303,27 @@ class ExternalRunnerSessionTest {
         }
 
     @Test
+    fun `a cap trip that lands before a timed-out result is still reported as the cap error`() =
+        runTest {
+            val s = openSession()
+            val err = tmp.resolve("e")
+            val result = async { runCatching { s.shell.cmd(listOf("yes"), tmp.resolve("o"), err, timeout = 30.seconds) } }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = assertNotNull(s.sink(op.opId))
+            // The result is posted first, so `select` takes the Done clause; the chunk that crosses
+            // the cap lands before the coroutine is rescheduled. The cap trip must be reported as
+            // the cap error, not as the timeout the racing result also reports.
+            s.mailbox.complete(OpResult(op.opId, exitCode = 137, timedOut = true))
+            sink.append("stdout", 0, ByteArray(65))
+            runCurrent()
+
+            assertTrue(result.await().exceptionOrNull() is OutputCapExceededException)
+            assertTrue(sink.capTripped.isCompleted, "the crossing chunk trips the cap")
+            assertTrue(err.readText().contains("[HOMER] Output cap exceeded (64 bytes)"), err.readText())
+        }
+
+    @Test
     fun `a clean exit unregisters and closes the sink, flushing its buffered tail`() =
         runTest {
             val s = openSession()
