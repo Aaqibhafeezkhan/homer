@@ -7,6 +7,7 @@ import homer.app.exceptions.ConfigurationException
 import homer.app.models.Action
 import homer.app.models.AppConfig
 import homer.app.models.AuthConfig
+import homer.app.models.ExtraUploadSpec
 import homer.app.models.Grant
 import homer.app.models.HmacKeyConfig
 import homer.app.models.LangfuseConfig
@@ -20,6 +21,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -37,6 +39,7 @@ import ch.qos.logback.classic.Logger as LogbackLogger
  * Every secret, token and HMAC key here is an inline fixture, never echoed into an assertion
  * message (root §12 rule 7).
  */
+@ExtendWith(ResetDrainingExtension::class)
 class StartupValidationWiringTest {
     @TempDir
     lateinit var agentsDir: File
@@ -163,6 +166,26 @@ class StartupValidationWiringTest {
             )
         val ex = assertBootRefused<ConfigurationException>(cfg)
         assertTrue(ex.message!!.contains("https://"), "got: ${ex.message}")
+    }
+
+    @Test
+    fun `a runner extraUploads entry with an unreadable local path is refused at startup`() {
+        val cfg =
+            config(
+                runners =
+                    mapOf(
+                        "workers" to
+                            RunnerConfig.External(
+                                token = "workers-fixture-token-0123456789",
+                                // The local path is checked only at the wiring point: the shape
+                                // rules run in the model's init, the filesystem check does not.
+                                extraUploads = listOf(ExtraUploadSpec(local = "/nonexistent/homer/extra", remote = "inputs")),
+                            ),
+                    ),
+            )
+        val ex = assertBootRefused<ConfigurationException>(cfg)
+        assertTrue(ex.message!!.contains("extraUploads"), "got: ${ex.message}")
+        assertTrue(ex.message!!.contains("runner 'workers'"), "got: ${ex.message}")
     }
 
     @Test

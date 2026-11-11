@@ -15,6 +15,7 @@ import io.ktor.http.contentType
 import io.ktor.http.setCookie
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
@@ -29,6 +30,7 @@ import kotlin.test.assertTrue
  * itself — which is exactly why those lines could be dropped unnoticed — so these go through
  * `configureServer` instead. The secret and password hash are inline fixtures.
  */
+@ExtendWith(ResetDrainingExtension::class)
 class SessionCookieWiringTest {
     @TempDir
     lateinit var agentsDir: File

@@ -21,6 +21,7 @@ import io.mockk.verify
 import io.mockk.verifyOrder
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
@@ -33,7 +34,12 @@ import java.io.File
  * The services are constructed through Koin during the boot, so their constructors are
  * intercepted and the drain's calls verified on the constructed instances. Drain timing itself
  * lives in `ShutdownDrainTest` — these cases pin the wiring, not the window.
+ *
+ * The unmocked maintenance case is kept deliberately: it runs the drain against real services
+ * with no constructor interception, so it still fails if a mock leak or a stubbed `stop()` ever
+ * masks the comprehensive case's verifications.
  */
+@ExtendWith(ResetDrainingExtension::class)
 class ShutdownWiringTest {
     @TempDir
     lateinit var agentsDir: File
@@ -44,9 +50,6 @@ class ShutdownWiringTest {
     @AfterEach
     fun cleanup() {
         unmockkAll()
-        // Every boot-and-stop test flips the process-wide drain flag and it is never cleared;
-        // left set, a later `/readyz` assertion in this JVM would see 503.
-        isDraining.set(false)
     }
 
     private fun config() =

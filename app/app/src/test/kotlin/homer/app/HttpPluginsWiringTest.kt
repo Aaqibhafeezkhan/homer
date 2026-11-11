@@ -15,6 +15,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.assertEquals
@@ -27,6 +28,7 @@ import kotlin.test.assertNull
  * `installHttpPlugins` fails a test. The plugins' own unit cases stay in `CorsConfigTest` /
  * `ApplicationTest`; these go through `configureServer`.
  */
+@ExtendWith(ResetDrainingExtension::class)
 class HttpPluginsWiringTest {
     @TempDir
     lateinit var agentsDir: File
