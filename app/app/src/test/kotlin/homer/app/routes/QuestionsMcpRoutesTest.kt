@@ -148,6 +148,28 @@ class QuestionsMcpRoutesTest {
         }
 
     @Test
+    fun `a non-Bearer or empty Bearer token is rejected with 401`() =
+        testApplication {
+            val service = newService()
+            application { wireQuestionsMcp(service) }
+
+            suspend fun postWith(authorization: String?): HttpStatusCode =
+                client
+                    .post("/mcp/questions") {
+                        header(HttpHeaders.Accept, "application/json, text/event-stream")
+                        header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                        authorization?.let { header(HttpHeaders.Authorization, it) }
+                        setBody(initializeBody())
+                    }.status
+
+            // Only a `Bearer <token>` header can carry the callback token.
+            assertEquals(HttpStatusCode.Unauthorized, postWith(null))
+            assertEquals(HttpStatusCode.Unauthorized, postWith("Basic dXNlcjpwYXNz"))
+            assertEquals(HttpStatusCode.Unauthorized, postWith("Bearer"))
+            assertEquals(HttpStatusCode.Unauthorized, postWith("Bearer "))
+        }
+
+    @Test
     fun `GET and DELETE are rejected with 405`() =
         testApplication {
             val service = newService()
@@ -236,6 +258,34 @@ class QuestionsMcpRoutesTest {
             val structured = sseResult(response.bodyAsText())["structuredContent"]!!.jsonObject
             assertEquals("ANSWERED", structured["status"]!!.jsonPrimitive.content)
             assertEquals("yes, go", structured["answer"]!!.jsonPrimitive.content)
+        }
+
+    @Test
+    fun `an idle SSE channel heartbeats while check_answer holds the call`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            val question = runBlocking { service.ask(1, "Proceed?") }
+            application { wireQuestionsMcp(service) }
+
+            // check_answer sends no progress notifications, so a hold longer than
+            // the 15 s heartbeat leaves the channel genuinely idle: the ping is
+            // what keeps a spec-compliant client from timing the request out.
+            val response =
+                withTimeout(30_000) {
+                    client.mcpPost(
+                        toolsCallBody("check_answer", """{"questionId":"${question.id}","waitSec":16}"""),
+                        bearer = token,
+                    )
+                }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = response.bodyAsText()
+            assertTrue(body.contains(": ping"), "an idle SSE channel must heartbeat: $body")
+            assertEquals(
+                "OPEN",
+                sseResult(body)["structuredContent"]!!.jsonObject["status"]!!.jsonPrimitive.content,
+            )
         }
 
     private class InboxFixture(

@@ -3,6 +3,7 @@ package homer.app.services
 import homer.app.exceptions.QueryParamValidationException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.fixtures.TestFixtures.firstText
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.LocalFileOperations
 import homer.app.models.Action
@@ -26,7 +27,6 @@ import io.mockk.mockk
 import io.mockk.unmockkAll
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
-import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
@@ -97,8 +97,7 @@ class McpToolFactoryTest {
 
     private fun request(arguments: JsonObject? = null) = CallToolRequest(CallToolRequestParams(name = "test", arguments = arguments))
 
-    private fun firstText(result: io.modelcontextprotocol.kotlin.sdk.types.CallToolResult): String =
-        (result.content.first() as TextContent).text
+    private fun optedInAgent(name: String) = AgentFixtures.simpleAgent(name = name).copy(mcp = AgentMcpConfig(enabled = true))
 
     // ========== toolSchemaFor ==========
 
@@ -311,6 +310,35 @@ class McpToolFactoryTest {
         val exposed = factory().mcpAgents()
 
         assertEquals(listOf("good"), exposed.map { it.name })
+    }
+
+    @Test
+    fun `mcpAgents hides an ineligible agent for its own reason only`() {
+        // Every ineligible agent sits next to a control that passes all the
+        // filters, so hiding the wrong agent cannot pass for the right reason.
+        val control = optedInAgent("control")
+        val ineligible =
+            listOf(
+                optedInAgent("x".repeat(129)),
+                optedInAgent("wait_collision").copy(inputs = listOf(Param(paramName = McpToolFactory.WAIT_ARG))),
+                optedInAgent("required_header").copy(
+                    inputs =
+                        listOf(
+                            Param(paramName = "X-Signature", envName = "SIGNATURE", src = ParamSource.HEADER, required = true),
+                        ),
+                ),
+                AgentFixtures.simpleAgent(name = "mcp_disabled").copy(mcp = AgentMcpConfig(enabled = false)),
+                AgentFixtures.simpleAgent(name = "mcp_absent"),
+            )
+
+        for (agent in ineligible) {
+            every { agentsService.agents } returns mapOf(control.name to control, agent.name to agent)
+            assertEquals(
+                listOf("control"),
+                factory().mcpAgents().map { it.name },
+                "'${agent.name}' must be the only agent hidden",
+            )
+        }
     }
 
     @Test
@@ -954,6 +982,23 @@ class McpToolFactoryTest {
         val server = factory(authorizer = authorizer).buildServer("runner")
 
         assertEquals(setOf("allowed") + managementToolNames, server.tools.keys)
+    }
+
+    @Test
+    fun `agent tools describe the agent by its description, falling back to its name`() {
+        val described =
+            AgentFixtures
+                .simpleAgent(
+                    name = "described",
+                    description = "Runs the deploy",
+                ).copy(mcp = AgentMcpConfig(enabled = true))
+        val bare = optedInAgent("bare")
+        every { agentsService.agents } returns mapOf(described.name to described, bare.name to bare)
+
+        val tools = factory().buildServer(null).tools
+
+        assertEquals("Runs the deploy", tools.getValue("described").tool.description)
+        assertEquals("Homer agent 'bare'", tools.getValue("bare").tool.description)
     }
 
     @Test

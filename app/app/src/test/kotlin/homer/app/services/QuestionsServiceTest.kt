@@ -213,6 +213,8 @@ class QuestionsServiceTest {
 
             val first = service.awaitAnswer(question.id, waitSec = 5)
             assertEquals(QuestionStatus.OPEN, first?.status)
+            // The hold ends exactly at the requested timeout.
+            assertEquals(5_000, currentTime)
 
             // Same id can be waited on again; this wait sees the answer.
             val waiter = async { service.awaitAnswer(question.id, waitSec = 5) }
@@ -231,6 +233,30 @@ class QuestionsServiceTest {
             service.awaitAnswer(question.id, waitSec = 999_999)
 
             assertEquals(5_000, currentTime)
+        }
+
+    @Test
+    fun `awaitAnswer with a zero or negative waitSec is a plain read that takes no wait slot`() =
+        runTest {
+            // One wait slot only, so a zero wait that took one would be refused.
+            val service = service(config = QuestionsConfig(maxConcurrentWaitsPerProcess = 1))
+            service.registerProcess(1, "agent-a")
+            val question = service.ask(1, "Proceed?")
+            val other = service.ask(1, "And also?")
+
+            val held = async { service.awaitAnswer(question.id, waitSec = 600) }
+            yield()
+            // The slot is taken — a real wait is refused...
+            assertThrows<TooManyConcurrentWaitsException> { service.awaitAnswer(other.id, waitSec = 5) }
+
+            // ...but a zero or negative wait is a read of the current snapshot,
+            // clamped to zero, so it is served without waiting or holding anything.
+            assertEquals(QuestionStatus.OPEN, service.awaitAnswer(other.id, waitSec = 0)?.status)
+            assertEquals(QuestionStatus.OPEN, service.awaitAnswer(other.id, waitSec = -5)?.status)
+            assertEquals(0, currentTime)
+
+            service.answer(question.id, "go")
+            held.await()
         }
 
     @Test
@@ -258,6 +284,48 @@ class QuestionsServiceTest {
     fun `awaitAnswer returns null for unknown id`() =
         runTest {
             assertNull(service().awaitAnswer("nope", waitSec = 1))
+        }
+
+    @Test
+    fun `awaitAnswer releases the wait slot of every returned waiter`() =
+        runTest {
+            val service = service(config = QuestionsConfig(maxConcurrentWaitsPerProcess = 2))
+            service.registerProcess(1, "agent-a")
+            val question = service.ask(1, "Proceed?")
+
+            // Both slots are taken, and both waiters time out still OPEN.
+            val first = async { service.awaitAnswer(question.id, waitSec = 1) }
+            val second = async { service.awaitAnswer(question.id, waitSec = 1) }
+            yield()
+            assertEquals(QuestionStatus.OPEN, first.await()?.status)
+            assertEquals(QuestionStatus.OPEN, second.await()?.status)
+
+            // Each return gave its slot back, so a fresh wait is accepted.
+            assertEquals(QuestionStatus.OPEN, service.awaitAnswer(question.id, waitSec = 1)?.status)
+            assertEquals(2_000, currentTime)
+        }
+
+    @Test
+    fun `awaitAnswer counts only the waiters still holding a slot`() =
+        runTest {
+            val service = service(config = QuestionsConfig(maxConcurrentWaitsPerProcess = 2))
+            service.registerProcess(1, "agent-a")
+            val question = service.ask(1, "Proceed?")
+
+            val short = async { service.awaitAnswer(question.id, waitSec = 1) }
+            val long = async { service.awaitAnswer(question.id, waitSec = 5) }
+            yield()
+            assertEquals(QuestionStatus.OPEN, short.await()?.status)
+
+            // The short waiter's return freed one slot, not both: the still-held
+            // wait keeps its count, so the second of these two is refused.
+            val third = async { service.awaitAnswer(question.id, waitSec = 5) }
+            yield()
+            assertThrows<TooManyConcurrentWaitsException> { service.awaitAnswer(question.id, waitSec = 5) }
+
+            service.answer(question.id, "go")
+            long.await()
+            third.await()
         }
 
     @Test

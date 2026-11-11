@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
+import homer.app.fixtures.TestFixtures.firstText
 import homer.app.fixtures.all
 import homer.app.models.QuestionsConfig
 import homer.app.models.RunMessagesConfig
@@ -9,13 +10,13 @@ import homer.app.services.persistence.RunMessagesRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.spyk
 import io.mockk.unmockkAll
 import io.modelcontextprotocol.kotlin.sdk.server.ClientConnection
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.RequestMeta
-import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
@@ -74,8 +75,6 @@ class QuestionsMcpToolFactoryTest {
         put("text", text)
         ttlSec?.let { put("ttlSec", it) }
     }
-
-    private fun firstText(result: CallToolResult): String = (result.content.first() as TextContent).text
 
     private fun structured(
         result: CallToolResult,
@@ -248,6 +247,58 @@ class QuestionsMcpToolFactoryTest {
             assertEquals("answered mid-hold", structured(result, "answer"))
             // 40s of 15s chunks = notifications after 15s and 30s.
             coVerify(exactly = 2) { connection.notification(any(), any()) }
+        }
+
+    @Test
+    fun `ask_user_and_wait holds ttlSec in hold chunks, the last one only the remainder`() =
+        runTest {
+            val service = spyk(service())
+            service.registerProcess(1, "agent-a")
+
+            val result =
+                factory(service).askUserAndWait(connection, 1, request(askArgs(ttlSec = 20), progressToken = 7))
+
+            assertEquals("OPEN", structured(result, "status"))
+            // 20 s of TTL: a full 15 s chunk, then the 5 s remainder — never the
+            // 15 s chunk overshooting the TTL.
+            coVerify(exactly = 1) { service.awaitAnswer(any(), 15) }
+            coVerify(exactly = 1) { service.awaitAnswer(any(), 5) }
+            assertEquals(20_000, currentTime)
+            coVerify(exactly = 1) { connection.notification(any(), any()) }
+        }
+
+    @Test
+    fun `ask_user_and_wait with a ttlSec of exactly one chunk sends no progress notification`() =
+        runTest {
+            val service = service()
+            service.registerProcess(1, "agent-a")
+
+            val result =
+                factory(service).askUserAndWait(connection, 1, request(askArgs(ttlSec = 15), progressToken = 7))
+
+            assertEquals("OPEN", structured(result, "status"))
+            assertEquals(15_000, currentTime)
+            // The chunk boundary is exclusive: nothing is left to report progress about.
+            coVerify(exactly = 0) { connection.notification(any(), any()) }
+        }
+
+    @Test
+    fun `ask_user_and_wait returns an answer that lands in the final short chunk`() =
+        runTest {
+            val service = service()
+            service.registerProcess(1, "agent-a")
+            launch {
+                delay(17_000)
+                val open = service.all(QuestionsService.QuestionStatus.OPEN).single()
+                service.answer(open.id, "in the last chunk")
+            }
+
+            val result =
+                factory(service).askUserAndWait(connection, 1, request(askArgs(ttlSec = 20), progressToken = 7))
+
+            assertEquals("ANSWERED", structured(result, "status"))
+            assertEquals("in the last chunk", structured(result, "answer"))
+            assertEquals(17_000, currentTime)
         }
 
     @Test

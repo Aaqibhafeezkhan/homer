@@ -10,6 +10,8 @@ import homer.app.infra.WorkspaceConfig
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.SpanBuilder
 import io.opentelemetry.api.trace.Tracer
@@ -44,6 +46,12 @@ object TestFixtures {
         Thread.sleep(1_000L - Instant.now().nano / 1_000_000L)
         return Instant.now().epochSecond
     }
+
+    /**
+     * The text of an MCP tool result's first content block — every tool under test answers in text,
+     * so one shared unwrapper keeps the assertion idiom identical across the MCP test classes.
+     */
+    fun firstText(result: CallToolResult): String = (result.content.first() as TextContent).text
 
     /**
      * Creates a relaxed mock Logger that allows all method calls
