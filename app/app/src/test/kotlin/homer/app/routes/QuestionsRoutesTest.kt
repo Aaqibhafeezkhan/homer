@@ -2,24 +2,39 @@ package homer.app.routes
 
 import homer.app.apiJson
 import homer.app.fixtures.PersistenceTestSupport
+import homer.app.fixtures.authorizerFor
+import homer.app.fixtures.installGrantsApp
 import homer.app.fixtures.mountApiV1Routes
+import homer.app.models.Action
+import homer.app.models.Grant
+import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
 import homer.app.models.ProcessListResponse
+import homer.app.models.ProcessStatus
 import homer.app.models.QuestionResponse
 import homer.app.models.QuestionsListResponse
+import homer.app.models.TokenConfig
+import homer.app.services.Authorizer
 import homer.app.services.ProcessEventBroadcaster
+import homer.app.services.ProcessManager
+import homer.app.services.QuestionsService
+import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.readLine
+import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -32,6 +47,27 @@ import kotlin.test.assertTrue
 class QuestionsRoutesTest {
     private fun newService(broadcaster: ProcessEventBroadcaster = ProcessEventBroadcaster()) =
         PersistenceTestSupport.questionsService(broadcaster = broadcaster)
+
+    /** The ApiDeps an [installGrantsApp] mount needs: grants, questions and process rows only. */
+    private fun grantsDeps(
+        authorizer: Authorizer,
+        questionsService: QuestionsService,
+        processManager: ProcessManager,
+    ): ApiDeps =
+        mockk(relaxed = true) {
+            every { this@mockk.authorizer } returns authorizer
+            every { this@mockk.questionsService } returns questionsService
+            every { this@mockk.processManager } returns processManager
+        }
+
+    private suspend fun HttpClient.answer(
+        token: String,
+        questionId: String,
+    ) = post("/api/v1/questions/$questionId/answer") {
+        header(HttpHeaders.Authorization, "Bearer $token")
+        contentType(ContentType.Application.Json)
+        setBody("""{"answer":"yes, go"}""")
+    }
 
     @Test
     fun `GET questions lists all questions`() =
@@ -123,6 +159,61 @@ class QuestionsRoutesTest {
                 }
 
             assertEquals(HttpStatusCode.NotFound, response.status)
+        }
+
+    @Test
+    fun `POST answer without control responds 404 identical to an unknown id`() =
+        testApplication {
+            val service = newService()
+            val question =
+                runBlocking {
+                    service.registerProcess(7, "deploy")
+                    service.ask(7, "Proceed?")
+                }
+            // READ only on "deploy": the question is visible, answering it is not.
+            val tokens = mapOf("bob" to TokenConfig(token = "read-token", grants = listOf(Grant(listOf("deploy"), listOf(Action.READ)))))
+            val processManager =
+                mockk<ProcessManager>(relaxed = true) {
+                    coEvery { getProcessInfo(any()) } returns
+                        ProcessInfo(id = 7, status = ProcessStatus.WORKING, agentName = "deploy", owner = "alice")
+                }
+            application { installGrantsApp(tokens, grantsDeps(authorizerFor(tokens), service, processManager)) }
+
+            val denied = client.answer("read-token", question.id)
+            val unknown = client.answer("read-token", "nope")
+
+            assertEquals(HttpStatusCode.NotFound, denied.status)
+            assertEquals(HttpStatusCode.NotFound, unknown.status)
+            assertEquals(unknown.bodyAsText(), denied.bodyAsText())
+            assertEquals("OPEN", runBlocking { service.get(question.id) }?.status?.name)
+        }
+
+    @Test
+    fun `POST answer falls back to the question's agent when its process is purged`() =
+        testApplication {
+            val service = newService()
+            val question =
+                runBlocking {
+                    service.registerProcess(7, "deploy")
+                    service.ask(7, "Proceed?")
+                }
+            // Dispatch-bound questions outlive their asking process: the row is
+            // gone, so only the question's own agentName can carry the grant check.
+            val tokens =
+                mapOf(
+                    "bob" to
+                        TokenConfig(
+                            token = "control-token",
+                            grants = listOf(Grant(listOf("deploy"), listOf(Action.READ, Action.CONTROL))),
+                        ),
+                )
+            val processManager = mockk<ProcessManager>(relaxed = true) { coEvery { getProcessInfo(any()) } returns null }
+            application { installGrantsApp(tokens, grantsDeps(authorizerFor(tokens), service, processManager)) }
+
+            val response = client.answer("control-token", question.id)
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("ANSWERED", runBlocking { service.get(question.id) }?.status?.name)
         }
 
     @Test
