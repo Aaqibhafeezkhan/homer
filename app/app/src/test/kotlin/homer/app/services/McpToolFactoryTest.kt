@@ -3,6 +3,7 @@ package homer.app.services
 import homer.app.exceptions.QueryParamValidationException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
+import homer.app.fixtures.TestFixtures.firstText
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.LocalFileOperations
 import homer.app.models.Action
@@ -26,7 +27,6 @@ import io.mockk.mockk
 import io.mockk.unmockkAll
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
-import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonArray
@@ -96,9 +96,6 @@ class McpToolFactoryTest {
     )
 
     private fun request(arguments: JsonObject? = null) = CallToolRequest(CallToolRequestParams(name = "test", arguments = arguments))
-
-    private fun firstText(result: io.modelcontextprotocol.kotlin.sdk.types.CallToolResult): String =
-        (result.content.first() as TextContent).text
 
     private fun optedInAgent(name: String) = AgentFixtures.simpleAgent(name = name).copy(mcp = AgentMcpConfig(enabled = true))
 

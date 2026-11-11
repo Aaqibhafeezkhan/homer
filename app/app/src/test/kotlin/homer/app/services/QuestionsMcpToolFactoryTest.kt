@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
+import homer.app.fixtures.TestFixtures.firstText
 import homer.app.fixtures.all
 import homer.app.models.QuestionsConfig
 import homer.app.models.RunMessagesConfig
@@ -16,7 +17,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.RequestMeta
-import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
@@ -75,8 +75,6 @@ class QuestionsMcpToolFactoryTest {
         put("text", text)
         ttlSec?.let { put("ttlSec", it) }
     }
-
-    private fun firstText(result: CallToolResult): String = (result.content.first() as TextContent).text
 
     private fun structured(
         result: CallToolResult,

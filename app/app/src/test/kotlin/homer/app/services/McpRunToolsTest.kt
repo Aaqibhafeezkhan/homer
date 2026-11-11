@@ -1,6 +1,7 @@
 package homer.app.services
 
 import homer.app.fixtures.TestFixtures
+import homer.app.fixtures.TestFixtures.firstText
 import homer.app.infra.LocalFileOperations
 import homer.app.models.Action
 import homer.app.models.ArtifactEntry
@@ -16,7 +17,6 @@ import io.mockk.mockk
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
-import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -80,8 +80,6 @@ class McpRunToolsTest {
         errMsg = errMsg,
     )
 
-    private fun firstText(result: CallToolResult): String = (result.content.first() as TextContent).text
-
     @Test
     fun `registers the four run-management tools`() {
         assertEquals(listOf("get_run_info", "list_artifacts", "get_artifact", "cancel_run"), tools.tools("bob").map { it.tool.name })
@@ -99,7 +97,7 @@ class McpRunToolsTest {
                 )
             results.forEach {
                 assertEquals(true, it.isError)
-                assertEquals("Run $RUN_ID not found", (it.content.first() as TextContent).text)
+                assertEquals("Run $RUN_ID not found", firstText(it))
             }
             coVerify(exactly = 0) { artifactService.listArtifacts(any()) }
             coVerify(exactly = 0) { processManager.killProcess(any(), any()) }
