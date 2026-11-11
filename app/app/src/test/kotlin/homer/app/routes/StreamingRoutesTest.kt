@@ -14,13 +14,16 @@ import io.kotest.property.arbitrary.int
 import io.kotest.property.arbitrary.string
 import io.kotest.property.checkAll
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import kotlin.io.path.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
@@ -194,5 +197,40 @@ class StreamingRoutesTest {
             }
 
             assertEquals(listOf(0 to LogTailService.Stream.OUT, 3 to LogTailService.Stream.OUT), resolved)
+        }
+
+    @Test
+    fun `process logs stream resumes from a Last-Event-ID past the Int range and drops a malformed one`() =
+        testApplication {
+            val offsets = mutableListOf<Long?>()
+            val tailService =
+                mockk<LogTailService>(relaxed = true) {
+                    coEvery { resolve(any(), any(), any()) } returns Path("/tmp/cmd_0.out")
+                    every { tail(any(), any(), any()) } answers {
+                        offsets += thirdArg<Long?>()
+                        emptyFlow()
+                    }
+                }
+            val pm =
+                mockk<ProcessManager>(relaxed = true) {
+                    coEvery { getProcessInfo(42) } returns
+                        ProcessInfo(id = 42, status = ProcessStatus.FINISHED, agentName = "deploy", owner = "alice")
+                }
+            mountApiV1Routes {
+                every { processManager } returns pm
+                every { logTailService } returns tailService
+            }
+
+            // The resume offset is a Long, so an offset past 2 GB reaches the tail uncut; a
+            // malformed header is no resume at all, never a truncated offset.
+            for (lastId in listOf("${Int.MAX_VALUE + 1L}", "not-a-number")) {
+                val response =
+                    client.get("/api/v1/stream/processes/42/logs?cmd=0") {
+                        header("Last-Event-ID", lastId)
+                    }
+                assertEquals(HttpStatusCode.OK, response.status, "Last-Event-ID=$lastId")
+            }
+
+            assertEquals(listOf(Int.MAX_VALUE + 1L, null), offsets)
         }
 }

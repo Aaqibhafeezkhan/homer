@@ -12,6 +12,7 @@ import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.int
+import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -953,6 +954,13 @@ class LlmEventStreamServiceTest {
         assertEquals(StreamCursor(2, 1, 40, 3), StreamCursor.parse("2:1:40:3"))
         // Every guard is `>= 0`, so an all-zero id is a valid cursor, not a rejected one.
         assertEquals(StreamCursor(0, 0, 0, 0), StreamCursor.parse("0:0:0:0"))
+        // lineOffset is the only Long component: a resume past 2 GB still parses, at both ends of its range.
+        assertEquals(StreamCursor(0, 0, Int.MAX_VALUE + 1L, 0), StreamCursor.parse("0:0:${Int.MAX_VALUE + 1L}:0"))
+        assertEquals(StreamCursor(0, 0, Long.MAX_VALUE, 0), StreamCursor.parse("0:0:${Long.MAX_VALUE}:0"))
+        // The other three are Int: a component past Int.MAX_VALUE is rejected, never truncated into one.
+        assertNull(StreamCursor.parse("${Int.MAX_VALUE + 1L}:0:0:0"))
+        assertNull(StreamCursor.parse("0:${Int.MAX_VALUE + 1L}:0:0"))
+        assertNull(StreamCursor.parse("0:0:0:${Int.MAX_VALUE + 1L}"))
         assertNull(StreamCursor.parse("2:1:40"))
         assertNull(StreamCursor.parse("0:0:0:0:0"))
         assertNull(StreamCursor.parse("garbage"))
@@ -964,14 +972,16 @@ class LlmEventStreamServiceTest {
         assertNull(StreamCursor.parse(null))
         assertEquals("2:1:40:3", StreamCursor(2, 1, 40, 3).id)
         assertEquals("0:0:0:0", StreamCursor(0, 0, 0, 0).id)
+        assertEquals("0:0:${Int.MAX_VALUE + 1L}:0", StreamCursor(0, 0, Int.MAX_VALUE + 1L, 0).id)
     }
 
     @Test
     fun `cursor parses exactly the four-part ids whose components are all non-negative`() =
         runTest {
-            checkAll(Arb.int(-3..3), Arb.int(-3..3), Arb.int(-3..3), Arb.int(-3..3)) { c, a, o, e ->
+            // The offset draws from the whole Long range, so the property also covers ids past Int.MAX_VALUE.
+            checkAll(Arb.int(-3..3), Arb.int(-3..3), Arb.long(), Arb.int(-3..3)) { c, a, o, e ->
                 val id = "$c:$a:$o:$e"
-                val expected = if (c >= 0 && a >= 0 && o >= 0 && e >= 0) StreamCursor(c, a, o.toLong(), e) else null
+                val expected = if (c >= 0 && a >= 0 && o >= 0 && e >= 0) StreamCursor(c, a, o, e) else null
                 assertEquals(expected, StreamCursor.parse(id), "id: $id")
             }
         }
