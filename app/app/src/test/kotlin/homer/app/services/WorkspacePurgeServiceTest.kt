@@ -15,10 +15,14 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.slf4j.Logger
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertEquals
@@ -31,6 +35,7 @@ import kotlin.test.assertTrue
 class WorkspacePurgeServiceTest {
     private lateinit var processManager: ProcessManager
     private lateinit var questionsService: QuestionsService
+    private lateinit var logger: Logger
     private lateinit var service: WorkspacePurgeService
     private val now = System.currentTimeMillis() / 1000
 
@@ -38,6 +43,7 @@ class WorkspacePurgeServiceTest {
     fun setup() {
         processManager = mockk(relaxed = true)
         questionsService = mockk(relaxed = true)
+        logger = TestFixtures.mockLogger()
         service =
             WorkspacePurgeService(
                 processManager = processManager,
@@ -46,7 +52,7 @@ class WorkspacePurgeServiceTest {
                 // so root the purge there; the containment test uses its own narrow root.
                 workspaceRoot = Path.of(System.getProperty("java.io.tmpdir")),
                 maxRetainedArtifactBytes = 16L * 1024 * 1024,
-                logger = TestFixtures.mockLogger(),
+                logger = logger,
             )
         // Two sweeps now: one for the directory, one for the row. Default both to
         // empty so each test states exactly which phase it is exercising.
@@ -620,5 +626,143 @@ class WorkspacePurgeServiceTest {
             assertFalse(root.resolve("$due").toFile().exists(), "retained leftovers die with the record")
             assertNotNull(realManager.getProcessInfo(notDue))
             root.toFile().deleteRecursively()
+        }
+
+    @Test
+    fun `purgeExpired deletes a workspace at its purge time and keeps one an hour short of it`() =
+        runTest {
+            // Real SQLite end to end: which side of `purge_at <= now` a row falls on is decided by
+            // the repository's SQL, so a mocked ProcessManager could not show the boundary.
+            val root = Files.createTempDirectory("homer-root")
+            val db = PersistenceTestSupport.tempDatabase()
+            val repository = ProcessRepository(db, ProcessJobRegistry())
+            val realQuestions = QuestionsService(QuestionsRepository(db), TestFixtures.mockLogger(), ProcessEventBroadcaster())
+            val realManager = ProcessManager(repository, ProcessJobRegistry(), TestFixtures.mockLogger(), workspaceRoot = root)
+            val purge = WorkspacePurgeService(realManager, realQuestions, root, 16L * 1024 * 1024, logger)
+
+            // purgeExpired reads the wall clock, so the stamps are relative to now, never absolute.
+            suspend fun finishedRun(purgeAt: Long): Path {
+                val id = repository.obtainProcessId("test", emptyMap(), 100).processId
+                val dir = root.resolve("$id").resolve("artifacts")
+                dir.toFile().mkdirs()
+                realManager.setArtifactsDir(id, dir)
+                repository.transitionStatus(id, ProcessStatus.FINISHED, 1, null)
+                repository.setPurgeAt(id, purgeAt = purgeAt)
+                return dir
+            }
+
+            val dueDir = finishedRun(now - 1)
+            val notYetDueDir = finishedRun(now + 3600)
+
+            purge.purgeExpired()
+
+            assertFalse(dueDir.toFile().exists(), "a workspace past its purge time must be deleted")
+            assertTrue(notYetDueDir.toFile().exists(), "a workspace short of its purge time must be kept")
+            root.toFile().deleteRecursively()
+        }
+
+    @Test
+    fun `purgeExpired leaves a live run's workspace in place and sweeps its terminal siblings`() =
+        runTest {
+            val root = Files.createTempDirectory("homer-root")
+            val db = PersistenceTestSupport.tempDatabase()
+            val repository = ProcessRepository(db, ProcessJobRegistry())
+            val realQuestions = QuestionsService(QuestionsRepository(db), TestFixtures.mockLogger(), ProcessEventBroadcaster())
+            val realManager = ProcessManager(repository, ProcessJobRegistry(), TestFixtures.mockLogger(), workspaceRoot = root)
+            val purge = WorkspacePurgeService(realManager, realQuestions, root, 16L * 1024 * 1024, logger)
+
+            suspend fun runOf(status: ProcessStatus): Pair<Int, Path> {
+                val id = repository.obtainProcessId("test", emptyMap(), 100).processId
+                val dir = root.resolve("$id").resolve("artifacts")
+                dir.toFile().mkdirs()
+                realManager.setArtifactsDir(id, dir)
+                repository.transitionStatus(id, status, 1, null)
+                repository.setPurgeAt(id, purgeAt = now - 1)
+                return id to dir
+            }
+
+            // A run still in flight is never purged, however long past its purge time it is.
+            val (created, createdDir) = runOf(ProcessStatus.CREATED)
+            val (working, workingDir) = runOf(ProcessStatus.WORKING)
+            val (_, finishedDir) = runOf(ProcessStatus.FINISHED)
+            val (_, unknownDir) = runOf(ProcessStatus.UNKNOWN)
+
+            purge.purgeExpired()
+
+            assertTrue(createdDir.toFile().exists(), "a CREATED run's workspace must never be purged")
+            assertTrue(workingDir.toFile().exists(), "a WORKING run's workspace must never be purged")
+            assertNotNull(realManager.getProcessInfo(created)?.artifactsDir, "a live run keeps its artifacts_dir")
+            assertNotNull(realManager.getProcessInfo(working)?.artifactsDir, "a live run keeps its artifacts_dir")
+            assertFalse(finishedDir.toFile().exists(), "a FINISHED run's due workspace is swept")
+            assertFalse(unknownDir.toFile().exists(), "UNKNOWN is a swept terminal status")
+            root.toFile().deleteRecursively()
+        }
+
+    @Test
+    fun `start sweeps once per minute, not before and again on every later tick`() =
+        runTest {
+            service.start(backgroundScope)
+
+            advanceTimeBy(59_999L)
+            runCurrent()
+            coVerify(exactly = 0) { processManager.getWorkspacePurgeableProcesses(any(), any()) }
+
+            advanceTimeBy(1L)
+            runCurrent()
+            coVerify(exactly = 1) { processManager.getWorkspacePurgeableProcesses(any(), any()) }
+
+            advanceTimeBy(60_000L)
+            runCurrent()
+            coVerify(exactly = 2) { processManager.getWorkspacePurgeableProcesses(any(), any()) }
+        }
+
+    @Test
+    fun `a sweep that retained files logs the retained count`() =
+        runTest {
+            val projectRoot = Files.createTempDirectory("homer-test")
+            val artifactsDir = projectRoot.resolve("artifacts")
+            artifactsDir.toFile().mkdirs()
+            artifactsDir.resolve("decision.json").toFile().createNewFile()
+
+            val process =
+                ProcessInfo(
+                    id = 31,
+                    status = ProcessStatus.FINISHED,
+                    agentName = "test",
+                    purgeAt = now - 1,
+                    artifactsDir = artifactsDir,
+                    retainArtifacts = listOf("decision.json"),
+                )
+            coEvery { processManager.getWorkspacePurgeableProcesses(any(), any()) } returns listOf(process)
+
+            service.purgeExpired()
+
+            verify(exactly = 1) { logger.info(match<String> { it.contains("retained") }, any(), any(), any()) }
+            projectRoot.toFile().deleteRecursively()
+        }
+
+    @Test
+    fun `a sweep that retained nothing logs the plain line`() =
+        runTest {
+            val projectRoot = Files.createTempDirectory("homer-test")
+            val artifactsDir = projectRoot.resolve("artifacts")
+            artifactsDir.toFile().mkdirs()
+
+            val process =
+                ProcessInfo(
+                    id = 32,
+                    status = ProcessStatus.FINISHED,
+                    agentName = "test",
+                    purgeAt = now - 1,
+                    artifactsDir = artifactsDir,
+                )
+            coEvery { processManager.getWorkspacePurgeableProcesses(any(), any()) } returns listOf(process)
+
+            service.purgeExpired()
+
+            // Zero retained files is not a retained count: the branch must not be taken for it.
+            verify(exactly = 0) { logger.info(match<String> { it.contains("retained") }, any(), any(), any()) }
+            verify(exactly = 1) { logger.info(match<String> { it.contains("Purged workspace") }, any(), any()) }
+            projectRoot.toFile().deleteRecursively()
         }
 }
