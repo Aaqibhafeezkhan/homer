@@ -223,6 +223,31 @@ class DispatchServiceTest {
             assertNull(stored.captured.expiresAt)
         }
 
+    // ADR-0052: the target's `secret: true` names are snapshotted when the row is registered,
+    // because the definition may be edited before the fire — without the snapshot a stored
+    // value whose flag was flipped becomes a cleartext trace tag or an unredacted API field.
+    @Test
+    fun `create snapshots the target's secret input names at registration`() =
+        runTest {
+            every { questions.registrationFor(7) } returns
+                QuestionsService.Registration("asker", closed = false)
+            val target =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo"))),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    inputs = listOf(Param(paramName = "token", envName = "API_TOKEN", secret = true)),
+                )
+            every { agents.agents } returns mapOf("h" to target)
+            val stored = slot<Dispatch>()
+            coEvery { repo.create(any(), capture(stored), any()) } returns 5
+
+            service().create(7, "q", emptyList(), "h", "answer", emptyMap(), null)
+
+            assertEquals(setOf("API_TOKEN"), stored.captured.secretInputKeys)
+            assertEquals(setOf("token"), stored.captured.secretParamNames)
+        }
+
     @Test
     fun `create accepts the langgraph resume marker as answerParam`() =
         runTest {
