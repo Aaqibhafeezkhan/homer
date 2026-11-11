@@ -1692,6 +1692,24 @@ class ApplicationTest {
         assertEquals("false", response.headers["X-File-Complete"])
     }
 
+    @Test
+    fun `GET artifacts marks a queued process's artifact incomplete`(
+        @TempDir dir: java.nio.file.Path,
+    ) = testApplication {
+        // CREATED is an active status too: a run still queued has produced nothing
+        // final, so dropping it from the active check would serve its artifact as
+        // complete before the run even started.
+        dir.resolve("cmd_0.out").toFile().writeText("partial\n")
+        coEvery { mockProcessManager.getProcessStatus(123) } returns ProcessStatus.CREATED
+        mountArtifactRoutes(finishedProcessWithArtifacts(123, dir).copy(status = ProcessStatus.CREATED))
+
+        val response = client.get("/api/v1/artifacts?processId=123&path=cmd_0.out")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("CREATED", response.headers["X-Process-Status"])
+        assertEquals("false", response.headers["X-File-Complete"])
+    }
+
     // ========== POST /agents/reload Tests ==========
 
     @Test

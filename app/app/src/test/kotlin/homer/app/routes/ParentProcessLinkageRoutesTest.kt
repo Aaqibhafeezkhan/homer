@@ -176,7 +176,7 @@ class ParentProcessLinkageRoutesTest {
                 assertEquals(HttpStatusCode.OK, response.status, "value '$value'")
                 coVerify(exactly = 0) { processManager.getProcessInfo(any()) }
             }
-            coVerify {
+            coVerify(exactly = 2) {
                 agentRunStarter.start(any(), any(), eq("http"), any(), any(), any(), any(), isNull(), isNull(), any(), any())
             }
         }
