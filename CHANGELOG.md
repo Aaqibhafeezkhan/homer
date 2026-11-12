@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Fixed: a lost Kubernetes exec channel names itself** — A step whose exec channel into a still-running pod closes without a status now fails with the cause in its error, the run's `runner.termination` names the loss, and the leftover command is killed before the step fails. See [ADR-0103](docs/adr/0103-a-lost-exec-channel-kills-and-fails-without-reattach.md).
 - **Fixed: a failed dispatch's reported error reason** — A failure carrying no message now reports the same `Dispatch failed` fallback the stored row keeps, instead of an empty error.
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.
 - **Added: a load-time warning for a Claude step that limits tools only with `allowedTools`** — A step that skips permissions and sets neither `tools` nor `disallowedTools` restricts nothing; Homer warns at agent load and `agentdebug validate` reports it on the command's line.
