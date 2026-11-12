@@ -105,13 +105,22 @@ private fun namedPlaceholders(names: Collection<String>): List<String> =
         .take(MAX_NAMED_PLACEHOLDERS)
         .map { it.take(MAX_PLACEHOLDER_NAME_LENGTH) }
 
-/** The denial's log sentence: singular for one name, plural for several. */
-private fun denialMessage(names: List<String>): String =
+/**
+ * The singular/plural sentence naming unresolved placeholders — `placeholder {{A}} has no value`
+ * for one, `placeholders {{A}}, {{B}} have no value` for several — shared by the denial's log
+ * sentence and the stored pre-start failure reason, so the two wordings cannot drift. The names
+ * come from the agent definition (a `\w+` template reference), never from the rendered key —
+ * which may hold an input value — and never from a value. See ADR-0098.
+ */
+internal fun placeholderSentence(names: List<String>): String =
     if (names.size == 1) {
-        "Lock key placeholder {{${names.single()}}} has no value"
+        "placeholder {{${names.single()}}} has no value"
     } else {
-        "Lock key placeholders ${names.joinToString(", ") { "{{$it}}" }} have no value"
+        "placeholders ${names.joinToString(", ") { "{{$it}}" }} have no value"
     }
+
+/** The denial's log sentence: the shared placeholder sentence behind the lock-key prefix. */
+private fun denialMessage(names: List<String>): String = "Lock key ${placeholderSentence(names)}"
 
 class MaxParallelRunsExceededException(
     val agentName: String,

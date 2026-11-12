@@ -6,6 +6,7 @@ import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
 import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
+import homer.app.exceptions.placeholderSentence
 import homer.app.models.RunnerFilter
 import homer.app.models.truncateFailureReason
 
@@ -84,17 +85,10 @@ object PreStartFailureReason {
         }
 
     /**
-     * The unresolved placeholder names as the stored sentence names them: `placeholder {{A}}
-     * has no value` for one, `placeholders {{A}}, {{B}} have no value` for several. The names
-     * come from the agent definition (a `\w+` template reference), never from the rendered key
-     * — which may hold an input value — and never from a value. See ADR-0098.
+     * The unresolved placeholder names as the stored sentence names them, by the shared builder
+     * the denial's own log sentence uses. See ADR-0098.
      */
-    private fun describePlaceholders(placeholders: List<String>): String =
-        if (placeholders.size == 1) {
-            "placeholder {{${placeholders.single()}}} has no value"
-        } else {
-            "placeholders ${placeholders.joinToString(", ") { "{{$it}}" }} have no value"
-        }
+    private fun describePlaceholders(placeholders: List<String>): String = placeholderSentence(placeholders)
 
     /**
      * The run's runner filter without its alias: `describe()` names one, and a runner alias is
