@@ -5,6 +5,8 @@ import homer.app.models.SessionSpendConfig
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.respondError
+import io.ktor.client.plugins.HttpTimeoutCapability
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -388,6 +390,59 @@ class LlmCostResolverTest {
     fun `configured flag reflects config`() {
         assertTrue(LlmCostResolver(cfg(), jsonEngine("{}")).configured)
     }
+
+    // ========== the per-request timeout bound ==========
+
+    @Test
+    fun `every request carries the configured timeout on all three legs`() =
+        runBlocking {
+            // The bound is installed on the client, not merely passed to `withTimeout`: a request
+            // that leaves without it relies on the engine's own socket to notice a stall.
+            val seen = mutableListOf<HttpTimeoutConfig?>()
+            val engine =
+                MockEngine { request ->
+                    seen += request.getCapabilityOrNull(HttpTimeoutCapability)
+                    respond("""{"spend":1}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+
+            val r = LlmCostResolver(cfg(timeoutMs = 1_234), engine).resolve("s", 0.0, 0)
+
+            assertEquals(CostSource.SESSION, r.source)
+            val timeout = seen.single()
+            assertEquals(1_234L, timeout?.requestTimeoutMillis)
+            assertEquals(1_234L, timeout?.connectTimeoutMillis)
+            assertEquals(1_234L, timeout?.socketTimeoutMillis)
+        }
+
+    @Test
+    fun `a slow price source is cut off at the configured bound and answers under a generous one`() =
+        runBlocking {
+            // Denial path: the bound is the configured timeoutMs, not a constant — the same slow
+            // engine is refused at 50 ms and answers when the config allows 5 s.
+            val engine =
+                MockEngine {
+                    delay(200)
+                    respond("""{"spend":1}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+
+            val startedAt = System.nanoTime()
+            val bounded = withTimeout(5_000) { LlmCostResolver(cfg(timeoutMs = 50), engine).resolve("s", 0.3, 0) }
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+            assertEquals(ResolvedCostShape(0.3, CostSource.CLI, "timeout"), bounded.shape())
+            assertTrue(elapsedMs < 1_000, "resolve took ${elapsedMs}ms, expected the configured 50ms bound to end it")
+
+            val generous = LlmCostResolver(cfg(timeoutMs = 5_000), engine).resolve("s", 0.3, 0)
+            assertEquals(ResolvedCostShape(1.0, CostSource.SESSION, null), generous.shape())
+        }
+
+    @Test
+    fun `a non-2xx response carrying a valid spend is never parsed as a price`() =
+        runBlocking {
+            // Denial path: only a successful status is priced, whatever the body holds.
+            val r = LlmCostResolver(cfg(), jsonEngine("""{"spend":1.5}""", HttpStatusCode.InternalServerError)).resolve("s", 0.3, 0)
+            assertEquals(ResolvedCostShape(0.3, CostSource.CLI, "http 500"), r.shape())
+        }
 
     // ========== callsPath re-poll schedule ==========
 

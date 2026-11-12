@@ -9,6 +9,7 @@ import homer.app.exceptions.CommandExecutionException
 import homer.app.exceptions.MalformedLlmOutputException
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.executors.ArtifactNameResolver
+import homer.app.executors.CommandArtifactPaths
 import homer.app.executors.ExecutionContext
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.DefaultTextCompiler
@@ -583,6 +584,20 @@ class LlmHarnessExecutorTest {
             verify { span.setAttribute("llm.session_id", "sess-9") }
             assertEquals(LlmAccounting("sess-9", 0.18, CostSource.SESSION, null, usage = LlmUsage()), result.llmAccounting)
             coVerify { telemetry.process(any(), any(), any(), any(), any(), 0.18) }
+        }
+
+    @Test
+    fun `an attempt whose stream has no start event writes no session onto the command span`() =
+        runTest {
+            // Same guard on the inline path: a stream with no start event (a crashed CLI) scans
+            // to a null session id, and the command span must carry no session attribute for it.
+            stdOut.writeText("{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+
+            val result = run(processId = 7, agentName = "demo")
+
+            verify { span.setAttribute("llm.cost_usd", 0.42) }
+            verify(exactly = 0) { span.setAttribute("llm.session_id", any<String>()) }
+            assertNull(result.llmAccounting?.sessionId)
         }
 
     @Test
@@ -1184,6 +1199,75 @@ class LlmHarnessExecutorTest {
             // command span is never written again.
             verify(exactly = 0) { settlementSpan.setAttribute("llm.cost.fallback_reason", any<String>()) }
             verify(exactly = 0) { span.setAttribute("llm.cost.fallback_reason", "") }
+        }
+
+    @Test
+    fun `a settled figure writes the session, source, reason and usage onto the settlement span`() =
+        runTest {
+            stdOut.writeText("{\"t\":\"start\",\"sid\":\"sess-9\"}\n{\"t\":\"end\",\"ok\":true,\"cost\":0.42,\"in\":7}")
+            every { resolver.configured } returns true
+            val lookup = CompletableDeferred<ResolvedCost>()
+            coEvery { resolver.resolve(any(), any(), any(), any(), any()) } coAnswers { lookup.await() }
+            val settlementSpan = TestFixtures.mockSpan()
+            every { telemetry.tracer } returns TestFixtures.mockTracer(settlementSpan)
+
+            run(processId = 7, agentName = "demo", exec = newExecutor(FakeHarness(), settlementScope = backgroundScope))
+            lookup.complete(ResolvedCost(0.18, CostSource.SESSION, "incomplete: 3 of 5 calls ingested"))
+            runCurrent()
+
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.session_id", "sess-9") }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost.source", "session") }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost.fallback_reason", "incomplete: 3 of 5 calls ingested") }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost_usd", 0.18) }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.input", 7L) }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.output", 0L) }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.cache_read", 0L) }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.cache_write", 0L) }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.reasoning", 0L) }
+        }
+
+    @Test
+    fun `a settlement of a stream with no start event writes no session onto the settlement span`() =
+        runTest {
+            // A crashed CLI's stream carries no start event, so the scan has no session id and
+            // still settles: the `settled.sessionId?.let` guard must drop the attribute rather
+            // than write it unconditionally. See ADR-0089.
+            stdOut.writeText("{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+            every { resolver.configured } returns true
+            val lookup = CompletableDeferred<ResolvedCost>()
+            coEvery { resolver.resolve(any(), any(), any(), any(), any()) } coAnswers { lookup.await() }
+            val settlementSpan = TestFixtures.mockSpan()
+            every { telemetry.tracer } returns TestFixtures.mockTracer(settlementSpan)
+
+            run(processId = 7, agentName = "demo", exec = newExecutor(FakeHarness(), settlementScope = backgroundScope))
+            lookup.complete(ResolvedCost(0.18, CostSource.SESSION))
+            runCurrent()
+
+            // The rest of the settled figure still lands, so the absence is the guard's, not a
+            // settlement that never happened.
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost.source", "session") }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost_usd", 0.18) }
+            verify(exactly = 0) { settlementSpan.setAttribute("llm.session_id", any<String>()) }
+        }
+
+    @Test
+    fun `a settlement of zero writes no cost onto the settlement span`() =
+        runTest {
+            stdOut.writeText("{\"t\":\"start\",\"sid\":\"sess-9\"}\n{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+            every { resolver.configured } returns true
+            val lookup = CompletableDeferred<ResolvedCost>()
+            coEvery { resolver.resolve(any(), any(), any(), any(), any()) } coAnswers { lookup.await() }
+            val settlementSpan = TestFixtures.mockSpan()
+            every { telemetry.tracer } returns TestFixtures.mockTracer(settlementSpan)
+
+            run(processId = 7, agentName = "demo", exec = newExecutor(FakeHarness(), settlementScope = backgroundScope))
+            lookup.complete(ResolvedCost(0.0, CostSource.SESSION))
+            runCurrent()
+
+            // A settled zero is a priced, free attempt: the source is recorded, the cost is not.
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost.source", "session") }
+            verify(exactly = 0) { settlementSpan.setAttribute("llm.cost_usd", any<Double>()) }
+            verify(exactly = 0) { settlementSpan.setAttribute("llm.cost.fallback_reason", any<String>()) }
         }
 
     @Test
@@ -2276,6 +2360,57 @@ class LlmHarnessExecutorTest {
             assertEquals(3, llmOut.size)
             assertEquals(3, llmOut.toSet().size, "tier 1 must not overwrite tier 0's attempt files")
             assertEquals(llmOut[2], result.stdOut)
+        }
+
+    @Test
+    fun `an escalating tier numbers its attempts after every attempt the tier before it ran`() =
+        runTest {
+            // Tier 0 runs both of its retries before the predicate escalates, so tier 1's first
+            // attempt is the third overall: exact indices, not merely distinct paths.
+            val names = perAttemptNames()
+            val perAttemptContext = context.copy(artifactNames = names, processId = 5, cmdIndex = 0)
+            val recorded = mutableListOf<CommandArtifactPaths>()
+            coEvery { processManager.setCommandArtifacts(5, 0, capture(recorded)) } just Runs
+            val llmCalls = mutableListOf<Call>()
+            scriptShell(
+                llm = listOf(okEnd to 1, okEnd to 1, validOutput to 0),
+                predicateExits = listOf(0),
+                llmCalls = llmCalls,
+            )
+
+            val result =
+                executor.execute(
+                    claudeWithTiers(tier("strong", "true"), retry = LlmRetry(attempts = 2, baseDelayMs = 0, maxDelayMs = 0)),
+                    perAttemptContext,
+                    span,
+                )
+
+            assertEquals(0, result.exitCode)
+            assertEquals(3, llmCalls.size)
+            assertEquals(listOf(0, 1, 2), recorded.map { it.attemptIndex })
+            assertEquals(listOf(names.stdOut(0), names.stdOut(1), names.stdOut(2)), recorded.map { it.stdOut })
+            assertEquals(listOf(names.stdErr(0), names.stdErr(1), names.stdErr(2)), recorded.map { it.stdErr })
+        }
+
+    @Test
+    fun `a malformed tier numbers the next tier's attempt after the one it handed over`() =
+        runTest {
+            // The malformed tier ends its step before any retry, so the tier that takes over is
+            // numbered after exactly the one attempt it ran.
+            val names = perAttemptNames()
+            val perAttemptContext = context.copy(artifactNames = names, processId = 5, cmdIndex = 0)
+            val recorded = mutableListOf<CommandArtifactPaths>()
+            coEvery { processManager.setCommandArtifacts(5, 0, capture(recorded)) } just Runs
+            val llmCalls = mutableListOf<Call>()
+            scriptShell(llm = listOf("garbage" to 0, validOutput to 0), predicateExits = listOf(0), llmCalls = llmCalls)
+
+            val result = executor.execute(claudeWithTiers(tier("strong", "true")), perAttemptContext, span)
+
+            assertEquals(0, result.exitCode)
+            assertEquals(2, llmCalls.size)
+            assertEquals(listOf(0, 1), recorded.map { it.attemptIndex })
+            assertEquals(listOf(names.stdOut(0), names.stdOut(1)), recorded.map { it.stdOut })
+            assertEquals(listOf(names.stdErr(0), names.stdErr(1)), recorded.map { it.stdErr })
         }
 
     @Test
