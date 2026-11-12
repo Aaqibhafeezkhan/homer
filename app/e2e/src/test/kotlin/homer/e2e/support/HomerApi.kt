@@ -103,6 +103,8 @@ object HomerApi {
             },
         )
 
+    suspend fun dispatch(id: Int): Dispatch = decode(E2e.client.get("/api/v1/dispatches/$id"))
+
     suspend fun artifact(
         processId: Int,
         path: String,

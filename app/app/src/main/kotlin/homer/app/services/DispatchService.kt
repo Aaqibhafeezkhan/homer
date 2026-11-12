@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.DispatchAgentNotFoundException
+import homer.app.exceptions.DispatchGroupAnswersTooLargeException
 import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
@@ -27,6 +28,14 @@ import kotlin.time.ExperimentalTime
 
 /** Status names used as the `dispatches.status` column value. */
 enum class DispatchStatus { PENDING, DISPATCHING, DISPATCHED, FAILED, CANCELLED }
+
+/**
+ * What a dispatch is made of. A [SINGLE] dispatch is one question and one dispatch row —
+ * today's ask-and-dispatch. A [GROUP] dispatch is N questions answered independently, the
+ * target fired once after the last of them, with all N answers aggregated in question order.
+ * See ADR-0105.
+ */
+enum class DispatchKind { SINGLE, GROUP }
 
 /**
  * A registered ask-and-dispatch: an operator question plus the agent to start
@@ -61,6 +70,11 @@ data class Dispatch(
     // through the (possibly since-edited) current agent definition. Null for rows
     // predating the column, which fall back to the envName-only check. See ADR-0052.
     val secretParamNames: Set<String>? = null,
+    // SINGLE or GROUP. A GROUP row's [questionId] is a synthetic sentinel naming no question —
+    // [questionIds] is its real, ordered set, read from the member table. Empty on a SINGLE row,
+    // whose one question is [questionId]. See ADR-0105.
+    val kind: DispatchKind = DispatchKind.SINGLE,
+    val questionIds: List<String> = emptyList(),
 )
 
 @OptIn(ExperimentalTime::class)
@@ -73,6 +87,7 @@ internal class DispatchService(
     private val agentInputResolver: AgentInputResolver,
     private val processManager: ProcessManager,
     private val broadcaster: ProcessEventBroadcaster,
+    private val groupService: DispatchGroupService,
     private val logger: Logger,
     private val config: DispatchConfig = DispatchConfig(),
     private val nowSec: () -> Long = { Clock.System.now().epochSeconds },
@@ -167,6 +182,9 @@ internal class DispatchService(
     ): Dispatch? {
         val dispatch = repository.findByQuestionId(questionId) ?: return null
         if (dispatch.status != DispatchStatus.PENDING) return null
+        // A member question of a group resolves to the group row, so a group is fired from the
+        // same answer route as a single dispatch, with the group's own gate in front of the claim.
+        if (dispatch.kind == DispatchKind.GROUP) return fireGroup(dispatch)
         if (!repository.claim(dispatch.id)) return null
         val now = nowSec()
         val agent =
@@ -175,6 +193,37 @@ internal class DispatchService(
         val denial = hopDenial(dispatch, agent)
         if (denial != null) return markFailed(dispatch, denial, now)
         return startTarget(dispatch, agent, answer, now)
+    }
+
+    /**
+     * Fires a GROUP dispatch once every member question is ANSWERED, returning null while any of
+     * them is still OPEN. The claim CAS is what makes the target start exactly once when the last
+     * two answers land concurrently, or when the boot re-fire races a live answer — the gate read
+     * below is only the pre-check; the claim is the gate.
+     *
+     * An aggregate that can never be delivered — over `DispatchGroupService.MAX_ANSWER_BYTES` —
+     * settles the group FAILED rather than leaving it PENDING on answers that will never fit. The
+     * throw is caught here rather than escaping [fire] because [fire] also runs on the boot path,
+     * where it would abort [refirePendingAnswered] and with it startup reconciliation.
+     */
+    private suspend fun fireGroup(dispatch: Dispatch): Dispatch? {
+        val payload =
+            try {
+                groupService.aggregateAnswers(dispatch.id) ?: return null
+            } catch (e: DispatchGroupAnswersTooLargeException) {
+                // Claim first: the CAS is what makes this the single outcome of the last answer,
+                // and markFailed only transitions a DISPATCHING row.
+                if (!repository.claim(dispatch.id)) return null
+                return markFailed(dispatch, e.message ?: "Group answers exceed the payload bound", nowSec())
+            }
+        if (!repository.claim(dispatch.id)) return null
+        val now = nowSec()
+        val agent =
+            agentsService.agents[dispatch.agentName]
+                ?: return markFailed(dispatch, "Target agent '${dispatch.agentName}' not found", now)
+        val denial = hopDenial(dispatch, agent)
+        if (denial != null) return markFailed(dispatch, denial, now)
+        return startTarget(dispatch, agent, payload, now)
     }
 
     /** Why the claimed [dispatch] may no longer start [agent], else null. */
@@ -397,12 +446,24 @@ internal class DispatchService(
         val cancelled =
             repository.cancelWithQuestion(id)
                 ?: throw DispatchNotPendingException(id, repository.get(id)?.status?.name ?: existing.status.name)
-        broadcaster.emit(ProcessEvent.QuestionExpired(cancelled.originProcessId, cancelled.questionId))
+        // One event per question the dispatch owned, so a cancelled group's members each leave
+        // the questions inbox rather than only the sentinel. See ADR-0105.
+        questionIdsOf(existing).forEach {
+            broadcaster.emit(ProcessEvent.QuestionExpired(cancelled.originProcessId, it))
+        }
     }
+
+    /** The questions a dispatch owns: a GROUP's ordered member set, or a SINGLE's one question. */
+    private fun questionIdsOf(dispatch: Dispatch): List<String> =
+        if (dispatch.kind == DispatchKind.GROUP) dispatch.questionIds else listOf(dispatch.questionId)
 
     suspend fun sweepExpired() {
         val cancelled = repository.expirePending(nowSec())
-        cancelled.forEach { broadcaster.emit(ProcessEvent.QuestionExpired(it.originProcessId, it.questionId)) }
+        cancelled.forEach { dispatch ->
+            questionIdsOf(dispatch).forEach {
+                broadcaster.emit(ProcessEvent.QuestionExpired(dispatch.originProcessId, it))
+            }
+        }
         if (cancelled.isNotEmpty()) {
             logger.info("Swept {} expired dispatch(es)", cancelled.size)
         }
@@ -426,7 +487,9 @@ internal class DispatchService(
 
     suspend fun refirePendingAnswered() {
         for ((dispatch, answer) in repository.listPendingAnswered()) {
-            if (answer.isBlank()) continue
+            // A GROUP row's own `answer` is empty by construction: fire() re-resolves its sentinel
+            // and aggregates the member answers itself. See ADR-0105.
+            if (dispatch.kind != DispatchKind.GROUP && answer.isBlank()) continue
             logger.info("Re-firing dispatch {} answered before restart", dispatch.id)
             fire(dispatch.questionId, answer)
         }

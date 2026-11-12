@@ -20,6 +20,7 @@ internal fun upgradeSchema(
     migrateToV27(st, current)
     migrateToV28(st, current)
     migrateToV30(st, current)
+    migrateToV31(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -328,5 +329,26 @@ private fun migrateToV30(
         // that maps a cause to a reason, and a guessed reason is worse than none.
         addColumnIfMissing(st, "processes", "failure_reason", "TEXT")
         addColumnIfMissing(st, "processes", "failure_reason_run_id", "INTEGER")
+    }
+}
+
+/**
+ * v30→v31 adds grouped ask-and-dispatch (ADR-0105): `dispatches.kind` and the
+ * `dispatch_group_questions` child table. `SchemaUtils.create` above already created the table
+ * (create-if-missing) but never ALTERs an existing one, so the column and the child table's
+ * member-lookup index are added by hand. `SINGLE` is the truthful default: every row that
+ * existed before this version is a one-question dispatch, and a database that never uses groups
+ * keeps exactly the behaviour it had.
+ */
+private fun migrateToV31(
+    st: Statement,
+    current: Int,
+) {
+    if (current in 1 until 31) {
+        addColumnIfMissing(st, "dispatches", "kind", "TEXT NOT NULL DEFAULT 'SINGLE'")
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS dispatch_group_questions_question_id " +
+                "ON dispatch_group_questions (question_id)",
+        )
     }
 }

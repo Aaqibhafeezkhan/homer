@@ -215,6 +215,10 @@ data class Dispatch(
     val originAgentName: String,
     val dispatchedProcessId: Int? = null,
     val error: String? = null,
+    /** `SINGLE` or `GROUP`. */
+    val kind: String = "SINGLE",
+    /** A GROUP's member question ids in answer-aggregation order; empty on a SINGLE dispatch. */
+    val questionIds: List<String> = emptyList(),
 )
 
 @Serializable

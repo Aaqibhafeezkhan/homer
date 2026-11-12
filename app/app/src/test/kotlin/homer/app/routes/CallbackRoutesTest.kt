@@ -4,12 +4,16 @@ import homer.app.EnvConstants
 import homer.app.apiJson
 import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.DispatchAgentNotFoundException
+import homer.app.exceptions.DispatchGroupTooLargeException
 import homer.app.exceptions.QuestionsClosedForProcessException
+import homer.app.exceptions.TooManyPendingDispatchesException
+import homer.app.exceptions.ValidationException
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.fixtures.mountCallbackRoutes
 import homer.app.infra.SecretRedactor
 import homer.app.models.AskQuestionResponse
+import homer.app.models.CreateDispatchGroupResponse
 import homer.app.models.CreateRunResponse
 import homer.app.models.ErrorResponse
 import homer.app.models.QuestionResponse
@@ -22,6 +26,7 @@ import homer.app.models.TagValidation
 import homer.app.models.TakeRunMessagesResponse
 import homer.app.models.TakenRunMessage
 import homer.app.services.ArtifactTooLargeException
+import homer.app.services.DispatchGroupService
 import homer.app.services.HookEvent
 import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.ProcessManager
@@ -769,6 +774,177 @@ class CallbackRoutesTest {
                 }
 
             assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+
+    // --- grouped ask-and-dispatch (POST /api/v1/callback/dispatch-groups) ---
+
+    @Test
+    fun `dispatch group without a token responds 401`() =
+        testApplication {
+            mountCallbackRoutes { every { questionsService } returns newService() }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[{"text":"q"}],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.Unauthorized, response.status)
+        }
+
+    @Test
+    fun `dispatch group returns the dispatch id and one question id per question`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            val deps =
+                mountCallbackRoutes {
+                    every { questionsService } returns service
+                    coEvery {
+                        dispatchGroupService.create(1, any(), "target", "answer", emptyMap(), null)
+                    } returns DispatchGroupService.CreateResult(11, listOf("q1", "q2"))
+                }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[{"text":"q1"},{"text":"q2","options":["a"]}],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = apiJson.decodeFromString<CreateDispatchGroupResponse>(response.bodyAsText())
+            assertEquals(11, body.dispatchId)
+            assertEquals(listOf("q1", "q2"), body.questionIds)
+            // The route maps the request's questions onto the service's own spec type, options and all.
+            coVerify {
+                deps.dispatchGroupService.create(
+                    1,
+                    listOf(
+                        DispatchGroupService.QuestionSpec("q1"),
+                        DispatchGroupService.QuestionSpec("q2", listOf("a")),
+                    ),
+                    "target",
+                    "answer",
+                    emptyMap(),
+                    null,
+                )
+            }
+        }
+
+    // The bound on the multiplication is the service's; the route must carry its refusal out as a
+    // 400 rather than a 500, and register nothing.
+    @Test
+    fun `dispatch group over the size bound responds 400`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } throws
+                    DispatchGroupTooLargeException(8)
+            }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[{"text":"q"}],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            assertContains(response.bodyAsText(), "at most 8")
+        }
+
+    @Test
+    fun `dispatch group of no questions responds 400`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } throws
+                    ValidationException("A dispatch group needs at least one question", "questions")
+            }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+
+    @Test
+    fun `dispatch group past the pending cap responds 429 and to an unknown agent 404`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            // One stub, two outcomes: the second request must hit the same mounted route.
+            var refusal: Exception = TooManyPendingDispatchesException(100)
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } answers { throw refusal }
+            }
+            val body = """{"questions":[{"text":"q"}],"agent":"target"}"""
+
+            val capped =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
+            assertEquals(HttpStatusCode.TooManyRequests, capped.status)
+
+            refusal = DispatchAgentNotFoundException("target")
+            val unknown =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
+            assertEquals(HttpStatusCode.NotFound, unknown.status)
+        }
+
+    @Test
+    fun `dispatch group from a dead origin responds 409`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } throws
+                    QuestionsClosedForProcessException(1)
+            }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[{"text":"q"}],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.Conflict, response.status)
+        }
+
+    @Test
+    fun `dispatch group with a malformed body responds 400 and registers nothing`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            val deps: ApiDeps = mountCallbackRoutes { every { questionsService } returns service }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+            coVerify(exactly = 0) { deps.dispatchGroupService.create(any(), any(), any(), any(), any(), any()) }
         }
 
     // --- read-by-reference result fetch (GET /api/v1/callback/results/{token}) ---

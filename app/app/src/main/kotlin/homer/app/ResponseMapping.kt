@@ -207,6 +207,8 @@ fun Dispatch.toResponse(redactedParams: Map<String, String>): DispatchResponse =
         dispatchedAt = dispatchedAt,
         dispatchedProcessId = dispatchedProcessId,
         error = error,
+        kind = kind.name,
+        questionIds = questionIds,
     )
 
 fun Dispatch.toSummary(): DispatchSummary =

@@ -20,6 +20,35 @@ data class CreateDispatchResponse(
 )
 
 /**
+ * Body of `POST /api/v1/callback/dispatch-groups`: N questions registered as one dispatch, the
+ * target started once after the last of them, carrying every answer in question order. `questions`
+ * is capped by `server.dispatch.maxGroupSize`; `agent`, `answerParam`, `params` and `ttlSec` mean
+ * what they mean for a single dispatch. See ADR-0105.
+ */
+@Serializable
+data class CreateDispatchGroupRequest(
+    val questions: List<DispatchGroupQuestionSpec>,
+    val agent: String,
+    val answerParam: String = "answer",
+    val params: Map<String, String> = emptyMap(),
+    val ttlSec: Int? = null,
+)
+
+/** One question of a [CreateDispatchGroupRequest], with its optional answer options. */
+@Serializable
+data class DispatchGroupQuestionSpec(
+    val text: String,
+    val options: List<String> = emptyList(),
+)
+
+/** Response of `POST /api/v1/callback/dispatch-groups`: the group id and its question ids, in order. */
+@Serializable
+data class CreateDispatchGroupResponse(
+    val dispatchId: Int,
+    val questionIds: List<String>,
+)
+
+/**
  * Body of `POST /api/v1/callback/runs` (fire-and-forget script-driven dispatch).
  * The optional `continueAgent` block registers a completion continuation that
  * resumes the parent once the started sub-process reaches a terminal state.
@@ -116,6 +145,10 @@ data class DispatchResponse(
     val dispatchedAt: Long? = null,
     val dispatchedProcessId: Int? = null,
     val error: String? = null,
+    /** `SINGLE` or `GROUP`; see [CreateDispatchGroupRequest]. */
+    val kind: String = "SINGLE",
+    /** A GROUP's member question ids in answer-aggregation order; empty on a SINGLE dispatch. */
+    val questionIds: List<String> = emptyList(),
 )
 
 @Serializable

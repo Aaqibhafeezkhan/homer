@@ -59,6 +59,7 @@ class AgentCatalogTest : E2eTestBase() {
                     "workspace-keep",
                     "asker",
                     "dispatcher",
+                    "group-dispatcher",
                     "conditional",
                     "timeout-cmd",
                     "parent",

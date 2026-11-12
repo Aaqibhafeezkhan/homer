@@ -1,6 +1,7 @@
 package homer.app.services.persistence
 
 import homer.app.services.ContinuationKind
+import homer.app.services.DispatchKind
 import org.jetbrains.exposed.v1.core.Expression
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
@@ -289,6 +290,12 @@ internal object Dispatches : Table("dispatches"), FiredRecordTable {
     // registration. Null for rows from before v17. See ADR-0052.
     val secretParamNames = text("secret_param_names").nullable()
 
+    // SINGLE (one question, today's path) or GROUP (N questions answered independently,
+    // the target fired once after the last of them). A GROUP row's question_id is a
+    // synthetic sentinel — it names no `questions` row — and its real, ordered question set
+    // is DispatchGroupQuestions. See ADR-0105.
+    val kind = varchar("kind", 16).default(DispatchKind.SINGLE.name)
+
     // v24: the PENDING cap, the expiry sweep and the DISPATCHING recovery at startup.
     // v26: the settled-row prune, and the list's status, agentName and visibility filters.
     init {
@@ -299,6 +306,28 @@ internal object Dispatches : Table("dispatches"), FiredRecordTable {
     }
 
     override val primaryKey = PrimaryKey(id)
+}
+
+/**
+ * The ordered question set of a [DispatchKind.GROUP] dispatch: one row per member question,
+ * `position` 0-based, which is the order the answers are aggregated in. The member questions
+ * themselves are ordinary `questions` rows with `dispatch_bound = 1`; this table owns which
+ * group they belong to. A SINGLE dispatch has no rows here (it uses `dispatches.question_id`).
+ * Member rows live exactly as long as their dispatch row — the settled-row prune deletes both —
+ * so a settled group still reports the question ids it was registered with. See ADR-0105.
+ */
+internal object DispatchGroupQuestions : Table("dispatch_group_questions") {
+    val dispatchId = integer("dispatch_id")
+    val questionId = varchar("question_id", 64)
+    val position = integer("position")
+
+    // The member→group lookup every answer takes: a member question id resolves to its group
+    // row through this index, never by scanning the table.
+    init {
+        index("dispatch_group_questions_question_id", false, questionId)
+    }
+
+    override val primaryKey = PrimaryKey(dispatchId, position)
 }
 
 internal object ResultTokens : Table("result_tokens") {

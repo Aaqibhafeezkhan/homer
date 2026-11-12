@@ -433,7 +433,7 @@ server:
 | `mcp` | `McpServerConfig` | No | `{enabled=false, maxWaitSec=300, maxInlineArtifactBytes=65536}` | Streamable HTTP MCP endpoint at `/mcp` exposing opted-in agents as MCP tools — see [MCP endpoint](#mcp-endpoint). |
 | `questions` | `QuestionsConfig` | No | `{maxWaitSec=86400, maxOpenPerProcess=10, maxTextLength=10000, maxOptions=20, maxConcurrentWaitsPerProcess=32}` | Human-in-the-loop questions asked by running commands — see [Operator questions](#operator-questions). |
 | `messages` | `RunMessagesConfig` | No | `{maxTextLength=10000, maxPerRun=100}` | Per-run inbox limits for operator messages sent to a running run — see [Run messages](#run-messages). |
-| `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
+| `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32, maxGroupSize=8}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
 | `localRunner` | `LocalRunnerConfig` | No | `{enabled=true, tags=[], concurrency=null}` | The built-in `local` runner: `enabled` (`false` registers none, so no run executes in the server's container), the `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). `tags` and `concurrency` are refused while `enabled` is `false`. See [Runner claim queue](#runner-claim-queue). |
@@ -691,6 +691,14 @@ register a question plus a target agent and parameters
 run automatically. See [ADR-0021](../docs/adr/0021-ask-and-dispatch.md) for the
 design.
 
+The **grouped** variant registers several questions as one dispatch
+(`POST /api/v1/callback/dispatch-groups`, `homer-ask ask-and-dispatch-group`, or
+the `ask_and_dispatch_group` MCP tool): the operator answers them independently
+and Homer starts the target **once**, after the last of them, with every answer
+as a JSON array in question order under `answerParam`. A group is the unit of
+cancel, TTL and the settled-row prune. See
+[ADR-0105](../docs/adr/0105-grouped-ask-and-dispatch.md).
+
 ```yaml
 server:
   dispatch:
@@ -700,6 +708,7 @@ server:
     settledRetentionSec: 604800  # delete settled dispatches/continuations this long after creation (default 7 days, floor 3600)
     resultTokenTtlSec: 3600   # TTL for read-by-reference result tokens (default 3600, floor 60)
     maxJoinSubs: 32           # max subs a single /callback/joins request may fan out to (default 32)
+    maxGroupSize: 8           # max questions one grouped ask-and-dispatch may hold (default 8)
 ```
 
 | Field | Type | Required | Default | Description |
@@ -710,6 +719,7 @@ server:
 | `settledRetentionSec` | `Long` | No | `604800` | How long (seconds) a settled dispatch or continuation — any status but `PENDING` and `DISPATCHING` — is kept, measured from its `createdAt`; the dispatch and continuation sweeps then delete it, with its dispatch-bound question or join watch rows. A row that settled late is therefore kept for less than this after settling. Minimum `3600`. |
 | `resultTokenTtlSec` | `Int` | No | `3600` | TTL (seconds) for read-by-reference result tokens minted when a watched sub-process's result exceeds the inline cap. Floored at `60` so a token outlives the resumed parent's first segment. See [ADR-0025](../docs/adr/0025-capability-token-result-read.md). |
 | `maxJoinSubs` | `Int` | No | `32` | Maximum sub-agents a single `POST /api/v1/callback/joins` request may fan out to. Each sub starts a process immediately, so this caps synchronous per-request fan-out; an over-limit request is rejected with `400`. |
+| `maxGroupSize` | `Int` | No | `8` | Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with `400` before any row is written. A group also counts against `maxPending` and against the origin process's open-question cap. See [ADR-0105](../docs/adr/0105-grouped-ask-and-dispatch.md). |
 
 **Dispatch-bound questions** created via this feature are decoupled from the
 asking process's lifecycle: they are not expired when the asker goes terminal,

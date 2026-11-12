@@ -1,6 +1,7 @@
 package homer.app.services.persistence
 
 import homer.app.services.Dispatch
+import homer.app.services.DispatchKind
 import homer.app.services.DispatchStatus
 import homer.app.services.QuestionsService.Question
 import homer.app.services.QuestionsService.QuestionStatus
@@ -22,8 +23,10 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.statements.InsertStatement
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
 import org.jetbrains.exposed.v1.jdbc.Query
+import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
@@ -35,12 +38,33 @@ import org.jetbrains.exposed.v1.jdbc.update
  * Durable access to ask-and-dispatch records. SQLite is authoritative (ADR-0020);
  * the question + dispatch rows are created in one transaction so the pending cap
  * and the question insert can never race apart. See the ask-and-dispatch ADR.
+ *
+ * A SINGLE dispatch is one question and one dispatch row. A GROUP dispatch (ADR-0105) is one
+ * dispatch row with `kind = GROUP` and a synthetic `question_id` sentinel, plus N member rows in
+ * [DispatchGroupQuestions] that own which questions it is and in what order their answers are
+ * aggregated. Every read that resolves a question id, and every teardown path, therefore covers
+ * both shapes.
  */
 class DispatchRepository(
     private val db: DatabaseService,
     nowSec: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
     private val records = FiredRecords(db, Dispatches, DispatchStatus.entries.map { it.name }, nowSec)
+
+    /** One member question of a GROUP dispatch: its id, and its answer once it is ANSWERED. */
+    data class GroupMember(
+        val questionId: String,
+        val answer: String?,
+    )
+
+    /** The outcome of [createGroup]: the new dispatch id, or the cap that refused it. */
+    sealed interface GroupCreateOutcome {
+        data class Created(val dispatchId: Int) : GroupCreateOutcome
+
+        data object PendingCapReached : GroupCreateOutcome
+
+        data object OpenQuestionCapReached : GroupCreateOutcome
+    }
 
     suspend fun create(
         question: Question,
@@ -49,59 +73,101 @@ class DispatchRepository(
     ): Int? =
         db.query {
             if (records.pendingCapReachedTx(maxPending)) return@query null
-            Questions.insert {
-                it[id] = question.id
-                it[processId] = question.processId
-                it[agentName] = question.agentName
-                it[text] = question.text
-                it[optionsJson] = columnJson.encodeToString(stringListSerializer, question.options)
-                it[status] = question.status.name
-                it[createdAt] = question.createdAt
-                it[dispatchBound] = 1
+            Questions.insert { it.setQuestionColumns(question) }
+            Dispatches.insert { it.setDispatchColumns(dispatch) }[Dispatches.id]
+        }
+
+    /**
+     * Inserts a GROUP [dispatch] row, its N [questions] (each one's index in the list is its
+     * `position`) and their member rows, all in one transaction — so a refused group leaves no
+     * question and no member row behind, and a created one is never observably partial.
+     *
+     * Refused by the global PENDING cap, or by the asking process's open-question cap counted
+     * over its dispatch-bound questions: a group adds up to `dispatch.maxGroupSize` of them in a
+     * single call, which is the multiplication this bound exists for. See ADR-0105.
+     */
+    suspend fun createGroup(
+        questions: List<Question>,
+        dispatch: Dispatch,
+        maxPending: Int,
+        maxOpenPerProcess: Int,
+    ): GroupCreateOutcome =
+        db.query {
+            if (records.pendingCapReachedTx(maxPending)) return@query GroupCreateOutcome.PendingCapReached
+            if (openDispatchBoundQuestionsTx(dispatch.originProcessId) + questions.size > maxOpenPerProcess) {
+                return@query GroupCreateOutcome.OpenQuestionCapReached
             }
-            Dispatches.insert {
-                it[questionId] = dispatch.questionId
-                it[status] = dispatch.status.name
-                it[agentName] = dispatch.agentName
-                it[answerParam] = dispatch.answerParam
-                it[params] = columnJson.encodeToString(stringMapSerializer, dispatch.params)
-                it[originProcessId] = dispatch.originProcessId
-                it[originAgentName] = dispatch.originAgentName
-                it[expiresAt] = dispatch.expiresAt
-                it[createdAt] = dispatch.createdAt
-                it[owner] = dispatch.owner
-                it[secretInputKeys] = dispatch.secretInputKeys?.let { encodeKeys(it) }
-                it[secretParamNames] = dispatch.secretParamNames?.let { encodeKeys(it) }
-            }[Dispatches.id]
+            Questions.batchInsert(questions, shouldReturnGeneratedValues = false) { setQuestionColumns(it) }
+            val dispatchId = Dispatches.insert { it.setDispatchColumns(dispatch) }[Dispatches.id]
+            DispatchGroupQuestions.batchInsert(questions.withIndex().toList(), shouldReturnGeneratedValues = false) { (position, question) ->
+                this[DispatchGroupQuestions.dispatchId] = dispatchId
+                this[DispatchGroupQuestions.questionId] = question.id
+                this[DispatchGroupQuestions.position] = position
+            }
+            GroupCreateOutcome.Created(dispatchId)
         }
 
     suspend fun get(id: Int): Dispatch? =
         db.read {
-            Dispatches
-                .selectAll()
-                .where { Dispatches.id eq id }
-                .singleOrNull()
-                ?.toDispatch()
+            val row = Dispatches.selectAll().where { Dispatches.id eq id }.singleOrNull() ?: return@read null
+            attachGroupQuestionIds(listOf(row.toDispatch())).first()
         }
 
+    /**
+     * The dispatch a question belongs to: the row whose own `question_id` is [questionId], or —
+     * for a member question of a GROUP — the group it belongs to, through
+     * `dispatch_group_questions`. See ADR-0105.
+     */
     suspend fun findByQuestionId(questionId: String): Dispatch? =
         db.read {
-            Dispatches
-                .selectAll()
-                .where { Dispatches.questionId eq questionId }
-                .singleOrNull()
-                ?.toDispatch()
+            val row =
+                Dispatches
+                    .selectAll()
+                    .where { Dispatches.questionId eq questionId }
+                    .singleOrNull()
+                    ?: Dispatches
+                        .join(DispatchGroupQuestions, JoinType.INNER, Dispatches.id, DispatchGroupQuestions.dispatchId)
+                        .selectAll()
+                        .where { DispatchGroupQuestions.questionId eq questionId }
+                        .singleOrNull()
+                    ?: return@read null
+            attachGroupQuestionIds(listOf(row.toDispatch())).first()
         }
 
+    /**
+     * The dispatches owning [ids], keyed by the id each was asked under — a member question of a
+     * group resolves to its group, so the questions inbox annotates every member with it. Two
+     * batched reads, never one per id.
+     */
     suspend fun findByQuestionIds(ids: Collection<String>): Map<String, Dispatch> =
         if (ids.isEmpty()) {
             emptyMap()
         } else {
             db.read {
-                Dispatches
-                    .selectAll()
-                    .where { Dispatches.questionId inList ids }
-                    .associate { it[Dispatches.questionId] to it.toDispatch() }
+                val direct =
+                    Dispatches
+                        .selectAll()
+                        .where { Dispatches.questionId inList ids }
+                        .map { it[Dispatches.questionId] to it.toDispatch() }
+                val memberOf =
+                    DispatchGroupQuestions
+                        .select(DispatchGroupQuestions.dispatchId, DispatchGroupQuestions.questionId)
+                        .where { DispatchGroupQuestions.questionId inList ids }
+                        .map { it[DispatchGroupQuestions.questionId] to it[DispatchGroupQuestions.dispatchId] }
+                val groups =
+                    if (memberOf.isEmpty()) {
+                        emptyMap()
+                    } else {
+                        Dispatches
+                            .selectAll()
+                            .where { Dispatches.id inList memberOf.map { it.second }.distinct() }
+                            .map { it.toDispatch() }
+                            .associateBy { it.id }
+                    }
+                val resolved =
+                    direct + memberOf.mapNotNull { (questionId, dispatchId) -> groups[dispatchId]?.let { questionId to it } }
+                val withQuestionIds = attachGroupQuestionIds(resolved.map { it.second }).associateBy { it.id }
+                resolved.associate { (questionId, dispatch) -> questionId to withQuestionIds.getValue(dispatch.id) }
             }
         }
 
@@ -114,21 +180,37 @@ class DispatchRepository(
         offset: Int,
         limit: Int,
     ): RecordPage<Dispatch> =
-        records.page(status?.name, agentName, visibleOwner, visibleAgents, offset, limit) { rows -> rows.map { it.toDispatch() } }
+        records.page(status?.name, agentName, visibleOwner, visibleAgents, offset, limit) { rows ->
+            attachGroupQuestionIds(rows.map { it.toDispatch() })
+        }
+
+    /**
+     * The member questions of GROUP dispatch [dispatchId] in `position` order — the order their
+     * answers are aggregated in — each with its answer, or null while it is still OPEN. Empty for
+     * a SINGLE dispatch. This is the group's fire gate: the target starts only once no answer is
+     * null. See ADR-0105.
+     */
+    suspend fun groupMembers(dispatchId: Int): List<GroupMember> = db.read { groupMembersTx(listOf(dispatchId))[dispatchId].orEmpty() }
 
     /**
      * Deletes settled dispatches (every status but PENDING and DISPATCHING) created before
-     * [cutoff], with their dispatch-bound questions, in batches of at most [batchSize]
-     * ([FiredRecords.pruneSettled]). Returns the number of dispatches deleted. See ADR-0021.
+     * [cutoff], with their dispatch-bound questions and a group's member rows, in batches of at
+     * most [batchSize] ([FiredRecords.pruneSettled]). Returns the number of dispatches deleted.
+     * See ADR-0021, ADR-0105.
      */
     suspend fun pruneSettled(
         cutoff: Long,
         batchSize: Int = PRUNE_BATCH_SIZE,
     ): Int =
         records.pruneSettled(cutoff, batchSize, listOf(Dispatches.questionId)) { batch ->
-            // A settled dispatch's question is normally gone already; this takes any left behind.
-            val questionIds = batch.map { it[Dispatches.questionId] }
-            Questions.deleteWhere { (Questions.id inList questionIds) and (Questions.dispatchBound eq 1) }
+            val dispatchIds = batch.map { it[Dispatches.id] }
+            // A settled dispatch's questions are normally gone already; this takes any left behind
+            // — the single bound question, and every member question of a group.
+            deleteBoundQuestions(batch.map { it[Dispatches.questionId] })
+            deleteGroupQuestions(dispatchIds)
+            for (chunk in dispatchIds.chunked(SQLITE_PARAM_CHUNK)) {
+                DispatchGroupQuestions.deleteWhere { DispatchGroupQuestions.dispatchId inList chunk }
+            }
         }
 
     /**
@@ -176,8 +258,9 @@ class DispatchRepository(
         }
 
     /**
-     * Atomically cancels a PENDING dispatch and deletes its (OPEN) question. Returns the
-     * cancelled dispatch, or null if it was no longer PENDING.
+     * Atomically cancels a PENDING dispatch and deletes its question(s) — one bound question, or
+     * every member question of a group. Returns the cancelled dispatch, or null if it was no
+     * longer PENDING.
      */
     suspend fun cancelWithQuestion(id: Int): Dispatch? =
         db.query {
@@ -188,7 +271,10 @@ class DispatchRepository(
                 it[status] = DispatchStatus.CANCELLED.name
             }
             deleteBoundQuestion(dispatch.questionId)
-            dispatch.copy(status = DispatchStatus.CANCELLED)
+            // Read before the delete: the cancelled row still reports the questions it owned, so
+            // the caller can emit one expiry event per member.
+            val memberIds = deleteGroupQuestions(listOf(id))[id].orEmpty()
+            dispatch.copy(status = DispatchStatus.CANCELLED, questionIds = memberIds)
         }
 
     data class PendingAnswered(
@@ -196,19 +282,42 @@ class DispatchRepository(
         val answer: String,
     )
 
+    /**
+     * Every PENDING dispatch whose answer is already in, for the boot re-fire: a SINGLE one whose
+     * question is ANSWERED, and a GROUP one whose every member question is. A group's [answer] is
+     * empty — the fire path aggregates its members itself. See ADR-0021, ADR-0105.
+     */
     suspend fun listPendingAnswered(): List<PendingAnswered> =
         db.read {
-            Dispatches
-                .join(Questions, JoinType.INNER, Dispatches.questionId, Questions.id)
-                .selectAll()
-                .where {
-                    (Dispatches.status eq DispatchStatus.PENDING.name) and
-                        (Questions.status eq QuestionStatus.ANSWERED.name)
-                }.map { PendingAnswered(it.toDispatch(), it[Questions.answer] ?: "") }
+            val singles =
+                Dispatches
+                    .join(Questions, JoinType.INNER, Dispatches.questionId, Questions.id)
+                    .selectAll()
+                    .where {
+                        (Dispatches.status eq DispatchStatus.PENDING.name) and
+                            (Questions.status eq QuestionStatus.ANSWERED.name)
+                    }.map { PendingAnswered(it.toDispatch(), it[Questions.answer] ?: "") }
+            // A GROUP row's own question_id names no question, so the join above never matches one.
+            val pendingGroups =
+                Dispatches
+                    .selectAll()
+                    .where {
+                        (Dispatches.status eq DispatchStatus.PENDING.name) and (Dispatches.kind eq DispatchKind.GROUP.name)
+                    }.map { it.toDispatch() }
+            val members = groupMembersTx(pendingGroups.map { it.id })
+            val groups =
+                pendingGroups
+                    .filter { group -> members[group.id]?.let { m -> m.isNotEmpty() && m.all { it.answer != null } } == true }
+                    // The member read above is the ordered set, so the row carries it without a
+                    // second lookup.
+                    .map { group ->
+                        PendingAnswered(group.copy(questionIds = members.getValue(group.id).map { it.questionId }), "")
+                    }
+            singles + groups
         }
 
     /**
-     * Cancels PENDING dispatches past [now] and deletes their OPEN questions, atomically.
+     * Cancels PENDING dispatches past [now] and deletes their questions, atomically.
      * Returns the cancelled dispatches (for event emission). The `db.read` pre-check (served
      * by `dispatches_status_expires`, same as the write below) lets an idle sweep tick skip
      * the write lock entirely; the write re-applies the full predicate, so a row claimed
@@ -226,7 +335,8 @@ class DispatchRepository(
             // write transaction it matches exactly the rows just read.
             Dispatches.update({ records.lapsedAt(now) }) { it[Dispatches.status] = DispatchStatus.CANCELLED.name }
             deleteBoundQuestions(lapsed.map { it.questionId })
-            lapsed.map { it.copy(status = DispatchStatus.CANCELLED) }
+            val memberIds = deleteGroupQuestions(lapsed.map { it.id })
+            lapsed.map { it.copy(status = DispatchStatus.CANCELLED, questionIds = memberIds[it.id].orEmpty()) }
         }
     }
 
@@ -245,11 +355,13 @@ class DispatchRepository(
                 it[Dispatches.dispatchedAt] = at
             }
             deleteBoundQuestions(orphaned.map { it.questionId })
+            val memberIds = deleteGroupQuestions(orphaned.map { it.id })
             orphaned.map {
                 it.copy(
                     status = DispatchStatus.FAILED,
                     error = "Interrupted during dispatch by a server restart",
                     dispatchedAt = at,
+                    questionIds = memberIds[it.id].orEmpty(),
                 )
             }
         }
@@ -259,7 +371,9 @@ class DispatchRepository(
      * successful transition the dispatch-bound question has served its purpose (its
      * answer is now in the fired run, or the fire failed), so delete it in the same
      * transaction — the question lifecycle is owned by the dispatch, not the long-gone
-     * asking process, and leaving these rows behind grew SQLite unbounded. See ADR-0021.
+     * asking process, and leaving these rows behind grew SQLite unbounded. A group's member
+     * questions go with it; its member rows stay until the settled-row prune, so a settled
+     * group still reports the question ids it was registered with. See ADR-0021, ADR-0105.
      */
     private suspend fun transition(
         id: Int,
@@ -279,6 +393,7 @@ class DispatchRepository(
                 ) { body(it) } > 0
             if (updated && questionId != null) {
                 deleteBoundQuestion(questionId)
+                deleteGroupQuestions(listOf(id))
             }
             updated
         }
@@ -293,9 +408,112 @@ class DispatchRepository(
     }
 
     private fun deleteBoundQuestions(questionIds: List<String>) {
+        if (questionIds.isEmpty()) return
         for (chunk in questionIds.chunked(SQLITE_PARAM_CHUNK)) {
             Questions.deleteWhere { (Questions.id inList chunk) and (Questions.dispatchBound eq 1) }
         }
+    }
+
+    /**
+     * Deletes the member questions of the GROUP dispatches in [dispatchIds] and returns their
+     * ordered member ids — [deleteBoundQuestions]'s group arm, read once and reused so a caller
+     * settling a group can report the ids it deleted. The member rows in
+     * `dispatch_group_questions` stay: they are what a settled group still reports its question
+     * ids from, and the settled-row prune deletes them with the dispatch.
+     */
+    private fun deleteGroupQuestions(dispatchIds: Collection<Int>): Map<Int, List<String>> {
+        if (dispatchIds.isEmpty()) return emptyMap()
+        val byDispatch = groupQuestionIdsTx(dispatchIds)
+        deleteBoundQuestions(byDispatch.values.flatten())
+        return byDispatch
+    }
+
+    /** The asking process's OPEN dispatch-bound questions: `questions_process_dispatch_bound`. */
+    private fun openDispatchBoundQuestionsTx(processId: Int): Long =
+        Questions
+            .select(Questions.id)
+            .where {
+                (Questions.processId eq processId) and
+                    (Questions.dispatchBound eq 1) and
+                    (Questions.status eq QuestionStatus.OPEN.name)
+            }.count()
+
+    /** The ordered member question ids of each dispatch in [dispatchIds], inside the caller's transaction. */
+    private fun groupQuestionIdsTx(dispatchIds: Collection<Int>): Map<Int, List<String>> =
+        dispatchIds
+            .chunked(SQLITE_PARAM_CHUNK)
+            .flatMap { chunk ->
+                DispatchGroupQuestions
+                    .select(DispatchGroupQuestions.dispatchId, DispatchGroupQuestions.questionId)
+                    .where { DispatchGroupQuestions.dispatchId inList chunk }
+                    .orderBy(
+                        DispatchGroupQuestions.dispatchId to SortOrder.ASC,
+                        DispatchGroupQuestions.position to SortOrder.ASC,
+                    ).map { it[DispatchGroupQuestions.dispatchId] to it[DispatchGroupQuestions.questionId] }
+            }.groupBy({ it.first }, { it.second })
+
+    /** [groupMembers] for several dispatches at once, inside the caller's transaction. */
+    private fun groupMembersTx(dispatchIds: Collection<Int>): Map<Int, List<GroupMember>> =
+        dispatchIds
+            .chunked(SQLITE_PARAM_CHUNK)
+            .flatMap { chunk ->
+                DispatchGroupQuestions
+                    .join(Questions, JoinType.INNER, DispatchGroupQuestions.questionId, Questions.id)
+                    .select(
+                        DispatchGroupQuestions.dispatchId,
+                        DispatchGroupQuestions.questionId,
+                        Questions.status,
+                        Questions.answer,
+                    ).where { DispatchGroupQuestions.dispatchId inList chunk }
+                    .orderBy(
+                        DispatchGroupQuestions.dispatchId to SortOrder.ASC,
+                        DispatchGroupQuestions.position to SortOrder.ASC,
+                    ).map {
+                        it[DispatchGroupQuestions.dispatchId] to
+                            GroupMember(
+                                it[DispatchGroupQuestions.questionId],
+                                if (it[Questions.status] == QuestionStatus.ANSWERED.name) it[Questions.answer] ?: "" else null,
+                            )
+                    }
+            }.groupBy({ it.first }, { it.second })
+
+    /**
+     * [dispatches] with the ordered member question ids filled in on every GROUP row among them,
+     * in one batched read. SINGLE rows keep an empty list: their one question is `questionId`.
+     * Must run inside a read or write transaction.
+     */
+    private fun attachGroupQuestionIds(dispatches: List<Dispatch>): List<Dispatch> {
+        val groupIds = dispatches.filter { it.kind == DispatchKind.GROUP }.map { it.id }
+        if (groupIds.isEmpty()) return dispatches
+        val byDispatch = groupQuestionIdsTx(groupIds)
+        return dispatches.map { if (it.kind == DispatchKind.GROUP) it.copy(questionIds = byDispatch[it.id].orEmpty()) else it }
+    }
+
+    private fun InsertStatement<*>.setQuestionColumns(question: Question) {
+        this[Questions.id] = question.id
+        this[Questions.processId] = question.processId
+        this[Questions.agentName] = question.agentName
+        this[Questions.text] = question.text
+        this[Questions.optionsJson] = columnJson.encodeToString(stringListSerializer, question.options)
+        this[Questions.status] = question.status.name
+        this[Questions.createdAt] = question.createdAt
+        this[Questions.dispatchBound] = 1
+    }
+
+    private fun InsertStatement<*>.setDispatchColumns(dispatch: Dispatch) {
+        this[Dispatches.questionId] = dispatch.questionId
+        this[Dispatches.status] = dispatch.status.name
+        this[Dispatches.agentName] = dispatch.agentName
+        this[Dispatches.answerParam] = dispatch.answerParam
+        this[Dispatches.params] = columnJson.encodeToString(stringMapSerializer, dispatch.params)
+        this[Dispatches.originProcessId] = dispatch.originProcessId
+        this[Dispatches.originAgentName] = dispatch.originAgentName
+        this[Dispatches.expiresAt] = dispatch.expiresAt
+        this[Dispatches.createdAt] = dispatch.createdAt
+        this[Dispatches.owner] = dispatch.owner
+        this[Dispatches.secretInputKeys] = dispatch.secretInputKeys?.let { encodeKeys(it) }
+        this[Dispatches.secretParamNames] = dispatch.secretParamNames?.let { encodeKeys(it) }
+        this[Dispatches.kind] = dispatch.kind.name
     }
 
     private fun ResultRow.toDispatch(): Dispatch =
@@ -318,6 +536,7 @@ class DispatchRepository(
                 this[Dispatches.secretInputKeys]?.let { decodeKeys(it) },
             secretParamNames =
                 this[Dispatches.secretParamNames]?.let { decodeKeys(it) },
+            kind = DispatchKind.valueOf(this[Dispatches.kind]),
         )
 
     private companion object {

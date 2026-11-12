@@ -3,6 +3,7 @@ package homer.app.services
 import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.DispatchAgentNotFoundException
+import homer.app.exceptions.DispatchGroupAnswersTooLargeException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.QuestionsClosedForProcessException
 import homer.app.exceptions.ServerDrainingException
@@ -45,6 +46,12 @@ class DispatchServiceTest {
     private val inputResolver = mockk<AgentInputResolver>(relaxed = true)
     private val processManager = mockk<ProcessManager>(relaxed = true)
     private val broadcaster = mockk<ProcessEventBroadcaster>(relaxed = true)
+
+    /**
+     * The group fire gate. Relaxed, so it reports "not every member answered" by default
+     * ([DispatchGroupService.aggregateAnswers] returns null) — the group tests stub it.
+     */
+    private val groupService = mockk<DispatchGroupService>(relaxed = true)
     private val authorizer =
         mockk<Authorizer>().also {
             every { it.canDispatchHop(any(), any(), any()) } returns true
@@ -63,6 +70,7 @@ class DispatchServiceTest {
             inputResolver,
             processManager,
             broadcaster,
+            groupService,
             LoggerFactory.getLogger("t"),
             config,
         ) { 1000L }
@@ -292,6 +300,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
             assertFailsWith<ValidationException> {
@@ -332,6 +341,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
 
@@ -479,6 +489,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
             // The mocked starter invokes the fire's input resolution, so the real resolver
@@ -546,6 +557,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
             val resolve = slot<suspend () -> Map<String, String>>()
@@ -620,6 +632,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
             val resolve = slot<suspend () -> Map<String, String>>()
@@ -1331,6 +1344,7 @@ class DispatchServiceTest {
                     AgentInputResolver(),
                     processManager,
                     broadcaster,
+                    groupService,
                     LoggerFactory.getLogger("t"),
                 ) { 1000L }
             val resolveInputs = slot<suspend () -> Map<String, String>>()
@@ -1479,6 +1493,140 @@ class DispatchServiceTest {
             coVerify {
                 runStarter.start(any(), any(), any(), any(), any(), any(), eq(setOf("TOKEN")), any(), any(), any(), any())
             }
+        }
+
+    // ── grouped ask-and-dispatch (ADR-0105) ──────────────────────────────────────────
+
+    /** A PENDING GROUP row as [DispatchRepository.findByQuestionId] resolves one of its members. */
+    private fun groupDispatch() =
+        Dispatch(
+            id = 5,
+            questionId = DispatchGroupService.GROUP_QUESTION_ID_PREFIX + "sentinel",
+            status = DispatchStatus.PENDING,
+            agentName = "h",
+            answerParam = "answer",
+            params = emptyMap(),
+            originProcessId = 7,
+            originAgentName = "asker",
+            expiresAt = null,
+            createdAt = 1,
+            kind = DispatchKind.GROUP,
+            questionIds = listOf("m1", "m2"),
+        )
+
+    private fun dispatchEnabledTarget() {
+        val agent = mockk<Agent>(relaxed = true)
+        every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+        every { agents.agents } returns mapOf("h" to agent)
+    }
+
+    // The member question's answer is the trigger, but the group is the gate: while one member is
+    // still OPEN the target must not start, and the group must stay claimable.
+    @Test
+    fun `fire leaves a group pending while any member is unanswered`() =
+        runTest {
+            dispatchEnabledTarget()
+            coEvery { repo.findByQuestionId("m1") } returns groupDispatch()
+            coEvery { groupService.aggregateAnswers(5) } returns null
+
+            assertNull(service().fire("m1", "one"))
+
+            coVerify(exactly = 0) { repo.claim(any()) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `fire starts the target once with every answer aggregated in question order`() =
+        runTest {
+            dispatchEnabledTarget()
+            coEvery { repo.findByQuestionId("m2") } returns groupDispatch()
+            coEvery { groupService.aggregateAnswers(5) } returns """["one","two"]"""
+            coEvery { repo.claim(5) } returns true
+            val resolve = slot<suspend () -> Map<String, String>>()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), capture(resolve))
+            } coAnswers
+                {
+                    resolve.captured.invoke()
+                    99
+                }
+            val params = slot<Map<String, String>>()
+            every { inputResolver.resolveFromParams(capture(params), any(), any(), any()) } returns emptyMap()
+
+            val result = service().fire("m2", "two")
+
+            coVerify { repo.claim(5) }
+            coVerify { repo.markDispatched(5, 99, 1000L) }
+            assertEquals(DispatchStatus.DISPATCHED, result?.status)
+            // The aggregate, not the last member's answer: the target gets all of them.
+            assertEquals("""["one","two"]""", params.captured["answer"])
+        }
+
+    // The gate read is only a pre-check; the claim CAS is the gate. Two members answered
+    // concurrently (or a boot re-fire racing a live answer) must still start exactly one run.
+    @Test
+    fun `fire of a group whose claim is lost starts nothing`() =
+        runTest {
+            dispatchEnabledTarget()
+            coEvery { repo.findByQuestionId("m2") } returns groupDispatch()
+            coEvery { groupService.aggregateAnswers(5) } returns """["one","two"]"""
+            coEvery { repo.claim(5) } returnsMany listOf(true, false)
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
+
+            assertEquals(DispatchStatus.DISPATCHED, service().fire("m2", "two")?.status)
+            assertNull(service().fire("m2", "two"))
+            coVerify(exactly = 1) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    // The group arm runs the same hop gate as a single dispatch: an agent reloaded to
+    // dispatch.enabled=false between create and the last answer must not fire.
+    @Test
+    fun `fire of a group marks FAILED when the target is no longer dispatch-enabled`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = false)
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.findByQuestionId("m2") } returns groupDispatch()
+            coEvery { groupService.aggregateAnswers(5) } returns """["one","two"]"""
+            coEvery { repo.claim(5) } returns true
+
+            val result = service().fire("m2", "two")
+
+            assertEquals(DispatchStatus.FAILED, result?.status)
+            coVerify { repo.markFailed(5, match { it.contains("no longer an allowed dispatch target") }, 1000L) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    // An aggregate that can never be delivered settles the group FAILED rather than leaving it
+    // PENDING on answers no start could carry. The throw must not escape `fire`: it also runs on
+    // the boot path, where it would abort startup reconciliation.
+    @Test
+    fun `fire settles a group FAILED when the aggregated answers are over the payload bound`() =
+        runTest {
+            dispatchEnabledTarget()
+            coEvery { repo.findByQuestionId("m2") } returns groupDispatch()
+            coEvery { groupService.aggregateAnswers(5) } throws
+                DispatchGroupAnswersTooLargeException(DispatchGroupService.MAX_ANSWER_BYTES)
+            coEvery { repo.claim(5) } returns true
+
+            val result = service().fire("m2", "two")
+
+            assertEquals(DispatchStatus.FAILED, result?.status)
+            coVerify { repo.markFailed(5, match { it.contains("exceed") }, 1000L) }
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `cancel of a group emits one expired event per member question`() =
+        runTest {
+            val pending = groupDispatch()
+            coEvery { repo.get(5) } returns pending
+            coEvery { repo.cancelWithQuestion(5) } returns pending.copy(status = DispatchStatus.CANCELLED)
+
+            service().cancel(5)
+
+            coVerify { broadcaster.emit(ProcessEvent.QuestionExpired(7, "m1")) }
+            coVerify { broadcaster.emit(ProcessEvent.QuestionExpired(7, "m2")) }
         }
 
     @Test

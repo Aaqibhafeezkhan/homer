@@ -50,6 +50,7 @@ import homer.app.services.ContinuationSweepService
 import homer.app.services.CooldownGate
 import homer.app.services.CostMeter
 import homer.app.services.CronSchedulerService
+import homer.app.services.DispatchGroupService
 import homer.app.services.DispatchService
 import homer.app.services.DispatchSweepService
 import homer.app.services.GraphInspectRunner
@@ -407,6 +408,21 @@ val appModule =
         }
 
         single {
+            DispatchGroupService(
+                repository = get(),
+                questionsService = get(),
+                agentsService = get(),
+                authorizer = get(),
+                agentInputResolver = get(),
+                processManager = get(),
+                broadcaster = get(),
+                logger = get { parametersOf("homer.app.services.DispatchGroupService") },
+                config = get<AppConfig>().server.dispatch,
+                questionsConfig = get<AppConfig>().server.questions,
+            )
+        }
+
+        single {
             DispatchService(
                 repository = get(),
                 questionsService = get(),
@@ -416,6 +432,7 @@ val appModule =
                 agentInputResolver = get(),
                 processManager = get(),
                 broadcaster = get(),
+                groupService = get(),
                 logger = get { parametersOf("homer.app.services.DispatchService") },
                 config = get<AppConfig>().server.dispatch,
             )
@@ -470,6 +487,7 @@ val appModule =
                 questionsService = get(),
                 questionsConfig = get<AppConfig>().server.questions,
                 dispatchService = get(),
+                dispatchGroupService = get(),
                 runMessagesService = get(),
                 logger = get { parametersOf("homer.app.services.QuestionsMcpToolFactory") },
             )

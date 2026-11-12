@@ -4,6 +4,7 @@ import homer.e2e.support.Awaits
 import homer.e2e.support.E2e
 import homer.e2e.support.E2eTestBase
 import homer.e2e.support.HomerApi
+import homer.e2e.support.ProcessList
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -136,6 +137,61 @@ class DispatchTest : E2eTestBase() {
             val stdout = HomerApi.artifactText(target.id, hold.stdOut, "cmd_1.out")
             assertTrue(stdout.contains("ticket=$ticket"), "the inherited input must reach the command env: $stdout")
             assertTrue(stdout.contains("note=beta"), "the operator answer must reach the command env: $stdout")
+        }
+
+    @Test
+    fun `grouped ask-and-dispatch starts its target once, after the last of its answers`() =
+        runBlocking {
+            val askerId = HomerApi.startRun("group-dispatcher")
+            // The asker registers the group and returns — it outlives the run.
+            assertEquals("FINISHED", Awaits.awaitTerminal(askerId).status)
+
+            val group =
+                Awaits.awaitNotNull("PENDING group registered by process $askerId") {
+                    HomerApi.dispatches(status = "PENDING").dispatches.firstOrNull { it.originProcessId == askerId }
+                }
+            assertEquals("GROUP", group.kind)
+            assertEquals("echo", group.agentName)
+            assertEquals("message", group.answerParam)
+            assertEquals(3, group.questionIds.size, "the fixture registers three questions")
+
+            // Every member is OPEN, in ask order, and carries the group's own dispatch.
+            val members =
+                Awaits.awaitNotNull("the three OPEN members of group ${group.id}") {
+                    val byId = HomerApi.questions(processId = askerId).questions.associateBy { it.id }
+                    group.questionIds
+                        .map { byId[it] }
+                        .takeIf { found -> found.all { it != null && it.status == "OPEN" } }
+                        ?.map { it!! }
+                }
+            assertEquals(listOf("First message?", "Second message?", "Third message?"), members.map { it.text })
+            assertEquals(listOf("one", "two"), members.first().options)
+            assertTrue(members.all { it.dispatch?.id == group.id }, "every member must carry the group: $members")
+
+            // Two of three answers leave the group short of its gate: nothing starts.
+            assertEquals(HttpStatusCode.OK, HomerApi.answer(members[0].id, "one").status)
+            assertEquals(HttpStatusCode.OK, HomerApi.answer(members[1].id, "two").status)
+            assertEquals("PENDING", HomerApi.dispatch(group.id).status, "a partly answered group must not fire")
+
+            // The last answer fires the target once, with all three answers in ask order.
+            assertEquals(HttpStatusCode.OK, HomerApi.answer(members[2].id, "three").status)
+            val fired =
+                Awaits.awaitNotNull("group ${group.id} to fire") {
+                    HomerApi.dispatch(group.id).takeIf { it.status == "DISPATCHED" && it.dispatchedProcessId != null }
+                }
+            val target = Awaits.awaitTerminal(fired.dispatchedProcessId!!)
+            assertEquals("FINISHED", target.status, "the group's target must run: ${target.failureReason}")
+            val started: ProcessList = HomerApi.decode(HomerApi.statusAll(mapOf("parentProcessId" to "$askerId")))
+            val startedIds = started.processes.map { it.id }
+            assertTrue(
+                startedIds == listOf(target.id),
+                "the group must start exactly one target run, and this one: $startedIds",
+            )
+            val printed = HomerApi.artifact(target.id, "cmd_0.out").bodyAsText()
+            assertTrue(
+                printed.contains("""got: ["one","two","three"]"""),
+                "all three answers, in ask order, must arrive as the target's input: $printed",
+            )
         }
 
     @Test

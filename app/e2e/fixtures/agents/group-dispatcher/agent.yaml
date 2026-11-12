@@ -1,0 +1,12 @@
+name: group-dispatcher
+description: Registers a grouped ask-and-dispatch of three questions that starts `echo` once all are answered
+commands:
+  - !<script>
+    label: register-group
+    content: |
+      homer-ask ask-and-dispatch-group \
+        --question "First message?" --option one --option two \
+        --question "Second message?" \
+        --question "Third message?" \
+        --agent echo \
+        --answer-param message

@@ -328,10 +328,17 @@ data class DispatchConfig(
      * request over this is rejected with 400.
      */
     val maxJoinSubs: Int = 32,
+    /**
+     * Max questions one grouped ask-and-dispatch may hold. A group registers all of its
+     * questions in one call, so this is the bound on that multiplication; a request over
+     * it is rejected with 400 before any row is written. See ADR-0105.
+     */
+    val maxGroupSize: Int = 8,
 ) {
     init {
         require(maxPending > 0) { "server.dispatch.maxPending must be > 0; got $maxPending" }
         require(maxJoinSubs > 0) { "server.dispatch.maxJoinSubs must be > 0; got $maxJoinSubs" }
+        require(maxGroupSize > 0) { "server.dispatch.maxGroupSize must be > 0; got $maxGroupSize" }
         require(defaultTtlSec == null || defaultTtlSec > 0) {
             "server.dispatch.defaultTtlSec must be > 0 (or null); got $defaultTtlSec"
         }

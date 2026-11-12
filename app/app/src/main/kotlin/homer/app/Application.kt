@@ -531,6 +531,7 @@ private fun Application.apiDeps(
         questionsService = get(),
         runMessagesService = get(),
         dispatchService = get(),
+        dispatchGroupService = get(),
         continuationService = get(),
         resultTokenService = get(),
         questionsMcpToolFactory = get(),

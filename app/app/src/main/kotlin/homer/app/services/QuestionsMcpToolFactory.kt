@@ -28,15 +28,16 @@ import org.slf4j.Logger
 
 /**
  * Builds the per-request MCP [Server] for the `/mcp/questions` endpoint:
- * five tools (`ask_user`, `check_answer`, `ask_user_and_wait`, `ask_and_dispatch`,
- * `check_messages`) closed over the processId resolved from the caller's
- * `HMR_CALLBACK_TOKEN`. A fresh Server is built per POST, same stateless pattern as
- * [McpToolFactory]. See ADR-0019 and ADR-0097.
+ * six tools (`ask_user`, `check_answer`, `ask_user_and_wait`, `ask_and_dispatch`,
+ * `ask_and_dispatch_group`, `check_messages`) closed over the processId resolved from the
+ * caller's `HMR_CALLBACK_TOKEN`. A fresh Server is built per POST, same stateless pattern as
+ * [McpToolFactory]. See ADR-0019, ADR-0097 and ADR-0105.
  */
 internal class QuestionsMcpToolFactory(
     private val questionsService: QuestionsService,
     private val questionsConfig: QuestionsConfig,
     private val dispatchService: DispatchService,
+    private val dispatchGroupService: DispatchGroupService,
     private val runMessagesService: RunMessagesService,
     private val logger: Logger,
     private val holdChunkSec: Int = HOLD_CHUNK_SEC,
@@ -60,6 +61,7 @@ internal class QuestionsMcpToolFactory(
                 checkAnswerTool(processId),
                 askUserAndWaitTool(processId),
                 askAndDispatchTool(processId),
+                askAndDispatchGroupTool(dispatchGroupService, processId),
                 checkMessagesTool(processId),
             ),
         )

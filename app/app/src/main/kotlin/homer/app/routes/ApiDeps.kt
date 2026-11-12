@@ -21,6 +21,7 @@ import homer.app.services.Authorizer
 import homer.app.services.ContinuationService
 import homer.app.services.CostMeter
 import homer.app.services.CronSchedulerService
+import homer.app.services.DispatchGroupService
 import homer.app.services.DispatchService
 import homer.app.services.LangGraphInspectService
 import homer.app.services.LangGraphRunStatusService
@@ -79,6 +80,7 @@ internal data class ApiDeps(
     val questionsService: QuestionsService,
     val runMessagesService: RunMessagesService,
     val dispatchService: DispatchService,
+    val dispatchGroupService: DispatchGroupService,
     val continuationService: ContinuationService,
     val resultTokenService: ResultTokenService,
     val questionsMcpToolFactory: QuestionsMcpToolFactory,
