@@ -21,11 +21,7 @@ internal class FailingStatementConnection(
         args: Array<out Any?>?,
     ): Any? {
         if (method.name == "createStatement") throw SQLException("database is locked")
-        return try {
-            method.invoke(real, *(args ?: emptyArray()))
-        } catch (e: java.lang.reflect.InvocationTargetException) {
-            throw e.targetException
-        }
+        return delegate(real, method, args)
     }
 
     companion object {

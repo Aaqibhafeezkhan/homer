@@ -1,7 +1,6 @@
 package homer.app.services.persistence
 
 import java.lang.reflect.InvocationHandler
-import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.sql.Connection
@@ -36,9 +35,6 @@ internal class RecordingWriterConnection {
     /** The recorded statements whose SQL contains [fragment] — the ones a migration step issues. */
     fun matching(fragment: String): List<String> = statements.filter { fragment in it }
 
-    /** Throws away what a previous `migrate()` recorded, so the next one is measured alone. */
-    fun reset() = statements.clear()
-
     /** A [Connection] that delegates to `real` and records what the statements it hands out run. */
     private class Handler(
         private val real: Connection,
@@ -64,19 +60,5 @@ internal class RecordingWriterConnection {
                     result
                 },
             ) as Statement
-    }
-
-    private companion object {
-        /** Invokes the delegate, unwrapping reflection so the caller sees the driver's own exception. */
-        fun delegate(
-            target: Any,
-            method: Method,
-            args: Array<out Any?>?,
-        ): Any? =
-            try {
-                method.invoke(target, *(args ?: emptyArray()))
-            } catch (e: InvocationTargetException) {
-                throw e.targetException
-            }
     }
 }

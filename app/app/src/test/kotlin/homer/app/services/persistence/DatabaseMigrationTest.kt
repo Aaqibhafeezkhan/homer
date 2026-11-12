@@ -2351,6 +2351,9 @@ class DatabaseMigrationTest {
      * [added] are the columns the step adds — the old shape of its table is the model's own column
      * list minus them — and [fragment] is a piece of the step's SQL that no other step issues.
      * [oldDdl] overrides that old shape where the model's columns cannot express it (the v25 move).
+     * [siblings] are the other legs of a multi-table block, seeded in their own pre-step shape and
+     * asserted like [fragment]: `SchemaUtils.create` builds a table the seed omits complete, so a leg
+     * left unseeded never runs and a dropped loop entry fails no test.
      */
     private class MigrationStep(
         val name: String,
@@ -2360,6 +2363,7 @@ class DatabaseMigrationTest {
         val fragment: String,
         val added: Set<String> = emptySet(),
         val oldDdl: String? = null,
+        val siblings: List<MigrationStep> = emptyList(),
     )
 
     /** A guard whose step adds one column, plus [alsoAdded], the block's other columns. */
@@ -2372,6 +2376,7 @@ class DatabaseMigrationTest {
         definition: String,
         vararg alsoAdded: String,
         fragment: String? = null,
+        siblings: List<MigrationStep> = emptyList(),
     ) = MigrationStep(
         name = name,
         lower = lower,
@@ -2379,6 +2384,7 @@ class DatabaseMigrationTest {
         table = table,
         fragment = fragment ?: "ALTER TABLE ${table.tableName} ADD COLUMN $column $definition",
         added = setOf(column, *alsoAdded),
+        siblings = siblings,
     )
 
     /** A guard whose step adds no column: an index, the v25 move, or the v27 thread_id backfill. */
@@ -2397,7 +2403,19 @@ class DatabaseMigrationTest {
             columnStep("questions.dispatch_bound", 1, 2, Questions, "dispatch_bound", "INTEGER NOT NULL DEFAULT 0"),
             columnStep("continuations.kind", 3, 5, Continuations, "kind", "TEXT NOT NULL DEFAULT 'SINGLE'"),
             columnStep("result_tokens.consumer_agent", 3, 7, ResultTokens, "consumer_agent", "TEXT NOT NULL DEFAULT ''"),
-            columnStep("processes.owner", 1, 8, Processes, "owner", "TEXT"),
+            columnStep(
+                "processes.owner",
+                1,
+                8,
+                Processes,
+                "owner",
+                "TEXT",
+                siblings =
+                    listOf(
+                        columnStep("dispatches.owner", 1, 8, Dispatches, "owner", "TEXT"),
+                        columnStep("continuations.owner", 1, 8, Continuations, "owner", "TEXT"),
+                    ),
+            ),
             columnStep(
                 "continuations.fire_attempts",
                 3,
@@ -2412,8 +2430,24 @@ class DatabaseMigrationTest {
             columnStep("processes.created_at", 1, 13, Processes, "created_at", "INTEGER"),
             columnStep("processes.ended_at", 1, 14, Processes, "ended_at", "INTEGER"),
             columnStep("processes.secret_input_keys", 1, 15, Processes, "secret_input_keys", "TEXT"),
-            columnStep("dispatches.secret_input_keys", 3, 16, Dispatches, "secret_input_keys", "TEXT"),
-            columnStep("dispatches.secret_param_names", 3, 17, Dispatches, "secret_param_names", "TEXT"),
+            columnStep(
+                "dispatches.secret_input_keys",
+                3,
+                16,
+                Dispatches,
+                "secret_input_keys",
+                "TEXT",
+                siblings = listOf(columnStep("continuations.secret_input_keys", 3, 16, Continuations, "secret_input_keys", "TEXT")),
+            ),
+            columnStep(
+                "dispatches.secret_param_names",
+                3,
+                17,
+                Dispatches,
+                "secret_param_names",
+                "TEXT",
+                siblings = listOf(columnStep("continuations.secret_param_names", 3, 17, Continuations, "secret_param_names", "TEXT")),
+            ),
             columnStep(
                 "processes.retain_artifacts",
                 1,
@@ -2474,19 +2508,22 @@ class DatabaseMigrationTest {
 
     /**
      * A database stamped [current] whose [step]'s table is seeded in [ddl] — the shape that version
-     * had — migrated through the real entry point with the writer handle's raw SQL recorded. One file
-     * per case: an upgrade is one-way, so the cases cannot share a database.
+     * had — and whose sibling legs' tables are seeded in [siblingDdl], migrated through the real
+     * entry point with the writer handle's raw SQL recorded. One file per case: an upgrade is
+     * one-way, so the cases cannot share a database.
      */
     private fun migrateSeeded(
         dir: Path,
         step: MigrationStep,
         current: Int,
         ddl: String,
+        siblingDdl: List<String> = emptyList(),
     ): RecordingWriterConnection {
         val dbPath = dir.resolve("${step.name.replace(' ', '-')}-v$current.db").toString()
         DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
             c.createStatement().use { st ->
                 st.execute(ddl)
+                siblingDdl.forEach { st.execute(it) }
                 st.execute("PRAGMA user_version = $current")
             }
         }
@@ -2503,20 +2540,31 @@ class DatabaseMigrationTest {
      * step must run at the guard's own lower bound and at the last version it still covers, exactly
      * once, and must not run at its upper bound — the version whose databases already have its
      * effect. Asserted on the SQL the writer connection runs, because a repeated `ALTER` and a
-     * skipped one both leave a fresh database looking the same.
+     * skipped one both leave a fresh database looking the same. A multi-table block is asserted leg
+     * by leg, each leg's table seeded in its own old shape.
      */
     @Test
     fun `every version guard runs its step once inside its span and not at its upper bound`(
         @TempDir dir: Path,
     ) = runTest {
         for (step in migrationSteps) {
+            val legs = listOf(step) + step.siblings
             for (current in setOf(step.lower, step.until - 1)) {
-                val recorded = migrateSeeded(dir, step, current, step.oldDdl ?: oldShapeDdl(step.table, step.added))
-                assertEquals(
-                    1,
-                    recorded.matching(step.fragment).size,
-                    "${step.name} at v$current must run its step exactly once, ran: ${recorded.statements}",
-                )
+                val recorded =
+                    migrateSeeded(
+                        dir,
+                        step,
+                        current,
+                        step.oldDdl ?: oldShapeDdl(step.table, step.added),
+                        step.siblings.map { oldShapeDdl(it.table, it.added) },
+                    )
+                for (leg in legs) {
+                    assertEquals(
+                        1,
+                        recorded.matching(leg.fragment).size,
+                        "${leg.name} at v$current must run its step exactly once, ran: ${recorded.statements}",
+                    )
+                }
             }
             val past = migrateSeeded(dir, step, step.until, oldShapeDdl(step.table))
             assertEquals(
