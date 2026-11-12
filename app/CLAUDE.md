@@ -125,14 +125,14 @@ marked `Constraint:`.
   every start path runs through, `AgentRunStarter.start` and the direct-build starts in
   `routes/RunHandlers.kt` alike; `CronSchedulerService` reads the flag to skip its tick. Nearly
   every entry point converges on `AgentRunStarter.start`, so this one gate covers HTTP, MCP,
-  `!<agent>` hops, dispatches and continuations; retry, resume and debug build their process
-  directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`), so a
-  fourth start path must not be added without one. An **admitted** start (`admitted = true`)
+  `!<agent>` hops, dispatches, continuations and hook fires; retry, resume and debug build their
+  process directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`),
+  so a fourth start path must not be added without one. An **admitted** start (`admitted = true`)
   skips the queue: it is part of a run the window already let in — a `!<agent>` hop, a dispatch,
-  a continuation fire — and parking it would leave that run unable to finish. Only the paths
-  that derive the parent themselves (`AgentSubRunStarter`, `DispatchService`,
-  `ContinuationFireService`) pass the flag; every other start, parentless or with a
-  caller-supplied parent, parks. See ADR-0092.
+  a continuation fire, a hook fire — and parking it would leave that run unable to finish. Only
+  the paths that derive the parent themselves (`AgentSubRunStarter`, `DispatchService`,
+  `ContinuationFireService`, `HookFireService`) pass the flag; every other start, parentless or
+  with a caller-supplied parent, parks. See ADR-0092.
   - **The shutdown drain reuses this gate.** The same `admitted` rule covers the drain window
     (the flag reaches the service as an injected `isDraining()`, ADR-0083): an admitted start
     whose parent is still `WORKING` runs, and an unadmitted one is **refused with
