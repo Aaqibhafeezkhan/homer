@@ -2209,6 +2209,12 @@ responsibility:
 - **Workspace paths.** Templating `workspace.path` on an input keeps runs
   inside the workspace root, but callers can deliberately share a directory
   with another run of the same agent.
+- **Cooldown key.** Templating `cooldown.key` on an input lets the caller
+  choose the subject whose pacing windows the run counts against — a caller
+  can pick a fresh subject to sidestep a window another caller's runs are
+  waiting out. That is what the key is for (per-subject pacing), so it warns
+  rather than refuses; the other bounds (`maxParallelRuns`, `maxQueuedRuns`,
+  cost caps, rate limits) stay per agent and per caller.
 - **RunAgent targets.** Templating a `!<agent>` command's `agentName` on an
   input lets the caller pick which agent runs next — any agent the run's owner
   may run, or that `server.agentGrants` delegates (see
@@ -2227,8 +2233,8 @@ responsibility:
   command label and the input. References to agent `env`, `globalEnv` or
   `@SYSENV` values stay allowed.
 
-Homer logs a load-time warning for the lock-key, workspace-path, RunAgent-target
-and Claude path/mode patterns.
+Homer logs a load-time warning for the lock-key, workspace-path, cooldown-key,
+RunAgent-target and Claude path/mode patterns.
 
 ### Input Schema (payload validation)
 
@@ -2869,9 +2875,13 @@ Rules:
 - **The key is validated when the agent loads.** A blank key, one longer than
   256 characters, or a `{{` that does not open a `{{NAME}}` placeholder is a
   load error — an authoring mistake should fail `reload()`, not every run.
-- **A key may not name a `secret: true` input.** The rendered key is stored with
-  the run and indexed, so naming a secret would write that value to the
-  database.
+- **A key may not name a secret.** The rendered key is stored with the run and
+  indexed, so naming a secret would write that value to the database. That
+  covers an input declared `secret: true` (a load error), an agent `env` entry
+  whose value is sourced from the host with `@SYSENV:` (a load error — that
+  value is a secret by construction), and, on a replay of stored inputs (retry,
+  resume, dispatch and continuation fires), an input that was secret when the
+  source run stored its values (a `400` before any run is created).
 - **The key is not part of the API surface.** It is not returned by the status
   or process APIs and is never logged; a `429` refusal names the agent and the
   window, not the key.

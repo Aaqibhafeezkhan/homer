@@ -39,17 +39,27 @@ internal object CooldownKeyRenderer {
     /**
      * The rendered key for [agent] with [env] in scope, or null when it sets no key.
      * Throws [CooldownKeyInvalidException] when the template cannot produce one.
+     *
+     * [extraSecretInputKeys] carries the secret names a replay of **stored** inputs must
+     * honour — what was secret for the source run stays secret for its retry, resume or
+     * fire, whatever the definition says now (ADR-0052). The current definition's own
+     * secret inputs are checked at load; this is the point-of-use backstop, not a
+     * replacement for it.
      */
     fun render(
         agent: Agent,
         env: Map<String, String>,
+        extraSecretInputKeys: Set<String> = emptySet(),
     ): String? {
         val cooldown = agent.cooldown ?: return null
         val template = cooldown.key ?: return null
-        // Checked against the template's own placeholder names, not against the rendered
-        // text: the refusal then names a name the agent author wrote and can never echo a
-        // value back — an env value that itself contains `{{…}}` is caught by the charset
-        // rule below instead. §12 rule 7.
+        // A placeholder naming a secret must never render: the key is stored in plain text
+        // on the row and in its index, outside the secret store. Checked against the
+        // template's own placeholder names, not against the rendered text — the refusal then
+        // names a name the agent author wrote and can never echo a value back. §12 rule 7.
+        cooldown.keyRefs.firstOrNull { it in agent.secretEnvNames || it in extraSecretInputKeys }?.let { name ->
+            throw CooldownKeyInvalidException(agent.name, "placeholder {{$name}} names a secret input")
+        }
         cooldown.keyRefs.firstOrNull { it !in env }?.let { name ->
             throw CooldownKeyInvalidException(agent.name, "placeholder {{$name}} does not resolve from the run's env or inputs")
         }
@@ -81,4 +91,7 @@ internal object CooldownKeyRenderer {
  * are in place before the process row exists. `HMR_AGENT_DIR` rides `agent.env`, so it
  * resolves here; `HMR_PROCESS_ID` does not exist yet and does not. See ADR-0105.
  */
-internal fun Agent.renderCooldownKey(inputs: Map<String, String>): String? = CooldownKeyRenderer.render(this, env + inputs)
+internal fun Agent.renderCooldownKey(
+    inputs: Map<String, String>,
+    extraSecretInputKeys: Set<String> = emptySet(),
+): String? = CooldownKeyRenderer.render(this, env + inputs, extraSecretInputKeys)

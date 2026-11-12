@@ -37,6 +37,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -530,6 +531,36 @@ class AgentRunStarterTest {
             assertFailsWith<CooldownKeyInvalidException> {
                 starter.start(keyedAgent(), emptyList(), "http") { emptyMap() }
             }
+            verify(exactly = 0) {
+                processFactory.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
+        }
+
+    @Test
+    fun `a key naming a stored-secret input fails the replay and creates no run`() =
+        runBlocking {
+            // A dispatch or continuation fire replays stored inputs with their source run's
+            // secret snapshot: a key naming an input that was secret then is refused before
+            // any row exists, instead of storing the value in `cooldown_key`. See ADR-0105.
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val processFactory = mockk<ProcessFactory>(relaxed = true)
+            val starter =
+                starterWithGate(
+                    mockk(relaxed = true),
+                    processExecutor,
+                    processFactory = processFactory,
+                )
+
+            val e =
+                assertFailsWith<CooldownKeyInvalidException> {
+                    starter.start(keyedAgent(), emptyList(), "http", extraSecretInputKeys = setOf("MR")) {
+                        mapOf("MR" to "s3cr3t-value")
+                    }
+                }
+
+            assertTrue(e.message!!.contains("{{MR}}"), e.message!!)
+            assertTrue(!e.message!!.contains("s3cr3t-value"), e.message!!)
             verify(exactly = 0) {
                 processFactory.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
             }

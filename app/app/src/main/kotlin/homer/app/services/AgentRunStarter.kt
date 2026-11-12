@@ -145,8 +145,10 @@ internal class AgentRunStarter(
         val queryParamsEnv = resolveInputs()
         // Rendered here, before `create`: an unusable key fails the start with no process row
         // to clean up, and the same value goes to the pre-flight gate and to the row, so the
-        // two cannot scope differently. See ADR-0105.
-        val cooldownKey = if (keyedCooldown) agent.renderCooldownKey(queryParamsEnv) else null
+        // two cannot scope differently. A replay's stored-secret snapshot rides along, so a
+        // key naming an input that was secret when the source run stored its inputs is
+        // refused too. See ADR-0105.
+        val cooldownKey = if (keyedCooldown) agent.renderCooldownKey(queryParamsEnv, extraSecretInputKeys) else null
         if (keyedCooldown) cooldownGate.check(agent, cooldownKey)
         // Current flags for a fresh run, unioned with a replay's snapshot.
         val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys

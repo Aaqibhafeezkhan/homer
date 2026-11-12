@@ -207,6 +207,53 @@ class CooldownGateTest {
         )
     }
 
+    @Test
+    fun `a cooldown key naming a secret legacy queryParams input is rejected at load`() {
+        // The load-time guard reads the legacy alias on purpose (an agent may set only one
+        // of the two forms), so this arm must stay covered: a regression to `inputs.orEmpty()`
+        // would let a legacy-format agent store a secret input's value in the indexed
+        // `processes.cooldown_key` column while the suite stays green.
+        @Suppress("DEPRECATION")
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                Agent(
+                    name = "watcher",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"))),
+                    queryParams = listOf(Param(paramName = "MR", secret = true)),
+                    cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}"),
+                )
+            }
+
+        assertTrue(e.message!!.contains("MR"), e.message!!)
+    }
+
+    @Test
+    fun `a cooldown key naming a SYSENV-backed env value is rejected at load`() {
+        // An env entry whose raw value referenced `@SYSENV:` is a secret by construction —
+        // the host variable rides the run's env, and the key is stored in plain text in the
+        // indexed `processes.cooldown_key` column, outside the secret store.
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                Agent(
+                    name = "watcher",
+                    env = mapOf("TOKEN" to "@SYSENV:REPO_TOKEN"),
+                    sysEnvBackedEnvNames = setOf("TOKEN"),
+                    commands = listOf(Command.Cmd(cmd = listOf("true"))),
+                    cooldown = Cooldown(minInterval = "1m", key = "build-{{TOKEN}}"),
+                )
+            }
+
+        assertTrue(e.message!!.contains("TOKEN"), e.message!!)
+        // The key naming a different, non-backed env value loads.
+        Agent(
+            name = "watcher",
+            env = mapOf("TOKEN" to "@SYSENV:REPO_TOKEN", "TEAM" to "core"),
+            sysEnvBackedEnvNames = setOf("TOKEN"),
+            commands = listOf(Command.Cmd(cmd = listOf("true"))),
+            cooldown = Cooldown(minInterval = "1m", key = "build-{{TEAM}}"),
+        )
+    }
+
     // --- withoutFailureBackoff: the manual-recovery (retry/resume/debug) view ---
 
     @Test

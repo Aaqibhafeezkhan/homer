@@ -100,8 +100,13 @@ template.
 **5. The template is validated at load.** `Cooldown`'s `init` rejects a blank key, a
 key over 256 characters, and a `{{` that does not open a `\w+` name — an authoring
 error should fail `reload()`, not every run. `Agent`'s `init` rejects a key naming an
-input declared `secret: true`: the key is stored in plain text on the row and indexed,
-so naming a secret would put that value in the database and in the index (§12 rule 7).
+input declared `secret: true`, and one naming an agent `env` entry whose raw value
+referenced `@SYSENV:` (that value is a secret by construction): the key is stored in
+plain text on the row and indexed, so naming a secret would put that value in the
+database and in the index (§12 rule 7). The renderer repeats the check at the point of
+use for replays of stored inputs (retry, resume, dispatch and continuation fires),
+which carry the source run's snapshot of what was secret then — a key naming such an
+input is refused with a `400` before any row exists.
 
 **6. The refusal never carries the key.** The rendered value is derived from the run's
 inputs, so `CooldownActiveException` and the `400` name the agent and the window, never
@@ -113,8 +118,11 @@ name the agent author wrote, never an env value.
 `processes_agent_cooldown_status_ended` `(agent_name, cooldown_key, status, ended_at)`
 serves the `afterFailure` read. The keyless shapes keep their existing indexes
 (`processes_agent_name`, `processes_agent_status_ended`) — the two new ones are
-strictly narrower, so a keyless query would not choose them anyway. All four plans are
-pinned at 150 000 rows with and without `sqlite_stat1` in `DatabaseMigrationTest`.
+strictly narrower, so a keyless query would not choose them anyway. The two keyed
+plans are pinned at 150 000 rows with and without `sqlite_stat1` in
+`DatabaseMigrationTest`; the keyless shapes stay pinned by the v24 plan test, which
+plans them against a freshly migrated database, and the `optimize` test screens the
+process shapes for table scans with statistics gathered (3 000 rows).
 
 **8. The manual-recovery paths keep their ADR-0051 amendment.** Retry, resume and
 debug still start through `withoutFailureBackoff()`, which keeps `key` when it keeps

@@ -131,6 +131,14 @@ data class Agent(
         require(secretKeyRefs.isEmpty()) {
             "Agent '$name': cooldown.key must not reference a secret input: ${secretKeyRefs.sorted().joinToString(", ")}"
         }
+        // `sysEnvBackedEnvNames` is a constructor property declared above this block, so it is
+        // initialized here. An env entry whose raw value referenced `@SYSENV:` is a secret by
+        // construction — the host value rides the run's env — and a key naming it would store
+        // that value in the row's plain-text `cooldown_key` column and its index. See ADR-0105.
+        val sysEnvKeyRefs = cooldown?.keyRefs.orEmpty() intersect sysEnvBackedEnvNames
+        require(sysEnvKeyRefs.isEmpty()) {
+            "Agent '$name': cooldown.key must not reference an @SYSENV-backed env value: ${sysEnvKeyRefs.sorted().joinToString(", ")}"
+        }
     }
 
     // Reads the legacy alias on purpose: it is the fallback for agents still using it.
@@ -240,7 +248,7 @@ data class Cooldown(
             }
             // A `{{` the placeholder pattern cannot match would survive rendering as a
             // literal, giving every subject the same key. See ADR-0105.
-            require(!COOLDOWN_KEY_PLACEHOLDER.replace(template, "").contains("{{")) {
+            require(!templatePlaceholderPattern.replace(template, "").contains("{{")) {
                 "cooldown.key has a malformed placeholder: use {{NAME}} with a name of letters, digits or underscore"
             }
         }
@@ -256,11 +264,16 @@ data class Cooldown(
      * (the schema rejects additional properties) or a round-trip.
      */
     @Transient
-    val keyRefs: Set<String> = COOLDOWN_KEY_PLACEHOLDER.findAll(key.orEmpty()).map { it.groupValues[1] }.toSet()
+    val keyRefs: Set<String> = templatePlaceholderPattern.findAll(key.orEmpty()).map { it.groupValues[1] }.toSet()
 }
 
-/** The `{{VAR}}` placeholder syntax every templated agent field shares. */
-private val COOLDOWN_KEY_PLACEHOLDER = Regex("""\{\{(\w+)\}\}""")
+/**
+ * The `{{VAR}}` placeholder syntax every templated agent field shares. Lives here, in the
+ * shared kernel, so every layer can name it: the renderer ([homer.app.infra.DefaultTextCompiler])
+ * renders with this one copy, and the load-time steering and cooldown-key checks read it, so
+ * the grammar cannot drift apart.
+ */
+internal val templatePlaceholderPattern = Regex("""\{\{(\w+)\}\}""")
 
 /** Load-time cap on the `cooldown.key` *template*; the rendered key has its own cap. */
 private const val MAX_COOLDOWN_KEY_TEMPLATE_LENGTH = 256

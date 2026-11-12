@@ -74,6 +74,23 @@ class CooldownKeyRendererTest {
     }
 
     @Test
+    fun `a placeholder naming a replayed stored-secret input is refused`() {
+        // Retry, resume and the dispatch/continuation fires replay stored inputs: what was
+        // secret for the source run stays secret for the replay, so the key must not render
+        // from it — the value would land in the plain-text `cooldown_key` column and its index.
+        val e =
+            assertFailsWith<CooldownKeyInvalidException> {
+                agent("mr-{{MR}}").renderCooldownKey(mapOf("MR" to "s3cr3t-value"), extraSecretInputKeys = setOf("MR"))
+            }
+
+        assertEquals("reviewer", e.agentName)
+        assertTrue(e.message!!.contains("{{MR}}"), e.message!!)
+        assertTrue(!e.message!!.contains("s3cr3t-value"), e.message!!)
+        // The same key over a non-secret input renders as usual.
+        assertEquals("mr-1", agent("mr-{{MR}}").renderCooldownKey(mapOf("MR" to "1"), extraSecretInputKeys = setOf("OTHER")))
+    }
+
+    @Test
     fun `an empty rendered value is rejected`() {
         assertFailsWith<CooldownKeyInvalidException> { agent("{{MR}}").renderCooldownKey(mapOf("MR" to "")) }
         assertFailsWith<CooldownKeyInvalidException> { agent("{{MR}}").renderCooldownKey(mapOf("MR" to "   ")) }
