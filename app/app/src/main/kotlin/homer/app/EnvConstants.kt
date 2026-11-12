@@ -122,6 +122,23 @@ object EnvConstants {
     const val LLM_EXIT_CODE = "HMR_LLM_EXIT_CODE"
 
     /**
+     * Why a graceful stop happened (`step_timeout` or `run_deadline`), the zero-based
+     * index and label of the step that was interrupted, the hard deadline in epoch
+     * seconds (`run_deadline` only), and the interrupted LLM step's CLI session id
+     * (absent when the step exposed none). Set only in the env of an agent's
+     * `onStop:` steps, never in a regular command's. See ADR-0105.
+     */
+    const val STOP_REASON = "HMR_STOP_REASON"
+    const val STOP_STEP_INDEX = "HMR_STOP_STEP_INDEX"
+    const val STOP_STEP_LABEL = "HMR_STOP_STEP_LABEL"
+    const val STOP_DEADLINE = "HMR_STOP_DEADLINE"
+    const val STOP_SESSION_ID = "HMR_STOP_SESSION_ID"
+
+    /** `HMR_STOP_REASON` values: a step's own timeout, or the run's soft deadline. */
+    const val STOP_REASON_STEP_TIMEOUT = "step_timeout"
+    const val STOP_REASON_RUN_DEADLINE = "run_deadline"
+
+    /**
      * Default `Agent.artifactNameTemplate` stem: renders the same path on every
      * attempt, so a command's artifacts truncate in place exactly as before that
      * field existed. Single source shared by the model default

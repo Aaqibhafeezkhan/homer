@@ -152,6 +152,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
+| 31 | `processes.stop` (what a graceful stop did) | [0105](../../../../../../../../../docs/adr/0105-graceful-stop-of-a-run.md) |
 
 ### Schema constraints
 
@@ -301,6 +302,15 @@ Editor-facing constraints the row's ADR does not state:
 `transitionStatus` and `killTransition` project `status`, `history` and
 `agent_name` instead of `selectAll()`: they run under the write lock, and pulling
 the blobs of the row into memory only to write them back is pure cost.
+
+`processes.stop` (v31) is one JSON blob — the stop's reason, the interrupted
+step's index and label, when it was detected, and how the `onStop:` steps ended
+— written once by the run's stop phase (`setStop`) and left NULL on every other
+run, so NULL reads as "not stopped gracefully", never as "stopped for an unknown
+reason". The run's status stays `FAILED`; the column is what distinguishes a
+graceful stop from an ordinary failure, and no backfill is possible. It is read
+only where `ProcessInfo` is served, through the same `getOrNull` guard the other
+blob columns use. See ADR-0105.
 
 Schema: `id`/`status`/`agent_name` are real columns (filtered/sorted on);
 `history`/`executions`/`runner_state` and question `options`

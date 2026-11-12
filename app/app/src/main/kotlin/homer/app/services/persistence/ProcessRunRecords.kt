@@ -1,14 +1,16 @@
 package homer.app.services.persistence
 
 import homer.app.models.CostSource
+import homer.app.models.RunStop
 import homer.app.models.RunnerState
 import homer.app.services.ProcessManager
 import java.nio.file.Path
 
 /**
  * The run-time annotations of [ProcessManager]'s API: what a running process records on its own
- * row that no subscriber is told about — trace id, runner state, cost, artifacts dir and run-time
- * tags. [ProcessManager] exposes them by delegation to [DefaultProcessRunRecords]; the writes that
+ * row that no subscriber is told about — trace id, runner state, cost, artifacts dir, run-time
+ * tags and what a graceful stop did. [ProcessManager] exposes them by delegation to
+ * [DefaultProcessRunRecords]; the writes that
  * emit an event (status, current command) stay on [ProcessManager].
  */
 interface ProcessRunRecords {
@@ -21,6 +23,15 @@ interface ProcessRunRecords {
     suspend fun setRunnerState(
         processId: Int,
         update: (RunnerState?) -> RunnerState,
+    )
+
+    /**
+     * Records what a graceful stop did to the run: its cause, the step it interrupted and the
+     * stop steps' outcome. Written once by the stop phase, and no subscriber is told. See ADR-0105.
+     */
+    suspend fun setStop(
+        processId: Int,
+        stop: RunStop,
     )
 
     suspend fun addCost(
@@ -75,6 +86,13 @@ internal class DefaultProcessRunRecords(
         update: (RunnerState?) -> RunnerState,
     ) {
         repository.setRunnerState(processId, update)
+    }
+
+    override suspend fun setStop(
+        processId: Int,
+        stop: RunStop,
+    ) {
+        repository.setStop(processId, stop)
     }
 
     override suspend fun addCost(

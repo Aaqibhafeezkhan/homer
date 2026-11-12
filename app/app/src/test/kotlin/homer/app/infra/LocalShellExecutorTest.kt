@@ -366,6 +366,109 @@ class LocalShellExecutorTest {
             assertTrue(stderr.contains("1s"), "stderr should include the configured timeout duration")
         }
 
+    // ========== Interrupt grace (ADR-0105) ==========
+
+    @Test
+    fun `timeout with an interrupt grace lets a SIGINT-trapping command exit before the kill`() =
+        runBlocking {
+            Assumptions.assumeTrue(
+                ProcessGroupSupport.setsidPath != null,
+                "process-group interrupt requires setsid (absent on this host)",
+            )
+            val marker = tempDir.resolve("graceful-exit")
+            // The command traps SIGINT, records that the trap ran, then exits on its
+            // own. With the grace the executor SIGINTs the group and the command gets
+            // to exit, so the marker survives; an immediate SIGKILL would run no trap.
+            val script = "trap 'echo trapped > $marker; exit 0' INT; sleep 30"
+            var thrown: Throwable? = null
+            try {
+                shellExecutor.cmd(
+                    command = listOf("sh", "-c", script),
+                    stdOut = stdOutFile,
+                    stdErr = stdErrFile,
+                    stdIn = null,
+                    env = emptyMap(),
+                    timeout = 1.seconds,
+                    interruptGrace = 5.seconds,
+                )
+            } catch (e: Throwable) {
+                thrown = e
+            }
+            assertTrue(thrown is CancellationException, "a timed-out command still throws (got $thrown)")
+            assertTrue(Files.exists(marker), "the SIGINT trap should have run: the command exited during the grace")
+            val stderr = Files.readString(stdErrFile)
+            assertTrue(
+                stderr.contains("after a 5s SIGINT grace"),
+                "the TTL marker should note the grace; got: $stderr",
+            )
+        }
+
+    @Test
+    fun `timeout SIGKILLs a command that ignores SIGINT after the grace`() =
+        runBlocking {
+            Assumptions.assumeTrue(
+                ProcessGroupSupport.setsidPath != null,
+                "process-group interrupt requires setsid (absent on this host)",
+            )
+            val pidFile = tempDir.resolve("stubborn.pid")
+            val grace = 2.seconds
+            // The command ignores SIGINT and loops forever, so the grace expires and
+            // the SIGKILL path must run: the wall clock covers the grace, and the
+            // process is gone afterwards.
+            val script = "echo \$\$ > '$pidFile'; trap '' INT; while :; do sleep 1; done"
+            val started = System.currentTimeMillis()
+            var thrown: Throwable? = null
+            try {
+                shellExecutor.cmd(
+                    command = listOf("bash", "-c", script),
+                    stdOut = stdOutFile,
+                    stdErr = stdErrFile,
+                    stdIn = null,
+                    env = emptyMap(),
+                    timeout = 1.seconds,
+                    interruptGrace = grace,
+                )
+            } catch (e: Throwable) {
+                thrown = e
+            }
+            val elapsedMs = System.currentTimeMillis() - started
+            assertTrue(thrown is CancellationException, "a timed-out command still throws (got $thrown)")
+            assertTrue(
+                elapsedMs >= grace.inWholeMilliseconds,
+                "the SIGKILL must wait out the grace; took $elapsedMs ms for a ${grace.inWholeMilliseconds} ms grace",
+            )
+            val pid = pidFile.readText().trim().toLong()
+            assertTrue(waitForExit(pid), "the SIGINT-ignoring process (pid $pid) should have been SIGKILLed")
+        }
+
+    @Test
+    fun `timeout without an interrupt grace SIGKILLs a SIGINT-trapping command immediately`() =
+        runBlocking {
+            val marker = tempDir.resolve("graceful-exit")
+            // The same trap as the grace test, but no grace: the command must die by
+            // SIGKILL before its trap can run, and the TTL marker must stay exactly
+            // today's text.
+            val script = "trap 'echo trapped > $marker; exit 0' INT; sleep 30"
+            var thrown: Throwable? = null
+            try {
+                shellExecutor.cmd(
+                    command = listOf("sh", "-c", script),
+                    stdOut = stdOutFile,
+                    stdErr = stdErrFile,
+                    stdIn = null,
+                    env = emptyMap(),
+                    timeout = 1.seconds,
+                    interruptGrace = null,
+                )
+            } catch (e: Throwable) {
+                thrown = e
+            }
+            assertTrue(thrown is CancellationException, "a timed-out command still throws (got $thrown)")
+            assertFalse(Files.exists(marker), "without a grace the SIGINT trap must never run: the command is SIGKILLed")
+            val stderr = Files.readString(stdErrFile)
+            assertFalse(stderr.contains("SIGINT grace"), "with no grace the TTL marker must be byte-identical; got: $stderr")
+        }
+
     @Test
     fun `cmd should not append TTL message to stderr when killed by coroutine cancellation`() =
         runTest {

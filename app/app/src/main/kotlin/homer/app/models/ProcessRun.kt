@@ -1,6 +1,7 @@
 package homer.app.models
 
 import kotlinx.coroutines.Job
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
 
@@ -72,6 +73,52 @@ data class ProcessInfo(
     // to a caller who may see that run. Not a foreign key: the holder may be evicted first,
     // like every other run link. See ADR-0058.
     val failureReasonRunId: Int? = null,
+    // Why and where this run was stopped gracefully; null for a run that was not.
+    // The run's status stays FAILED — no new ProcessStatus. See ADR-0105.
+    val stop: RunStop? = null,
+)
+
+/**
+ * Why a run was stopped gracefully. Serialized as the same `snake_case` value the stop steps
+ * read in `HMR_STOP_REASON` and an interrupted step records in [ExecutionInfo.stoppedBy], so
+ * the status API has one spelling for one cause.
+ */
+@Serializable
+enum class StopReason {
+    /** A step's own `timeout` expired with `onTimeout: stop`. */
+    @SerialName("step_timeout")
+    STEP_TIMEOUT,
+
+    /** The runner's soft run deadline arrived (Kubernetes `gracefulStopSeconds`). */
+    @SerialName("run_deadline")
+    RUN_DEADLINE,
+}
+
+/** How the run's `onStop:` steps ended. */
+@Serializable
+enum class StopStepsOutcome {
+    /** Every declared stop step ran and succeeded. */
+    @SerialName("finished")
+    FINISHED,
+
+    /** A stop step failed or timed out; the remaining stop steps were skipped. */
+    @SerialName("failed")
+    FAILED,
+
+    /** The agent declares no `onStop:` steps. */
+    @SerialName("none")
+    NONE,
+}
+
+/** What a graceful stop recorded on the run: the cause, the interrupted step, and how the stop steps ended. */
+@Serializable
+data class RunStop(
+    val reason: StopReason,
+    val stepIndex: Int,
+    val stepLabel: String,
+    /** Epoch seconds at which the stop was detected. */
+    val at: Long,
+    val stopSteps: StopStepsOutcome,
 )
 
 /**
@@ -157,6 +204,11 @@ data class ExecutionInfo(
     // `langgraph`, `runnerCmd`);
     // empty for rows written before this field existed.
     val kind: String = "",
+    // Why this step was interrupted by a graceful stop (`step_timeout`, `run_deadline`),
+    // or null when it was not. See ADR-0105.
+    val stoppedBy: String? = null,
+    // Whether this row is one of the agent's `onStop:` steps.
+    val onStop: Boolean = false,
 )
 
 @Serializable

@@ -1,7 +1,5 @@
 package homer.runner
 
-import homer.app.runners.DownloadMode
-import homer.app.runners.TarStreams
 import homer.app.runners.external.ClaimResponse
 import homer.app.runners.external.OpResult
 import homer.app.runners.external.RunnerOp
@@ -17,17 +15,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.createDirectories
-import kotlin.io.path.createDirectory
-import kotlin.io.path.deleteIfExists
-import kotlin.io.path.exists
-import kotlin.io.path.isDirectory
-import kotlin.io.path.outputStream
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -62,8 +52,8 @@ class SessionWorker(
     var lost: Boolean = false
         private set
 
-    @Volatile
-    private var createdRoot = false
+    // The session root's lifecycle — create or refuse, transfers, delete — lives in SessionWorkspace.
+    private val workspace = SessionWorkspace(api, claim.sessionId, sessionRoot)
 
     // Bounded, not UNLIMITED: Homer answers one op per `next` call and awaits that
     // op's result before handing out more, so a handful of in-flight ops is the
@@ -71,6 +61,11 @@ class SessionWorker(
     // misbehaving server's flood of ops apply backpressure instead of piling up.
     private val ops = Channel<RunnerOp>(OPS_CAPACITY)
     private val running = ConcurrentHashMap<String, ProcessRunner.Handle>()
+
+    // The grace each running cmd was started with, so an Interrupt — which carries only the cmd's
+    // id — can stop it gracefully. Absent = the cmd carried no grace; a null-grace interrupt then
+    // ends in the normal kill path, which is all a best-effort interrupt promises (ADR-0105).
+    private val interruptGraces = ConcurrentHashMap<String, Duration>()
 
     // opIds cancelled before `runCmd` had a chance to register the process in
     // [running]: `dispatchLoop` launches a `cmd` op's handling without waiting for
@@ -102,9 +97,9 @@ class SessionWorker(
                 // Every exit reclaims the root, a lost session included: each session gets a fresh
                 // one, so a root left here would never be reused or cleaned (§12 rule 4). Only a
                 // root this session created: a refused pre-existing one is not ours to delete.
-                if (createdRoot) {
+                if (workspace.createdRoot) {
                     withContext(NonCancellable + Dispatchers.IO) {
-                        runCatching { deleteTree(sessionRoot) }
+                        runCatching { workspace.deleteTree(sessionRoot) }
                             .onFailure {
                                 logger.warn(
                                     "Session {} (process {}): failed to delete the session root: {}",
@@ -202,12 +197,22 @@ class SessionWorker(
                         running[op.opId]?.kill()
                     }
 
+                    is RunnerOp.Interrupt -> {
+                        // Off the dispatcher's thread: the interrupt waits out the grace, so
+                        // running it here would park the loop (and Cancel/Close) for that long.
+                        // A command that is gone, or that no longer runs, makes it a no-op.
+                        running[op.opId]?.let { handle ->
+                            val grace = interruptGraces[op.opId]
+                            launch(Dispatchers.IO) { handle.interrupt(grace) }
+                        }
+                    }
+
                     is RunnerOp.Cmd -> {
                         launch { deliver(runCmd(op)) }
                     }
 
                     else -> {
-                        deliver(execute(op))
+                        deliver(workspace.execute(op))
                     }
                 }
             }
@@ -274,82 +279,6 @@ class SessionWorker(
         }
     }
 
-    private suspend fun execute(op: RunnerOp): OpResult =
-        try {
-            withContext(Dispatchers.IO) {
-                when (op) {
-                    is RunnerOp.CreateWorkspace -> {
-                        // createDirectory, not createDirectories: an existing root is refused, never reused.
-                        // Owner-only, so another local user cannot read a run's files through a shared
-                        // --root; no silent fallback where the mode is unsupported, the op fails instead.
-                        // CWE-732.
-                        sessionRoot.parent.createDirectories()
-                        Files.createDirectory(sessionRoot, PosixFilePermissions.asFileAttribute(OWNER_ONLY))
-                        createdRoot = true
-                        listOf("workdir", "artifacts", ".homer").forEach { sessionRoot.resolve(it).createDirectory() }
-                        OpResult(op.opId, root = sessionRoot.toString())
-                    }
-
-                    is RunnerOp.Upload -> {
-                        upload(op)
-                    }
-
-                    is RunnerOp.Download -> {
-                        download(op)
-                    }
-
-                    is RunnerOp.CleanWorkspace -> {
-                        deleteTree(sessionRoot)
-                        OpResult(op.opId)
-                    }
-
-                    is RunnerOp.Cmd, is RunnerOp.Cancel, is RunnerOp.Close -> {
-                        error("${op::class.simpleName} is handled by the dispatcher")
-                    }
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            logger.warn("Session {}: op {} failed: {}", claim.sessionId, op.opId, e.message)
-            OpResult(op.opId, ok = false, error = e.message ?: e::class.simpleName)
-        }
-
-    private suspend fun upload(op: RunnerOp.Upload): OpResult {
-        val target = contained(op.remoteRelative)
-        if (op.isDir) target.createDirectories() else target.parent.createDirectories()
-        api.fetchTar(claim.sessionId, op.opId) { input ->
-            TarStreams.extract(
-                input,
-                target,
-                DownloadMode.OVERWRITE,
-                remoteIsDir = op.isDir,
-                fileName = target.fileName.toString(),
-                sourceLabel = "homer",
-                // No per-instance config for this; the shared default is the same
-                // ceiling Homer's own extraction spends.
-                maxDecompressedBytes = TarStreams.DEFAULT_MAX_EXTRACTED_BYTES,
-            )
-        }
-        return OpResult(op.opId)
-    }
-
-    private suspend fun download(op: RunnerOp.Download): OpResult {
-        val source = contained(op.remoteRelative)
-        return if (!source.exists()) {
-            OpResult(op.opId, missing = true)
-        } else {
-            val tmp = Files.createTempFile(sessionRoot.parent, ".homer-runner-", ".tgz")
-            try {
-                tmp.outputStream().use { TarStreams.pack(it, source) }
-                api.postTar(claim.sessionId, op.opId, if (source.isDirectory()) "dir" else "file", tmp)
-            } finally {
-                tmp.deleteIfExists()
-            }
-            OpResult(op.opId)
-        }
-    }
-
     private suspend fun runCmd(op: RunnerOp.Cmd): OpResult {
         val cwd = Path.of(op.cwd).toAbsolutePath().normalize()
         if (!cwd.startsWith(sessionRoot)) return OpResult(op.opId, ok = false, error = "cwd is outside the session root")
@@ -360,17 +289,22 @@ class SessionWorker(
                 return OpResult(op.opId, ok = false, error = "failed to start: ${e.message}")
             }
         running[op.opId] = handle
+        op.interruptGraceSeconds?.let { interruptGraces[op.opId] = it.seconds }
         // A Cancel dispatched before this coroutine got to run (dispatchLoop's `launch`
         // for `cmd` doesn't wait for the process to start) lands in cancelledOps instead
         // of finding a handle in `running`; check it immediately after registering so
         // that race can't leave the process running to its full timeout.
         if (op.opId in cancelledOps) handle.kill()
         try {
-            val exit = handle.await(op.timeoutMs.milliseconds) { stream, seq, bytes -> postChunk(op.opId, stream, seq, bytes) }
+            val exit =
+                handle.await(op.timeoutMs.milliseconds, op.interruptGraceSeconds?.seconds) { stream, seq, bytes ->
+                    postChunk(op.opId, stream, seq, bytes)
+                }
             return cmdResult(claim.sessionId, op.opId, exit)
         } finally {
             running.remove(op.opId)
             cancelledOps.remove(op.opId)
+            interruptGraces.remove(op.opId)
         }
     }
 
@@ -416,27 +350,10 @@ class SessionWorker(
     /** Whether a failed output post was refused for good: a 4xx other than 429. */
     private fun isRefusal(e: Exception): Boolean = e is RunnerApiException && e.isClientError && e.status != 429
 
-    /**
-     * Lexical containment only, no realpath: the commands this worker runs execute as the same
-     * UID with code Homer sent, so a symlink resolving outside the session root defends no
-     * boundary that code could not cross directly. Accepted risk.
-     */
-    private fun contained(remoteRelative: String): Path {
-        val candidate = sessionRoot.resolve(remoteRelative).normalize()
-        require(candidate.startsWith(sessionRoot)) { "path '$remoteRelative' escapes the session root" }
-        return candidate
-    }
-
     private fun killAll() = running.values.forEach { it.kill() }
-
-    private fun deleteTree(path: Path) {
-        if (!path.exists()) return
-        Files.walk(path).use { walk -> walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
-    }
 
     companion object {
         private const val MAX_RETRIES = 5
-        private val OWNER_ONLY = PosixFilePermissions.fromString("rwx------")
         private const val OPS_CAPACITY = 16
         private val RETRY_DELAY = 1.seconds
         private val FAST_POLL_THRESHOLD = 1.seconds
@@ -450,8 +367,7 @@ class SessionWorker(
  * explain it. Session, op, stream and chunk count only: the chunks may hold secrets (§12 rule 7),
  * and [ProcessRunner.Handle] has neither id, so this is the first place that can name them.
  *
- * File scope, not a member: the class sits at its 400-line limit, and the file-level [logger]
- * below is what a file-level function can see.
+ * File scope, not a member: the file-level [logger] below is what a file-level function can see.
  */
 private fun cmdResult(
     sessionId: String,

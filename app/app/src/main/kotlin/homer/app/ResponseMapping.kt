@@ -5,6 +5,7 @@ import homer.app.models.ContinuationResponse
 import homer.app.models.ContinuationSummary
 import homer.app.models.DispatchResponse
 import homer.app.models.DispatchSummary
+import homer.app.models.ExecutionInfo
 import homer.app.models.ExecutionInfoResponse
 import homer.app.models.LangfuseConfig
 import homer.app.models.PodStartupFailureResponse
@@ -68,21 +69,7 @@ fun ProcessInfo.toResponse(
                     status = status.name,
                 )
             },
-        executions =
-            this.executions.map { execution ->
-                ExecutionInfoResponse(
-                    label = execution.label,
-                    start = execution.start,
-                    end = execution.end,
-                    resultCode = execution.resultCode,
-                    stdOut = execution.stdOut?.toString(),
-                    stdErr = execution.stdErr?.toString(),
-                    errMsg = execution.errMsg,
-                    skipped = execution.skipped,
-                    llmAccounting = execution.llmAccounting,
-                    kind = execution.kind,
-                )
-            },
+        executions = this.executions.map { it.toResponse() },
         currentCommand = this.currentCommand,
         currentCommandStart = this.currentCommandStart,
         currentCommandKind = currentCommandKind,
@@ -110,6 +97,26 @@ fun ProcessInfo.toResponse(
                 val holder = this.failureReasonRunId
                 if (holderVisible && holder != null) truncateFailureReason("$reason (run #$holder)") else reason
             },
+        // The stop record names no other principal: the label it carries is the agent's own
+        // step label, already served to every caller who can see the run.
+        stop = this.stop,
+    )
+
+/** Maps one execution record to its response DTO. */
+private fun ExecutionInfo.toResponse(): ExecutionInfoResponse =
+    ExecutionInfoResponse(
+        label = label,
+        start = start,
+        end = end,
+        resultCode = resultCode,
+        stdOut = stdOut?.toString(),
+        stdErr = stdErr?.toString(),
+        errMsg = errMsg,
+        skipped = skipped,
+        llmAccounting = llmAccounting,
+        kind = kind,
+        stoppedBy = stoppedBy,
+        onStop = onStop,
     )
 
 /**

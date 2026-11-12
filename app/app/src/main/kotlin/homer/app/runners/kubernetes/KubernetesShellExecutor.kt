@@ -38,7 +38,9 @@ import kotlin.time.Duration
  * Runs a command inside an already-started pod by opening a new exec
  * channel per call. Preserves today's argv-list semantics: Cmd runs
  * unshelled via `env KEY=VAL ... argv`; only Script requests a shell,
- * and that is already encoded in the argv it passes us.
+ * and that is already encoded in the argv it passes us. With an
+ * `interruptGrace` (ADR-0105) the command is additionally wrapped in
+ * `setsid`, so its process group can be interrupted before the kill.
  */
 class KubernetesShellExecutor(
     private val execClient: KubernetesExecClient,
@@ -50,8 +52,12 @@ class KubernetesShellExecutor(
     private val maxRunSeconds: Long? = null,
     private val stopReasonPollMs: Long = STOP_REASON_POLL_MS,
     private val stopReasonBudgetMs: Long = STOP_REASON_BUDGET_MS,
+    /** Slack added to the grace for the signalling exec's own bound. */
+    private val signalExecSlackMs: Long = SIGNAL_EXEC_SLACK_MS,
     private val onTermination: suspend (PodTermination) -> Unit = {},
 ) : ShellExecutor {
+    private val podControl = PodProcessControl(execClient, namespace, podName, signalExecSlackMs)
+
     // ShellExecutor.cmd's override signature (fixed by the interface) and IO hop, as in SshShellExecutor.
     // jscpd:ignore-start
     @Suppress("SuspendFunSwallowedCancellation") // aborts under NonCancellable and rethrows
@@ -63,10 +69,13 @@ class KubernetesShellExecutor(
         env: Map<String, String>,
         timeout: Duration,
         stdOutFilter: OutputLineFilter?,
+        interruptGrace: Duration?,
     ): CommandResult =
         withContext(Dispatchers.IO) {
             // jscpd:ignore-end
-            val argv = envPrefix(env) + command
+            // Null without a grace (or where the pod has no `setsid`): the launch is then exactly today's.
+            val pgidFile = podControl.pgidFileFor(env, interruptGrace)
+            val argv = envPrefix(env) + (pgidFile?.let { podControl.setsidLaunch(it, command) } ?: command)
             val remote = execClient.start(namespace, podName, argv, stdin = stdIn != null)
 
             val outPump = OutputPump(remote.inputStream, stdOut, stdOutFilter)
@@ -81,7 +90,9 @@ class KubernetesShellExecutor(
             try {
                 awaitExit(remote, stdOut, stdErr, timeout, kill)
             } catch (e: Throwable) {
-                withContext(NonCancellable) { abort(remote, stdErr, timeout, kill, stdInJob, listOf(outPump, errPump)) }
+                withContext(NonCancellable) {
+                    abort(remote, stdErr, timeout, kill, stdInJob, listOf(outPump, errPump), interruptGrace, pgidFile)
+                }
                 throw e
             }
             stdInJob?.let { joinStdin(remote, it) }
@@ -134,8 +145,10 @@ class KubernetesShellExecutor(
         kill: KillCause,
         stdInJob: Job?,
         pumps: List<OutputPump>,
+        interruptGrace: Duration?,
+        pgidFile: String?,
     ) {
-        runCatching { killInsidePod() }
+        podControl.killPod(interruptGrace, pgidFile, kill)
         runCatching { remote.destroyForcibly() }
         // Exec is dead; a blocked stdin write has hit a broken pipe.
         stdInJob?.cancelAndJoin()
@@ -243,7 +256,7 @@ class KubernetesShellExecutor(
      */
     private suspend fun killLeftoverAfterLostChannel(remote: Process) =
         withContext(NonCancellable) {
-            runCatching { killInsidePod() }
+            runCatching { podControl.killInsidePod() }
                 .onFailure { logger.warn("Failed to kill the leftover command in pod {} after a lost exec channel", podName, it) }
             runCatching { remote.destroyForcibly() }
         }
@@ -358,27 +371,22 @@ class KubernetesShellExecutor(
         flush()
     }
 
-    /** Kills every process in the pod's main container PID namespace. */
-    private fun killInsidePod() {
-        // Via the sh builtin: the procps `kill` binary (debian-ish images)
-        // misparses the negative target `-1`; the dash/ash builtins accept it.
-        val killProc =
-            execClient.start(
-                namespace,
-                podName,
-                listOf("sh", "-c", "kill -KILL -1"),
-                stdin = false,
-            )
-        runCatching { killProc.waitFor(KILL_WAIT_MS, TimeUnit.MILLISECONDS) }
-        runCatching { killProc.destroyForcibly() }
-    }
-
     companion object {
         private const val POLL_INTERVAL_MS = 250L
-        private const val KILL_WAIT_MS = 2_000L
         private const val PUMP_JOIN_MS = 5_000L
         private const val STOP_REASON_POLL_MS = 500L
         private const val STOP_REASON_BUDGET_MS = 5_000L
+        private const val SIGNAL_EXEC_SLACK_MS = 5_000L
+        internal const val SIGNAL_REJECTED = 3
+
+        /**
+         * Refuses `$p` unless it is a plain integer greater than 1. `$p` comes from a file in an
+         * agent-writable directory, so it is attacker-controlled and `kill -INT -1`/`-0` must be
+         * unreachable (§12 rule 2). Shared with the tests, which run it on its own.
+         */
+        internal const val PGID_GUARD =
+            "case \"\$p\" in ''|*[!0-9]*) exit $SIGNAL_REJECTED;; esac; [ \"\$p\" -gt 1 ] || exit $SIGNAL_REJECTED"
+
         private val SIGNAL_EXITS = setOf(137, 143)
         private val logger = LoggerFactory.getLogger(KubernetesShellExecutor::class.java)
     }

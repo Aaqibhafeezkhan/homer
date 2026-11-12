@@ -20,6 +20,7 @@ internal fun upgradeSchema(
     migrateToV27(st, current)
     migrateToV28(st, current)
     migrateToV30(st, current)
+    migrateToV31(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -328,5 +329,19 @@ private fun migrateToV30(
         // that maps a cause to a reason, and a guessed reason is worse than none.
         addColumnIfMissing(st, "processes", "failure_reason", "TEXT")
         addColumnIfMissing(st, "processes", "failure_reason_run_id", "INTEGER")
+    }
+}
+
+/**
+ * v30→v31 adds what a graceful stop did to the run: its cause, the interrupted step and the
+ * stop steps' outcome, as one JSON blob (ADR-0105). No backfill: a run that ended before this
+ * version was never stopped gracefully, and a guessed cause is worse than none.
+ */
+private fun migrateToV31(
+    st: Statement,
+    current: Int,
+) {
+    if (current in 1 until 31) {
+        addColumnIfMissing(st, "processes", "stop", "TEXT")
     }
 }

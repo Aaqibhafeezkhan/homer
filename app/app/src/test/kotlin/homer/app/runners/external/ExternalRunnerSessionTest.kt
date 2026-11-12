@@ -181,6 +181,7 @@ class ExternalRunnerSessionTest {
             assertEquals(mapOf("A" to "1"), op.env)
             assertEquals("in", op.stdin)
             assertEquals(30_000, op.timeoutMs)
+            assertNull(op.interruptGraceSeconds, "a cmd without a grace carries none")
             val sink = assertNotNull(s.sink(op.opId))
             sink.append("stdout", 0, "keep 1\ndrop me\nke".toByteArray())
             sink.append("stdout", 1, "ep 2\n".toByteArray())
@@ -191,6 +192,68 @@ class ExternalRunnerSessionTest {
             assertEquals("keep 1\nkeep 2\n", out.readText())
             assertEquals("warn\n", err.readText())
             assertNull(s.sink(op.opId), "the sink is released with the op")
+        }
+
+    @Test
+    fun `a cmd with an interrupt grace carries it and is interrupted at the soft deadline`() =
+        runTest {
+            val s = openSession()
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(
+                            listOf("sh", "-c", "sleep 60"),
+                            tmp.resolve("o"),
+                            tmp.resolve("e"),
+                            timeout = 5.seconds,
+                            interruptGrace = 2.seconds,
+                        )
+                    }
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds) as RunnerOp.Cmd
+            assertEquals(2L, op.interruptGraceSeconds, "the grace rides the cmd op")
+
+            // The command's own timeout is the soft deadline: the interrupt is posted there,
+            // before the grace-extended wait for the result can expire.
+            testScheduler.advanceTimeBy(5_001)
+            runCurrent()
+            val interrupt = s.mailbox.next(1.seconds)
+            assertTrue(interrupt is RunnerOp.Interrupt && interrupt.opId == op.opId, "$interrupt")
+
+            // The instance then reports the cmd result as usual, so the step still sees the
+            // normal timeout failure rather than a lost instance.
+            s.mailbox.complete(OpResult(op.opId, exitCode = 137, timedOut = true))
+            assertTrue(result.await().exceptionOrNull() is CancellationException)
+        }
+
+    @Test
+    fun `the wait for a cmd result is extended by the interrupt grace`() =
+        runTest {
+            val s = openSession(domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 10)))
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(
+                            listOf("sh", "-c", "x"),
+                            tmp.resolve("o"),
+                            tmp.resolve("e"),
+                            timeout = 5.seconds,
+                            interruptGrace = 3.seconds,
+                        )
+                    }
+                }
+            runCurrent()
+            s.mailbox.next(1.seconds)
+
+            // timeout + grace + heartbeat = 18 s, so a graceful stop is waited out instead of
+            // being failed the moment the plain timeout plus heartbeat has passed.
+            testScheduler.advanceTimeBy(17_999)
+            runCurrent()
+            assertFalse(result.isCompleted)
+            testScheduler.advanceTimeBy(2)
+            runCurrent()
+            assertTrue(result.await().exceptionOrNull() is ExternalRunnerException)
         }
 
     @Test

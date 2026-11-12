@@ -20,6 +20,25 @@ export interface LlmAccounting {
   usage?: LlmUsage | null;
 }
 
+// Why a run was stopped gracefully: a step's own timeout with `onTimeout: stop`, or the
+// runner's soft run deadline.
+export type StopReason = 'step_timeout' | 'run_deadline';
+
+// How a stopped run's `onStop:` steps ended.
+export type StopStepsOutcome = 'finished' | 'failed' | 'none';
+
+// What a graceful stop did to a run. Present only on a run a graceful stop ended; the
+// run's status is FAILED. See ADR-0105.
+export interface RunStop {
+  reason: StopReason;
+  // Index and label of the step the stop interrupted.
+  stepIndex: number;
+  stepLabel: string;
+  // Unix epoch seconds the stop was detected.
+  at: number;
+  stopSteps: StopStepsOutcome;
+}
+
 // Process Execution
 export interface ProcessExecution {
   label: string;
@@ -33,6 +52,10 @@ export interface ProcessExecution {
   llmAccounting?: LlmAccounting | null;
   // Command tag (`cmd`, `script`, `claude`, `codex`, `opencode`, `agent`, `langgraph`, `runnerCmd`); "" for older rows.
   kind?: string;
+  // Why a graceful stop interrupted this step; null when it did not. See ADR-0105.
+  stoppedBy?: StopReason | null;
+  // Whether this entry is one of the agent's `onStop:` steps.
+  onStop?: boolean;
 }
 
 // Pod Phase (Kubernetes runner)
@@ -124,6 +147,9 @@ export interface ProcessInfo {
   // run that blocked this one is named in the text only when the reader may
   // see it. See ADR-0058.
   failureReason?: string | null;
+  // Why and where this run was stopped gracefully; null for a run no graceful stop
+  // ended. See ADR-0105.
+  stop?: RunStop | null;
 }
 
 // Question Status (human-in-the-loop questions)

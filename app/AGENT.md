@@ -121,6 +121,7 @@ mcp:
 | `description` | `String?` | No | `null` | Human-readable description |
 | `group` | `String?` | No | `null` | Optional operator-facing label for this agent. The console's Agents page renders an "All" tab plus one tab per distinct group (sorted by name), so a large catalog can be browsed by area; an ungrouped agent appears under "All" only. Must be non-blank, at most 64 characters, and free of control characters; a violation fails agent load. Returned by `GET /api/v1/agents` and, read from the current definition, by the process API. See [Agent Fields](#agent-fields). |
 | `commands` | `List<Command>` | Yes | - | Sequential commands to execute. An empty list fails agent load (the agent is skipped). |
+| `onStop` | `List<Command>` | No | `[]` | Steps run once, in order, after the run is stopped gracefully — by a step's own `timeout` with `onTimeout: stop`, or by the runner's soft run deadline. Each receives the `HMR_STOP_*` variables and runs under the run's remaining deadline; the first stop step that fails or times out ends the rest. At most 10 steps, and a step with `onTimeout: stop` may not be a stop step. An empty list (the default) means no stop phase. See [Graceful stop](#graceful-stop). |
 | `inputs` | `List<Param>` | No | `null` | Input parameter definitions (query, body, headers). Setting both `inputs` and `queryParams` fails agent load. |
 | `queryParams` | `List<Param>` | No | `null` | **Deprecated alias for `inputs`.** Kept for backward compatibility. Mutually exclusive with `inputs`; setting both fails agent load. |
 | `env` | `Map<String, String>` | No | `{}` | Agent-specific environment variables |
@@ -330,7 +331,9 @@ commands:
 | `cmd` | `String` \| `List<String>` | Yes | - | Command argv. Scalar string is tokenized with POSIX-style quote handling; list is passed through unchanged. Must be non-empty. |
 | `label` | `String` | No | `"cmd"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract command outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -439,7 +442,9 @@ commands:
 | `shell` | `String` | No | `sh` | Interpreter on the runner's PATH; content is piped to `<shell> -s -`, so a shebang line is ignored |
 | `label` | `String` | No | `"script"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Script timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract script outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -570,7 +575,9 @@ commands:
 | `retry` | `LlmRetry` | No | `null` | Retry policy for transient LLM failures (see below) |
 | `label` | `String` | No | `"claude"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. A stopped `!<claude>` attempt is still cost-accounted. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract Claude outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -812,7 +819,9 @@ commands:
 | `retry` | `LlmRetry` | No | `null` | Retry policy, same semantics as `Command.Claude` |
 | `label` | `String` | No | `"codex"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. A stopped `!<codex>` attempt is still cost-accounted. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract Codex outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -964,7 +973,9 @@ commands:
 | `retry` | `LlmRetry` | No | `null` | Retry policy, same semantics as `Command.Claude` |
 | `label` | `String` | No | `"opencode"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. A stopped `!<opencode>` attempt is still cost-accounted. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract opencode outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -1086,6 +1097,8 @@ commands:
 | `queryParams` | `List<AgentCommandParam>` | No | `[]` | Environment variables to pass as query params to the child agent. **Not the same field as the agent-level `queryParams`** — see the warning under [Agent Inputs](#agent-inputs). |
 | `label` | `String` | No | `"agent"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` | **No effect for this command type.** Dispatch is in-process and returns the child `processId` immediately, so there is nothing to time out; the child's own command timeouts govern its runtime. Retained for schema compatibility. |
+| `onTimeout` | `OnTimeout` | No | `fail` | **No effect for this command type**, for the same reason as `timeout`: this step's own timeout can never expire, so a graceful stop never originates here. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Accepted for schema compatibility; a `RunAgent` step returns as soon as it dispatches, so a graceful stop never interrupts it. |
 | `continueIfFail` | `Boolean` | No | `false` | Continue execution if agent launch fails |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract the child process id (stdout is `processId: <id>`; capture it with a `regex` transformer) to environment variables |
@@ -1164,7 +1177,9 @@ commands:
 | `inputEnv` | `String` | No | `HMR_LG_INPUT` | Name of the env var the runtime reads the graph's fresh-run JSON input from (passed to the runtime as `--input-env`). See [Delivering fresh-run input](#delivering-fresh-run-input). |
 | `label` | `String` | No | `"langgraph"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | Command timeout in seconds |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped command may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract runtime outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -1272,7 +1287,9 @@ commands:
 | `syncFromRemote` | `List<String>` | No | `[]` | Target-workdir-relative paths downloaded back after a successful `execute`. With `runner: local` the download is a filesystem no-op, so each entry effectively asserts the path exists in the workdir after `execute` — the command fails otherwise. |
 | `label` | `String` | No | `"runnerCmd"` | Human-readable label shown in the console execution list |
 | `timeout` | `Long` | No | `60` (60 sec) | `execute` timeout in seconds (`check` expressions each get a fixed 60 s, not configurable) |
-| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`. |
+| `onTimeout` | `OnTimeout` | No | `fail` | What this step's `timeout` does when it expires: `fail` fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps before the run ends. `stop` requires a non-empty agent `onStop:`. See [Graceful stop](#graceful-stop). |
+| `interruptGraceSeconds` | `Int` | No | `30` | Seconds a stopped `execute` may take to exit after Homer signals its process group, before it is killed. `0`..`600`; `0` kills at once. Consulted only when a graceful stop interrupts this step. |
+| `continueIfFail` | `Boolean` | No | `false` | Continue when the command exits non-zero. Timeouts, output-cap kills and other thrown errors fail the agent regardless, even with `continueIfFail`; a `timeout` with `onTimeout: stop` stops the run gracefully instead. |
 | `finishExitCode` | `Int` | No | `null` | Exit code that causes the agent to finish early (successfully) instead of failing |
 | `resultEnvParam` | `List<ResultEnvParam>` | No | `[]` | Extract command outputs to environment variables |
 | `when` | `When` | No | `null` | Conditional execution predicate. See [Conditional execution (`when`)](#conditional-execution-when). |
@@ -1369,6 +1386,113 @@ The predicate is one or more bash-`test`-style expressions joined by `all` (AND)
 #### Dry-run behavior
 
 `agentdebug run <agent> --dry-run` prints the predicate (`[WHEN all] …` / `[WHEN any] …`) but does **not** evaluate it — the dry-run env may not match production, and the printer's job is to show the plan, not to commit to a specific outcome. `show-commands` likewise prints a one-line predicate summary without evaluating.
+
+## Graceful stop
+
+By default every failure path ends a run abruptly: a step whose `timeout` expires has its process
+group killed, and the agent gets no chance to save what it was doing. A **graceful stop** is opt-in
+and gives the agent that chance first.
+
+A run is stopped gracefully in exactly two ways:
+
+1. **A step's own `timeout`,** when that step declares `onTimeout: stop`. Instead of failing the run
+   at once, the step is interrupted and the stop phase runs.
+2. **The runner's soft run deadline.** A Kubernetes runner configured with
+   [`gracefulStopSeconds`](SERVER.md#kubernetes) stops the run that many seconds before
+   `maxRunSeconds`, so the stop phase finishes inside the pod's hard limit.
+
+Either way the run ends **`FAILED`** — there is no separate status — carrying a `stop` record that
+says why and what happened: `{reason, stepIndex, stepLabel, at, stopSteps}`, where `reason` is
+`step_timeout` or `run_deadline` and `stopSteps` is `finished`, `failed` or `none`. The interrupted
+step's `ExecutionInfo` carries `stoppedBy` with the same value, and each stop step's carries
+`onStop: true`.
+
+**The stop phase.** `onStop:` lists the steps to run, once and in order. They are ordinary commands
+of any type, with three differences:
+
+- They receive the [`HMR_STOP_*` variables](#workspace-environment-variables) and nothing else about
+  the stop.
+- They run under the run's remaining deadline, so the phase and each of its steps is bounded.
+- The **first** stop step that fails or times out ends the phase; the remaining stop steps are
+  skipped. A stop phase never re-triggers itself.
+
+`onStop:` accepts at most 10 steps, and a step with `onTimeout: stop` may not itself be a stop step.
+`onTimeout: stop` on a command of an agent with no `onStop:` fails agent load — a stop request with
+nothing to run is a mistake, not a no-op. Both are rejected at load time, like any other invalid
+agent definition.
+
+**Interrupting the step.** `interruptGraceSeconds` (default `30`, `0`..`600`) is how long an
+interrupted step may take to exit after Homer signals its process group, before it is killed; `0`
+kills at once. Only a graceful stop uses it — an ordinary timeout kills exactly as it always has. A
+stopped `!<claude>` / `!<codex>` / `!<opencode>` step is still **cost-accounted**: its spend and CLI
+session id are recorded on the interrupted step, so the run's cost is complete even though the run
+failed, and the session id is handed to the stop steps as `HMR_STOP_SESSION_ID`.
+
+The stop variables are derived from author- and template-written values and from the CLI's own
+output, so Homer strips control characters from the exported label and drops a session id that is
+not `[A-Za-z0-9-]{1,128}` rather than repairing it. An agent's `env:` block cannot outrank Homer's
+own `HMR_*` keys, so a stop step cannot be made to read a forged stop reason.
+
+**Example** — an integration run that keeps a partial report when its test step runs too long:
+
+```yaml
+name: integration-runner
+description: Runs the integration suite, keeping a partial report when the run is stopped
+commands:
+  - !<script>
+    label: Prepare
+    content: "make prepare"
+    timeout: 120
+
+  - !<script>
+    label: Run integration tests
+    # This step's own timeout stops the run gracefully instead of failing it,
+    # so the onStop: steps below run before the run ends.
+    timeout: 3600
+    onTimeout: stop
+    interruptGraceSeconds: 60
+    content: "pytest -q tests/integration --junitxml=report.xml"
+
+onStop:
+  - !<script>
+    label: Save the partial report
+    content: 'cp report.xml "$HMR_ARTIFACTS_DIR/partial-report.xml"'
+    timeout: 30
+
+  - !<script>
+    label: Record why the run stopped
+    content: 'echo "$HMR_STOP_REASON at step $HMR_STOP_STEP_INDEX" > "$HMR_ARTIFACTS_DIR/stop-note.txt"'
+    timeout: 30
+```
+
+<details>
+<summary>JSON format</summary>
+
+```json
+{
+  "name": "integration-runner",
+  "description": "Runs the integration suite, keeping a partial report when the run is stopped",
+  "commands": [
+    {
+      "type": "script",
+      "label": "Run integration tests",
+      "timeout": 3600,
+      "onTimeout": "stop",
+      "interruptGraceSeconds": 60,
+      "content": "pytest -q tests/integration --junitxml=report.xml"
+    }
+  ],
+  "onStop": [
+    {
+      "type": "script",
+      "label": "Save the partial report",
+      "content": "cp report.xml \"$HMR_ARTIFACTS_DIR/partial-report.xml\"",
+      "timeout": 30
+    }
+  ]
+}
+```
+</details>
 
 ## Claude Prompt Types
 
@@ -2504,6 +2628,17 @@ Homer provides built-in environment variables for workspace management:
 | `HMR_INVOCATION_CHAIN` | Comma-separated chain of agent names that led to the current invocation (`""` at the root call, `"parent"` at depth 1, `"root,child"` at depth 2). Threaded from parent to child by `RunAgent`'s in-process dispatch for recursion cycle/depth enforcement | `orchestrator,deploy-service` |
 | `HMR_PARENT_PROCESS_ID` | Process id of the run that caused this one — set for runs started by `RunAgent`, `homer-dispatch` / ask-and-dispatch, a continuation, or an HTTP call carrying `X-Homer-Parent-Process-Id`; a retry or resume keeps the source run's parent. **Unset** at the root of a flow (a plain API call, cron, MCP). The same id is served as `parentProcessId` on the status API, so an agent no longer has to forward its own `HMR_PROCESS_ID` as an input to be traceable | `12345` |
 | `HMR_ROOT_PROCESS_ID` | Process id of the **first** run in this run's flow — the root of the parent chain, inherited by every run the flow spawns. **Unset** at the root run itself. The same id is served as `rootProcessId` on the status API; `GET /api/v1/status/all?rootProcessId=<id>` lists every run below the flow root, and `?roots=true` lists one row per flow | `12345` |
+
+A run that was stopped gracefully sets five more, **only in the environment of its `onStop:` steps**
+— never in a regular command's (see [Graceful stop](#graceful-stop)):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `HMR_STOP_REASON` | Why the run was stopped: `step_timeout` (a step's own `timeout` with `onTimeout: stop`) or `run_deadline` (the runner's soft deadline) | `step_timeout` |
+| `HMR_STOP_STEP_INDEX` | Zero-based index of the step the stop interrupted | `3` |
+| `HMR_STOP_STEP_LABEL` | That step's label, with control characters stripped and cut to 256 characters | `Run integration tests` |
+| `HMR_STOP_DEADLINE` | Epoch seconds of the run's hard deadline. Set for `run_deadline` only — a step timeout has no run deadline to name | `1763000000` |
+| `HMR_STOP_SESSION_ID` | CLI session id of the interrupted `!<claude>` / `!<codex>` / `!<opencode>` step, so a stop step can resume that conversation. **Unset** when the interrupted step was not an LLM step, or exposed no id | `3f2b6c1e-8a4d-4c1b-9e2f-7d5a0b6c9e11` |
 
 ### Variables visible to agent commands
 

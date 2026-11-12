@@ -9,9 +9,13 @@ import homer.app.models.ExtraUploadSpec
 import homer.app.models.TelemetryExport
 import homer.app.runners.DownloadMode
 import homer.app.runners.RemotePathTranslator
+import homer.app.runners.RunDeadline
 import io.kubernetes.client.custom.V1Patch
 import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
+import io.kubernetes.client.openapi.models.V1Pod
+import io.kubernetes.client.openapi.models.V1PodStatus
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.opentelemetry.api.common.AttributeKey
@@ -27,9 +31,13 @@ import okhttp3.Request
 import okio.Buffer
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KubernetesRunnerSessionTest {
@@ -40,6 +48,8 @@ class KubernetesRunnerSessionTest {
         api: CoreV1Api = mockk(relaxed = true),
         keepPodOnFailure: Boolean = false,
         maxRunSeconds: Long? = null,
+        gracefulStopSeconds: Long? = null,
+        podCreatedAtEpochSec: Long? = null,
         tracer: Tracer? = null,
         parentContext: Context = Context.root(),
         jobName: String? = null,
@@ -56,6 +66,8 @@ class KubernetesRunnerSessionTest {
         keepPodOnFailure = keepPodOnFailure,
         keepPodTtlSeconds = 3600,
         maxRunSeconds = maxRunSeconds,
+        gracefulStopSeconds = gracefulStopSeconds,
+        podCreatedAtEpochSec = podCreatedAtEpochSec,
         runnerAlias = "k8s-box",
         sync = sync,
         translator =
@@ -147,6 +159,64 @@ class KubernetesRunnerSessionTest {
     }
 
     // ========== Job mode: the Job goes with its pod (ADR-0100) ==========
+
+    // ========== The run's soft/hard deadlines (ADR-0105) ==========
+
+    @Test
+    fun `runDeadline is computed from the pod startTime when a graceful stop is configured`() {
+        val api = podStartApi(OffsetDateTime.ofInstant(Instant.ofEpochSecond(1_000), ZoneOffset.UTC))
+
+        val s = session(api = api, maxRunSeconds = 300, gracefulStopSeconds = 60, podCreatedAtEpochSec = 1_100)
+
+        assertEquals(RunDeadline(softEpochSec = 1_240, hardEpochSec = 1_300), s.runDeadline)
+        verify(exactly = 1) { api.readNamespacedPodStatus(any(), any()) }
+    }
+
+    @Test
+    fun `runDeadline falls back to createdAt when the pod reports no startTime`() {
+        val api = podStartApi(null)
+
+        val s = session(api = api, maxRunSeconds = 300, gracefulStopSeconds = 60, podCreatedAtEpochSec = 1_000)
+
+        assertEquals(RunDeadline(softEpochSec = 1_240, hardEpochSec = 1_300), s.runDeadline)
+    }
+
+    @Test
+    fun `a skewed pod startTime cannot extend the deadline`() {
+        // The pod's own report is outside Homer's trust boundary: it may shorten the deadline, never
+        // push it past the createdAt Homer recorded when it created the pod (§12 rule 2).
+        val api = podStartApi(OffsetDateTime.ofInstant(Instant.ofEpochSecond(9_999), ZoneOffset.UTC))
+
+        val s = session(api = api, maxRunSeconds = 300, gracefulStopSeconds = 60, podCreatedAtEpochSec = 1_000)
+
+        assertEquals(RunDeadline(softEpochSec = 1_240, hardEpochSec = 1_300), s.runDeadline)
+    }
+
+    @Test
+    fun `runDeadline is null when neither the pod nor Homer reports a start`() {
+        val api = podStartApi(null)
+
+        val s = session(api = api, maxRunSeconds = 300, gracefulStopSeconds = 60)
+
+        assertNull(s.runDeadline)
+    }
+
+    @Test
+    fun `without gracefulStopSeconds there is no extra Kubernetes read`() {
+        val api = mockk<CoreV1Api>(relaxed = true)
+
+        val s = session(api = api, maxRunSeconds = 300)
+
+        assertNull(s.runDeadline)
+        verify(exactly = 0) { api.readNamespacedPodStatus(any(), any()) }
+    }
+
+    /** An api whose `readNamespacedPodStatus` reports [startTime] as the pod's start. */
+    private fun podStartApi(startTime: OffsetDateTime?): CoreV1Api {
+        val req = mockk<CoreV1Api.APIreadNamespacedPodStatusRequest>()
+        every { req.execute() } returns V1Pod().status(V1PodStatus().startTime(startTime))
+        return mockk { every { readNamespacedPodStatus(any(), any()) } returns req }
+    }
 
     private fun Request.bodyText(): String = Buffer().also { body!!.writeTo(it) }.readUtf8()
 

@@ -6,7 +6,6 @@ import homer.app.models.AppConfig
 import homer.app.models.Command
 import homer.app.models.CommandResult
 import io.opentelemetry.api.trace.Span
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * Executor for Command.LangGraph - thin launcher for the Python `homer_langgraph`
@@ -53,7 +52,8 @@ class LangGraphExecutor(
                 stdErr = context.stdErr,
                 stdIn = null,
                 env = env,
-                timeout = command.timeout.seconds,
+                timeout = context.timeoutFor(command),
+                interruptGrace = context.interruptGrace,
             )
 
         span.setOutputValue(context, fileOperations, redactor)

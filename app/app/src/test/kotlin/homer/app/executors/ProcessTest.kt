@@ -27,6 +27,7 @@ import homer.app.models.Retain
 import homer.app.runners.ActiveSessionsRegistry
 import homer.app.runners.Runner
 import homer.app.runners.RunnerRegistry
+import homer.app.runners.RunnerSession
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
 import io.mockk.coEvery
@@ -89,6 +90,7 @@ class ProcessTest {
     private lateinit var mockParallelRunsManager: ParallelRunsManager
     private lateinit var mockProcessManager: ProcessManager
     private lateinit var mockRunner: Runner
+    private lateinit var mockSession: RunnerSession
     private lateinit var mockRunnerRegistry: RunnerRegistry
     private lateinit var mockQuestionsService: QuestionsService
     private lateinit var mockQuestionsWorkspaceSetup: QuestionsWorkspaceSetup
@@ -118,6 +120,12 @@ class ProcessTest {
         every { mockRunner.isRemote } returns false
         every { mockRunner.runnerEnv } returns emptyMap()
         every { mockRunner.alias } returns "local"
+        // A relaxed RunnerSession would fabricate a RunDeadline with softEpochSec 0, which
+        // reads as "the soft deadline has passed" and stops the run before its first step
+        // (ADR-0105). These tests run without a deadline.
+        mockSession = mockk(relaxed = true)
+        every { mockSession.runDeadline } returns null
+        coEvery { mockRunner.openSession(any()) } returns mockSession
         mockQuestionsService = mockk(relaxed = true)
         coEvery { mockQuestionsService.registerProcess(any(), any(), any()) } returns "test-callback-token"
         mockQuestionsWorkspaceSetup = mockk(relaxed = true)

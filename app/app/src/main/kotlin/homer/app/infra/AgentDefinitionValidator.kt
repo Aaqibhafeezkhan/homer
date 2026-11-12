@@ -2,6 +2,9 @@ package homer.app.infra
 
 import homer.app.models.Agent
 import homer.app.models.Command
+import homer.app.models.MAX_INTERRUPT_GRACE_SECONDS
+import homer.app.models.MAX_ON_STOP_STEPS
+import homer.app.models.OnTimeout
 import homer.app.models.RunnerFilter
 import org.slf4j.Logger
 
@@ -69,12 +72,56 @@ internal class AgentDefinitionValidator(
         errors: MutableList<String>,
     ): Boolean =
         checkCommandShape(agent, rel, errors) &&
+            checkStopPolicy(agent, rel, errors) &&
             checkRunnerFilter(agent, rel, errors) &&
             checkRunnerCmds(agent, rel, errors) &&
             inputChecks.checkInputEnvNames(agent, errors) &&
             inputChecks.checkTags(agent, errors) &&
             inputChecks.checkInputUniqueness(agent, errors) &&
             inputChecks.checkCommandBindings(agent, errors)
+
+    /**
+     * Rejects a graceful-stop declaration that cannot work: `onTimeout: stop` with no `onStop:`
+     * steps to run, a stop step that is itself `onTimeout: stop` (a stop step is the run's last
+     * chance, so it may not hand the run back to a stop phase), an interrupt grace outside
+     * `0..MAX_INTERRUPT_GRACE_SECONDS`, and more stop steps than [MAX_ON_STOP_STEPS].
+     *
+     * A bare `onStop:` is valid — an agent may declare stop steps while keeping the default
+     * `onTimeout: fail` and be stopped only by the run's deadline. See ADR-0105.
+     */
+    private fun checkStopPolicy(
+        agent: Agent,
+        rel: String,
+        errors: MutableList<String>,
+    ): Boolean {
+        val steps = agent.commands + agent.onStop
+        val badGrace = steps.firstOrNull { it.interruptGraceSeconds !in 0..MAX_INTERRUPT_GRACE_SECONDS }
+        val failure =
+            when {
+                agent.onStop.size > MAX_ON_STOP_STEPS -> {
+                    "declares ${agent.onStop.size} onStop steps, more than $MAX_ON_STOP_STEPS"
+                }
+
+                agent.commands.any { it.onTimeout == OnTimeout.STOP } && agent.onStop.isEmpty() -> {
+                    "sets onTimeout: stop but declares no onStop steps"
+                }
+
+                agent.onStop.any { it.onTimeout == OnTimeout.STOP } -> {
+                    "sets onTimeout: stop on an onStop step"
+                }
+
+                badGrace != null -> {
+                    "declares interruptGraceSeconds ${badGrace.interruptGraceSeconds}, outside 0..$MAX_INTERRUPT_GRACE_SECONDS"
+                }
+
+                else -> {
+                    null
+                }
+            } ?: return true
+        logger.error("Agent '{}' in {} {}. Skipping.", agent.name, rel, failure)
+        errors.add("Agent '${agent.name}' in $rel $failure")
+        return false
+    }
 
     /** Rejects an agent with no commands, or a langgraph command without dispatch; `false` = skip it. */
     private fun checkCommandShape(

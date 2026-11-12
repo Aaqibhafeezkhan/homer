@@ -58,6 +58,7 @@ private class FakeShell(
         env: Map<String, String>,
         timeout: Duration,
         stdOutFilter: OutputLineFilter?,
+        interruptGrace: Duration?,
     ): CommandResult {
         invocations += command to stdIn
         lastEnv = env

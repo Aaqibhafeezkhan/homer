@@ -72,6 +72,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import ch.qos.logback.classic.Logger as LogbackLogger
 
 /**
@@ -2419,6 +2420,82 @@ class LlmHarnessExecutorTest {
         assertThrows<IllegalArgumentException> { claudeWithTiers(*tiers.toTypedArray()) }
         assertThrows<IllegalArgumentException> { tier(" ", "true") }
     }
+
+    // ========== Graceful stop (ADR-0105) ==========
+
+    @Test
+    fun `a stop-interrupted attempt that wrote its result is accounted and its session reaches the step's facts`() =
+        runTest {
+            // The CLI finished its turn and wrote `result` before the signal landed: the attempt
+            // is priced normally, and the step still carries the spend. The grace is part of the
+            // call, so the stub has to name it — an eight-argument stub, not the seven the
+            // grace-less tests use.
+            stdOut.writeText("{\"t\":\"start\",\"sid\":\"sess-stop\"}\n{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws CancellationException("Timeout reached. 60s.")
+            val stopping = context.copy(processId = 7, agentName = "demo", interruptGrace = 30.seconds)
+
+            assertThrows<CancellationException> { executor.execute(claude(), stopping, span) }
+
+            assertEquals("sess-stop", stopping.facts.interruptedAccounting?.sessionId)
+            assertEquals(0.42, stopping.facts.interruptedAccounting?.costUsd)
+            // The session id is what the stop steps receive as HMR_STOP_SESSION_ID.
+            assertEquals("sess-stop", stopping.facts.cliSessionId)
+            coVerify(exactly = 1) { processManager.addCost(7, 0.42, CostSource.CLI) }
+        }
+
+    @Test
+    fun `a stop-interrupted attempt with no result event is still accounted and keeps its session`() =
+        runTest {
+            // The signal beat the CLI's `result`: the lenient scan prices what it can, and the
+            // step carries the aborted attempt's accounting rather than losing the spend.
+            stdOut.writeText("""{"t":"start","sid":"sess-abort"}""")
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws CancellationException("Timeout reached. 60s.")
+            val stopping = context.copy(processId = 7, agentName = "demo", interruptGrace = 30.seconds)
+
+            assertThrows<CancellationException> { executor.execute(claude(), stopping, span) }
+
+            assertEquals("no result event", stopping.facts.interruptedAccounting?.fallbackReason)
+            assertEquals("sess-abort", stopping.facts.cliSessionId)
+        }
+
+    @Test
+    fun `a stop-interrupted attempt is not retried`() =
+        runTest {
+            // A stop is the run's decision, not a transient failure: retrying would run the CLI
+            // again after the step that opted into stopping was already interrupted.
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws CancellationException("Timeout reached. 60s.")
+
+            assertThrows<CancellationException> {
+                executor.execute(
+                    claude(retry = LlmRetry(attempts = 3, baseDelayMs = 0, maxDelayMs = 0)),
+                    context.copy(interruptGrace = 30.seconds),
+                    span,
+                )
+            }
+
+            coVerify(exactly = 1) { context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `an attempt whose step did not opt in hands nothing to the step's facts`() =
+        runTest {
+            // A kill or a plain failure: the facts stay empty, so no stop context is built from them.
+            stdOut.writeText("""{"t":"start","sid":"sess-plain"}""")
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws CancellationException("Timeout reached. 60s.")
+
+            assertThrows<CancellationException> { executor.execute(claude(), context, span) }
+
+            assertNull(context.facts.interruptedAccounting)
+            assertNull(context.facts.cliSessionId)
+        }
 
     private companion object {
         const val MAX_TIERS = homer.app.models.MAX_LLM_ESCALATION_TIERS

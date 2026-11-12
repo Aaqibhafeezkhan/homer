@@ -70,9 +70,25 @@ object ProcessRunner {
             process.destroyForcibly()
         }
 
+        /**
+         * Stops the command gracefully: SIGINT its process group, wait up to [grace] for it to
+         * exit, then [kill] what is left. Best-effort — a command that exits inside the grace
+         * leaves the kill a no-op, one that ignores SIGINT is killed after the grace, and a host
+         * without `setsid` (no known group) still gets the [kill]. Null kills at once. The pgid
+         * is the process's own group or nothing, the same guard [kill] uses, so it can never be
+         * this runner's group. See ADR-0105.
+         */
+        fun interrupt(grace: Duration?) {
+            if (!process.isAlive) return
+            ProcessGroupSupport.ownProcessGroupId(process)?.let { ProcessGroupSupport.interruptGroup(it) }
+            if (grace != null) process.waitFor(grace.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            kill()
+        }
+
         @Suppress("SuspendFunInFinallySection") // NonCancellable + Dispatchers.IO, which detekt does not read as NonCancellable
         suspend fun await(
             timeout: Duration,
+            interruptGrace: Duration? = null,
             sink: suspend (stream: String, seq: Long, bytes: ByteArray) -> Unit,
         ): Exit {
             // The op's deadline, not just this call's: the pumps post the tail after the
@@ -81,16 +97,21 @@ object ProcessRunner {
             val out = Pump(pumps, process.inputStream, RunnerProtocol.STREAM_STDOUT, sink)
             val err = Pump(pumps, process.errorStream, RunnerProtocol.STREAM_STDERR, sink)
             var finished = false
+            // True only when this call's own timeout expired; an outside cancel leaves it false,
+            // so a deliberate kill stays the immediate SIGKILL it is today (§12, ADR-0105).
+            var timedOut = false
             var cut: Set<String> = emptySet()
             try {
-                finished = withTimeoutOrNull(timeout) { process.onExit().await() } != null
+                val exited = withTimeoutOrNull(timeout) { process.onExit().await() }
+                finished = exited != null
+                timedOut = exited == null
             } finally {
                 // In a finally, not after: withTimeoutOrNull absorbs only its own timeout, so a
                 // cancel from outside (the drain's hard stop) would otherwise skip the kill and
                 // leave the process running in a root that is about to be deleted.
                 // IO: reap blocks in waitFor for up to KILL_GRACE_SEC, which must not pin a Default thread.
                 withContext(NonCancellable + Dispatchers.IO) {
-                    cut = reap(finished, out, err, timeout - startedAt.elapsedNow())
+                    cut = reap(finished, out, err, timeout - startedAt.elapsedNow(), interruptGrace?.takeIf { timedOut })
                 }
             }
             val code = if (process.isAlive) 137 else process.exitValue()
@@ -114,9 +135,12 @@ object ProcessRunner {
             out: Pump,
             err: Pump,
             remaining: Duration,
+            interruptGrace: Duration?,
         ): Set<String> {
             if (!finished) {
-                kill()
+                // A stop that carries a grace interrupts before it kills (ADR-0105); a deliberate
+                // cancel passes null and keeps today's immediate SIGKILL.
+                if (interruptGrace != null) interrupt(interruptGrace) else kill()
                 process.waitFor(KILL_GRACE_SEC, TimeUnit.SECONDS)
             }
             val joined =

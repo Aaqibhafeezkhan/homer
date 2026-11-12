@@ -77,8 +77,24 @@ object ProcessGroupSupport {
      * interpolation cannot inject.
      */
     fun killGroup(pgid: Long) {
+        signalGroup("KILL", pgid)
+    }
+
+    /**
+     * Sends SIGINT to the whole process group [pgid] (best-effort), so a command that
+     * handles the signal can shut down cleanly before [killGroup] follows. Same
+     * `sh`-builtin and Long-interpolation rules as [killGroup]. See ADR-0105.
+     */
+    fun interruptGroup(pgid: Long) {
+        signalGroup("INT", pgid)
+    }
+
+    private fun signalGroup(
+        signal: String,
+        pgid: Long,
+    ) {
         runCatching {
-            ProcessBuilder("/bin/sh", "-c", "kill -KILL -$pgid")
+            ProcessBuilder("/bin/sh", "-c", "kill -$signal -$pgid")
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start()

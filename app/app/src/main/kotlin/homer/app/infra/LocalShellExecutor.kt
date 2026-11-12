@@ -36,6 +36,7 @@ class LocalShellExecutor(
         env: Map<String, String>,
         timeout: Duration,
         stdOutFilter: OutputLineFilter?,
+        interruptGrace: Duration?,
     ): CommandResult =
         withContext(Dispatchers.IO) {
             // jscpd:ignore-end
@@ -72,7 +73,7 @@ class LocalShellExecutor(
                     }
                 }
             } catch (e: Throwable) {
-                withContext(NonCancellable) { tearDown(process, stdInJob, outPump, stdErr, timeout, stopped) }
+                withContext(NonCancellable) { tearDown(process, stdInJob, outPump, stdErr, timeout, stopped, interruptGrace) }
                 throw e
             }
 
@@ -112,7 +113,9 @@ class LocalShellExecutor(
 
     /**
      * Tears [process] down after a failed or cancelled wait, releases the stdin writer and the
-     * pump, and appends the marker for a [stopped] TTL or output-cap kill to [stdErr]. For a
+     * pump, and appends the marker for a [stopped] TTL or output-cap kill to [stdErr]. A command
+     * stopped by its own timeout and configured with an [interruptGrace] is SIGINTed first and
+     * given up to that long to exit; only one still alive after it takes the SIGKILL path. For a
      * process that already exited the kill is a no-op and only the marker is appended.
      */
     private suspend fun tearDown(
@@ -122,7 +125,16 @@ class LocalShellExecutor(
         stdErr: Path,
         timeout: Duration,
         stopped: Wait,
+        interruptGrace: Duration?,
     ) {
+        // Graceful stop (ADR-0105): only a command stopped by its OWN timeout gets the
+        // grace; an output-cap kill or a caller cancellation keeps today's immediate
+        // SIGKILL. The interrupt is only meaningful while the process is still alive.
+        val grace = interruptGrace?.takeIf { stopped == Wait.TIMED_OUT && process.isAlive }
+        if (grace != null) {
+            ProcessGroupSupport.ownProcessGroupId(process)?.let { ProcessGroupSupport.interruptGroup(it) }
+            process.waitFor(grace.inWholeMilliseconds.coerceAtLeast(0), TimeUnit.MILLISECONDS)
+        }
         if (process.isAlive) {
             val descendants = process.descendants()
             // Group kill first (reaps detached/reparented children the
@@ -145,7 +157,8 @@ class LocalShellExecutor(
         stdInJob?.cancelAndJoin()
         outPump?.join(pumpJoinMs)
         if (stopped == Wait.TIMED_OUT) {
-            stdErr.toFile().appendText("\n[HOMER] Command killed due to TTL timeout ($timeout)\n")
+            val graceNote = if (grace != null) " after a $grace SIGINT grace" else ""
+            stdErr.toFile().appendText("\n[HOMER] Command killed due to TTL timeout ($timeout)$graceNote\n")
         }
         if (stopped == Wait.OUTPUT_CAP) {
             stdErr.toFile().appendText("\n[HOMER] Output cap exceeded ($maxOutputBytes bytes)\n")

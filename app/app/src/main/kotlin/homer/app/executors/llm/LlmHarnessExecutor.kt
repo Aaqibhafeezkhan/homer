@@ -6,10 +6,10 @@ import homer.app.executors.CommandExecutor
 import homer.app.executors.ExecutionContext
 import homer.app.executors.StepRecords
 import homer.app.executors.secretRedactor
+import homer.app.executors.timeoutFor
 import homer.app.infra.LangfuseClient
 import homer.app.infra.LlmCostResolver
 import homer.app.infra.SecretRedactor
-import homer.app.infra.TranslatedStream
 import homer.app.models.Command
 import homer.app.models.CommandResult
 import homer.app.models.CostSource
@@ -18,24 +18,17 @@ import homer.app.models.LlmPrompt
 import homer.app.models.LlmRetry
 import homer.app.models.kind
 import io.opentelemetry.api.trace.Span
-import io.opentelemetry.context.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import kotlin.random.Random
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * The one executor for every LLM harness command. Owns prompt compilation, the retry
@@ -58,7 +51,7 @@ class LlmHarnessExecutor<C>(
     private val output = LlmAttemptOutput(harness, logger)
     private val accounting =
         LlmAttemptAccounting(LlmAttemptPricing(harness, llmCostResolver, logger), stepRecords, costRecorder, settlementScope, logger)
-    private val settlementHandOffs = Semaphore(MAX_CONCURRENT_SETTLEMENT_HANDOFFS)
+    private val telemetryHandOff = LlmTelemetryHandOff<C>(telemetry, accounting, output, settlementScope, logger)
 
     override suspend fun execute(
         command: C,
@@ -95,7 +88,7 @@ class LlmHarnessExecutor<C>(
                     attemptBase += current.retryPolicy().attempts
                     continue
                 }
-            report(outcome, settlement, current, compiledPrompt, span, redactor)
+            telemetryHandOff.report(outcome, settlement, current, compiledPrompt, span, redactor)
             val escalating = escalation.escalates(command, tier, outcome.outcomeName, outcome.result.exitCode, context, span, redactor)
             if (!escalating) return outcome.result
             attemptBase += current.retryPolicy().attempts
@@ -252,8 +245,9 @@ class LlmHarnessExecutor<C>(
                 stdErr = attemptErr,
                 stdIn = attempt.compiledPrompt,
                 env = attempt.context.workspace.config.env + processEnv,
-                timeout = attempt.command.timeout.seconds,
+                timeout = attempt.context.timeoutFor(attempt.command),
                 stdOutFilter = dropFilter,
+                interruptGrace = attempt.context.interruptGrace,
             )
         } catch (e: Throwable) {
             // `e` must be the exception rethrown below — AgentExecutor branches
@@ -291,6 +285,12 @@ class LlmHarnessExecutor<C>(
      * Accounts an aborted attempt uncancellably and hands its telemetry off, since `execute`'s
      * hand-off never runs on this path. A failure is logged, never thrown: the caller rethrows
      * the attempt's own exception.
+     *
+     * An attempt a graceful stop interrupted is accounted the same way — the CLI may already
+     * have written its `result` before the signal landed, and `account` prices the stream
+     * leniently either way — and additionally hands what it learned to [ExecutionContext.facts]:
+     * the spend, so the step's own row carries it, and the CLI session id, so the stop steps
+     * receive it as `HMR_STOP_SESSION_ID`. See ADR-0105.
      */
     @Suppress("SuspendFunSwallowedCancellation") // NonCancellable inside; its caller rethrows the original
     private suspend fun accountAborted(
@@ -299,11 +299,23 @@ class LlmHarnessExecutor<C>(
         endedAtMs: Long,
         abortedBy: String,
     ) {
+        val stopped = attempt.context.interruptGrace != null
         runCatching {
             withContext(NonCancellable) {
                 val accounted =
                     accounting.account(attempt.out, attempt.context, attempt.span, allowRemoteLookup, attempt.startedAtMs, endedAtMs)
-                emitAbortTelemetry(attempt.out, accounted, attempt.compiledPrompt, attempt.command, attempt.span, attempt.redactor)
+                if (stopped) {
+                    attempt.context.facts.interruptedAccounting = accounted
+                    attempt.context.facts.cliSessionId = accounted.sessionId
+                }
+                telemetryHandOff.emitAbortTelemetry(
+                    attempt.out,
+                    accounted,
+                    attempt.compiledPrompt,
+                    attempt.command,
+                    attempt.span,
+                    attempt.redactor,
+                )
             }
         }.onFailure {
             logger.warn("cost accounting failed after {} ({}); the original exception is rethrown", abortedBy, it.message)
@@ -328,116 +340,7 @@ class LlmHarnessExecutor<C>(
         delay(delayMs)
     }
 
-    /**
-     * Telemetry for an attempt whose shell threw or whose accounting was cancelled: `execute`'s
-     * hand-off never runs on those paths, so the step would lose its spans. The read runs inside
-     * the timeout, so a stdout flood cannot hold a cancelled run's teardown open (CWE-400).
-     */
-    @Suppress("SuspendFunSwallowedCancellation") // catches its own timeout; runs under NonCancellable
-    private suspend fun emitAbortTelemetry(
-        attemptOut: Path,
-        accounting: LlmAccounting,
-        prompt: String,
-        command: C,
-        span: Span,
-        redactor: SecretRedactor,
-    ) {
-        runCatching {
-            withTimeout(ABORT_TELEMETRY_TIMEOUT_MS) {
-                telemetry.process(
-                    output.readLeniently(attemptOut, span),
-                    prompt,
-                    span,
-                    redactor,
-                    LlmStepInfo(label = command.label, configuredModel = command.model),
-                    resolvedCostUsd = telemetryCostUsd(accounting),
-                )
-            }
-        }.onFailure {
-            logger.warn("telemetry hand-off failed after the attempt aborted ({}); the original exception is rethrown", it.message)
-        }
-    }
-
-    /**
-     * Hands [outcome]'s stream to telemetry; a failure there is recorded on [span], never thrown,
-     * but a cancellation is. The stream is read here, inline, because attempts may share and
-     * truncate the stdout file; with a [settlement] running the hand-off itself waits for it in
-     * the background so the trace carries the settled figure, not the preview (ADR-0089).
-     */
-    private suspend fun report(
-        outcome: RetryOutcome.Returned,
-        settlement: Deferred<LlmAccounting>?,
-        command: C,
-        compiledPrompt: String,
-        span: Span,
-        redactor: SecretRedactor,
-    ) {
-        try {
-            // A non-zero exit's stream is read leniently: a killed CLI's trailing partial line
-            // must not take the attempt's tool and message spans with it. Exit 0 stays strict.
-            val stream =
-                when (outcome) {
-                    is RetryOutcome.Success -> outcome.stream
-                    is RetryOutcome.CappedStop -> outcome.stream
-                    is RetryOutcome.OtherFailure -> output.readLeniently(outcome.result.stdOut, span)
-                }
-            val step = LlmStepInfo(label = command.label, configuredModel = command.model)
-            handOff(settlement, outcome.result.llmAccounting, stream, compiledPrompt, span, redactor, step)
-        } catch (e: CancellationException) {
-            // A kill during the hand-off must stop the step, not let it finish as a success.
-            throw e
-        } catch (e: Exception) {
-            span.setAttribute("telemetry.error", e.message ?: "Unknown error")
-            span.recordException(e)
-        }
-    }
-
-    @Suppress("SuspendFunSwallowedCancellation") // a cancelled settlement still gets its trace, on the harness figure
-    private suspend fun handOff(
-        settlement: Deferred<LlmAccounting>?,
-        pending: LlmAccounting?,
-        stream: TranslatedStream,
-        compiledPrompt: String,
-        span: Span,
-        redactor: SecretRedactor,
-        step: LlmStepInfo,
-    ) {
-        if (settlement == null || !settlementHandOffs.tryAcquire()) { // CWE-770/CWE-400: shed, never queue a job (ADR-0047 §12 rules 4-5).
-            if (settlement != null) {
-                logger.warn("settlement hand-off shed at the concurrency bound ({})", MAX_CONCURRENT_SETTLEMENT_HANDOFFS)
-                span.setAttribute("telemetry.llm.handoff_shed", true)
-            }
-            telemetry.process(stream, compiledPrompt, span, redactor, step, resolvedCostUsd = telemetryCostUsd(pending))
-            return
-        }
-        settlementScope
-            .launch(start = CoroutineStart.LAZY) {
-                val waited = runCatching { withTimeoutOrNull(SETTLEMENT_HANDOFF_TIMEOUT_MS) { settlement.await() } }
-                val settled = waited.getOrNull() ?: pending
-                val settlementSpanBuilder = telemetry.tracer.spanBuilder("llm_cost_settlement").setParent(Context.current().with(span))
-                val settlementSpan = settlementSpanBuilder.startSpan()
-                // A wait that timed out, not a settlement that failed: only the former is a shed.
-                if (waited.isSuccess && waited.getOrNull() == null) settlementSpan.setAttribute("telemetry.llm.handoff_shed", true)
-                settled?.let { accounting.annotateSettled(settlementSpan, it) }
-                runCatching { telemetry.process(stream, compiledPrompt, span, redactor, step, resolvedCostUsd = telemetryCostUsd(settled)) }
-                    .onFailure {
-                        logger.warn("telemetry hand-off failed after the cost settled ({})", it.message)
-                        settlementSpan.setAttribute("telemetry.error", it.message ?: "Unknown error")
-                        settlementSpan.recordException(it)
-                    }
-                settlementSpan.end()
-            }.also { it.invokeOnCompletion { settlementHandOffs.release() } } // released on completion, never in a `finally`
-            .start()
-    }
-
     private companion object {
-        // Bounds the abort-path hand-off, whose per-span ordering delay must not hold a genuine
-        // cancellation open. Comfortably above a normal emit (a few spans × 50 ms).
-        const val ABORT_TELEMETRY_TIMEOUT_MS = 5_000L
-
-        const val MAX_CONCURRENT_SETTLEMENT_HANDOFFS = 8
-        const val SETTLEMENT_HANDOFF_TIMEOUT_MS = 45_000L
-
         const val OUTCOME_MALFORMED = "malformed"
         const val MALFORMED_EXIT_CODE = -1
     }

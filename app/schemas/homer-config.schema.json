@@ -767,6 +767,11 @@
           "minimum": 1,
           "description": "Upper bound on a whole run's wall-clock time in the cluster. null = no limit."
         },
+        "gracefulStopSeconds": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Opt-in graceful stop: the run is stopped this many seconds before maxRunSeconds, so its onStop: steps finish before the cluster's hard deadline kills the pod. Requires maxRunSeconds, and must be smaller than it. null = no soft deadline."
+        },
         "jobTtlSecondsAfterFinished": {
           "type": ["integer", "null"],
           "minimum": 0,

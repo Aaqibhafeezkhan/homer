@@ -51,6 +51,7 @@ class KubernetesRunner(
     override val runnerEnv: Map<String, String> = config.env
 
     private val podSpecBuilder = PodSpecBuilder(alias, config, instanceId)
+    private val startupFailures = KubernetesStartupFailures(api, config, batchApi, log)
 
     @Suppress("SuspendFunSwallowedCancellation") // records the span error and rethrows
     override suspend fun openSession(params: RunnerSessionParams): RunnerSession =
@@ -61,13 +62,21 @@ class KubernetesRunner(
             val states = RunnerStateEmitter(alias, params.processId, jobName, clock, stateSink)
             val span = openSpan(params, name, jobName)
             val openStartMs = clock()
+            // The pod's creation stamp: provisioning emits it as the runner state's `createdAt`, and
+            // the session clamps a skewed `status.startTime` to it (ADR-0105). Read here, once.
+            val podCreatedAtSec = clock() / 1000
             val sessionEnv = buildSessionEnv()
             try {
-                val podName = if (jobName == null) provisionPod(params, name, states) else provisionJob(params, jobName, states)
+                val podName =
+                    if (jobName == null) {
+                        provisionPod(params, name, states, podCreatedAtSec)
+                    } else {
+                        provisionJob(params, jobName, states, podCreatedAtSec)
+                    }
                 val shell = newShell(params, podName, states, openStartMs)
                 span?.setAttribute("pod.start_duration_ms", clock() - openStartMs)
                 span?.setStatus(StatusCode.OK)
-                newSession(params, podName, jobName, shell, sessionEnv)
+                newSession(params, podName, jobName, shell, sessionEnv, podCreatedAtSec)
             } catch (e: PodStartupException) {
                 span?.setAttribute("pod.startup_failure.reason", e.reason)
                 span?.recordException(e)
@@ -117,9 +126,9 @@ class KubernetesRunner(
         params: RunnerSessionParams,
         podName: String,
         states: RunnerStateEmitter,
+        createdAtSec: Long,
     ): String {
         val pod = podSpecBuilder.build(params, podName)
-        val createdAtSec = clock() / 1000
         states.creating(podName, createdAtSec)
         createPod(pod, podName, states)
         states.pending(podName, createdAtSec)
@@ -140,9 +149,9 @@ class KubernetesRunner(
         params: RunnerSessionParams,
         jobName: String,
         states: RunnerStateEmitter,
+        createdAtSec: Long,
     ): String {
         val job = podSpecBuilder.buildJob(params, jobName)
-        val createdAtSec = clock() / 1000
         states.creating(null, createdAtSec)
         val check = JobStartupCheck(api, checkNotNull(batchApi), config.namespace, jobName)
         var found: String? = null
@@ -151,7 +160,12 @@ class KubernetesRunner(
             val created = createJob(job, states)
             val selector =
                 jobPodSelector(created)
-                    ?: failStartup(null, states, "PodCreateFailed", "Job $jobName was created without a pod selector or uid")
+                    ?: startupFailures.failStartup(
+                        null,
+                        states,
+                        "PodCreateFailed",
+                        "Job $jobName was created without a pod selector or uid",
+                    )
             states.pending(null, createdAtSec)
             val podName =
                 withinStartBudget(states, { found }, { check.timeoutMessage(config.podStartTimeoutSeconds, it) }) {
@@ -179,6 +193,7 @@ class KubernetesRunner(
         jobName: String?,
         shell: KubernetesShellExecutor,
         sessionEnv: Map<String, String>,
+        podCreatedAtSec: Long,
     ): RunnerSession =
         KubernetesRunnerSession(
             parentContext = params.parentContext,
@@ -189,6 +204,8 @@ class KubernetesRunner(
             keepPodOnFailure = config.keepPodOnFailure,
             keepPodTtlSeconds = config.keepPodTtlSeconds,
             maxRunSeconds = config.maxRunSeconds,
+            gracefulStopSeconds = config.gracefulStopSeconds,
+            podCreatedAtEpochSec = podCreatedAtSec,
             runnerAlias = alias,
             sync = KubernetesWorkspaceSync(execClient, config.namespace, podName),
             translator =
@@ -245,8 +262,10 @@ class KubernetesRunner(
             val message = e.responseBody ?: e.message ?: "Job create failed"
             // 409: the name is another Job's, never read or deleted. Otherwise the delete covers a create
             // that landed although its answer failed; a 404 is tolerated.
-            if (e.code == HTTP_CONFLICT) reportStartupFailure(states, PodStartupException("PodCreateFailed", message, emptyList(), e))
-            failStartup(null, states, "PodCreateFailed", message, e)
+            if (e.code == HTTP_CONFLICT) {
+                startupFailures.reportStartupFailure(states, PodStartupException("PodCreateFailed", message, emptyList(), e))
+            }
+            startupFailures.failStartup(null, states, "PodCreateFailed", message, e)
         }
 
     /**
@@ -264,7 +283,7 @@ class KubernetesRunner(
         try {
             return withTimeout(config.podStartTimeoutSeconds.seconds, block)
         } catch (e: TimeoutCancellationException) {
-            failStartup(podName(), states, "PodStartTimeout", timeoutMessage((clock() - startMs) / 1000), cause = e)
+            startupFailures.failStartup(podName(), states, "PodStartTimeout", timeoutMessage((clock() - startMs) / 1000), cause = e)
         }
     }
 
@@ -279,10 +298,10 @@ class KubernetesRunner(
                 try {
                     findJobPod(api, config.namespace, selector)
                 } catch (e: PodStartupException) {
-                    failStartup(null, states, e.reason, e.rawMessage, e)
+                    startupFailures.failStartup(null, states, e.reason, e.rawMessage, e)
                 }
             if (podName != null) return podName
-            check.failure()?.let { (reason, message) -> failStartup(null, states, reason, message) }
+            check.failure()?.let { (reason, message) -> startupFailures.failStartup(null, states, reason, message) }
             delay(JOB_POLL_INTERVAL_MS)
         }
     }
@@ -296,12 +315,12 @@ class KubernetesRunner(
                 try {
                     readPod(podName)
                 } catch (e: PodStartupException) {
-                    cleanupFailed(podName, states.jobName)
+                    startupFailures.cleanupFailed(podName, states.jobName)
                     states.startupFailed(e)
                     throw e
                 }
             if (pod.isTerminalFailure()) {
-                failStartup(podName, states, "PodFailed", pod.terminalMessage() ?: "Pod reached terminal failure phase")
+                startupFailures.failStartup(podName, states, "PodFailed", pod.terminalMessage() ?: "Pod reached terminal failure phase")
             }
             if (pod.isReady()) return
             delay(READY_POLL_INTERVAL_MS)
@@ -314,76 +333,6 @@ class KubernetesRunner(
         } catch (e: ApiException) {
             throw PodStartupException("PodStatusUnreadable", e.responseBody ?: (e.message ?: "unreadable"), emptyList(), e)
         }
-
-    /**
-     * Startup-failure teardown, the same choice as session close: keeps the pod [podName] (and labels the Job
-     * [jobName] kept) when `keepPodOnFailure` applies, else deletes the Job, then the pod.
-     */
-    private fun cleanupFailed(
-        podName: String?,
-        jobName: String?,
-    ) {
-        val teardown = WorkloadTeardown(api, config.namespace, jobName, batchApi)
-        runCatching {
-            if (podName != null && config.keepPodOnFailure && podStartedOnNode(podName)) {
-                teardown.keep(podName, config.keepPodTtlSeconds, config.maxRunSeconds)
-            } else {
-                teardown.delete(podName)
-            }
-        }.onFailure { log.debug("Failed to clean up pod after startup failure: {}", it.message) }
-    }
-
-    // activeDeadlineSeconds is enforced only relative to status.startTime; keeping a
-    // never-scheduled pod would leak it past both the TTL and the kept-skipping sweep.
-    private fun podStartedOnNode(podName: String): Boolean =
-        runCatching {
-            api
-                .readNamespacedPod(podName, config.namespace)
-                .execute()
-                .status
-                ?.startTime != null
-        }.getOrDefault(false)
-
-    /** Fails the startup; it diagnoses and cleans up the pod [podName] when there is one, and in Job mode the Job. */
-    private suspend fun failStartup(
-        podName: String?,
-        states: RunnerStateEmitter,
-        fallbackReason: String,
-        fallbackMessage: String,
-        cause: Throwable? = null,
-    ): Nothing {
-        val snap = diagnose(podName, states.jobName, fallbackReason, fallbackMessage)
-        cleanupFailed(podName, states.jobName)
-        reportStartupFailure(
-            states,
-            PodStartupException(
-                reason = snap.reason.ifBlank { fallbackReason },
-                rawMessage = snap.message.ifBlank { fallbackMessage },
-                events = snap.events,
-                cause = cause,
-            ),
-        )
-    }
-
-    private suspend fun reportStartupFailure(
-        states: RunnerStateEmitter,
-        ex: PodStartupException,
-    ): Nothing {
-        states.startupFailed(ex)
-        throw ex
-    }
-
-    /** The pod's diagnostics; without a pod, the Job's conditions and events under the given reason and message. */
-    private fun diagnose(
-        podName: String?,
-        jobName: String?,
-        reason: String,
-        message: String,
-    ): PodDiagnostics.Snapshot {
-        if (podName != null) return PodDiagnostics.tryCollect(api, config.namespace, podName, reason)
-        val events = jobName?.let { PodDiagnostics(api, config.namespace).collectJob(it, checkNotNull(batchApi)).events }
-        return PodDiagnostics.Snapshot(reason, message, events.orEmpty())
-    }
 
     /**
      * Namespace this runner targets. Exposed for the startup sweep

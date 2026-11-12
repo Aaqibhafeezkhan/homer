@@ -4,6 +4,7 @@ import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
 import homer.app.models.LlmAccounting
 import homer.app.models.ProcessStatus
+import homer.app.models.RunStop
 import homer.app.models.RunnerState
 import homer.app.models.truncateFailureReason
 import org.jetbrains.exposed.v1.core.eq
@@ -150,6 +151,20 @@ suspend fun ProcessRepository.getRunnerState(processId: Int): RunnerState? =
             ?.get(Processes.runnerState)
             ?.let(::decodeRunnerState)
     }
+
+/**
+ * Records what a graceful stop did to the run: its cause, the step it interrupted and the stop
+ * steps' outcome (ADR-0105). Written once, by the run's own stop phase, on a row that is still
+ * there — a stop racing an eviction records nothing, which is fine because the record is gone too.
+ */
+suspend fun ProcessRepository.setStop(
+    processId: Int,
+    stop: RunStop,
+) {
+    db.query {
+        Processes.update({ Processes.id eq processId }) { it[Processes.stop] = encodeRunStop(stop) }
+    }
+}
 
 /**
  * Adds [delta] to the run's accumulated cost. Replay-unsafe (`plus` is not

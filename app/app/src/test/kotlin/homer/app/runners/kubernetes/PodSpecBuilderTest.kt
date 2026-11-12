@@ -337,6 +337,24 @@ class PodSpecBuilderTest {
     }
 
     @Test
+    fun `gracefulStopSeconds never reaches the pod spec`() {
+        val plain = config.copy(maxRunSeconds = 300)
+        val graced = config.copy(maxRunSeconds = 300, gracefulStopSeconds = 60)
+
+        val plainPod = PodSpecBuilder("k8s-dev", plain).build(params(), "homer-1-abcdef")
+        val gracedPod = PodSpecBuilder("k8s-dev", graced).build(params(), "homer-1-abcdef")
+
+        // The soft deadline is Homer-side only: maxRunSeconds stays the pod's hard bound (ADR-0105).
+        assertEquals(300L, gracedPod.spec!!.activeDeadlineSeconds)
+        assertEquals(
+            io.kubernetes.client.openapi.JSON
+                .serialize(plainPod),
+            io.kubernetes.client.openapi.JSON
+                .serialize(gracedPod),
+        )
+    }
+
+    @Test
     fun `no maxRunSeconds leaves activeDeadlineSeconds unset`() {
         val pod = PodSpecBuilder("k8s-dev", config).build(params(), "homer-1-abcdef")
         assertNull(pod.spec!!.activeDeadlineSeconds)

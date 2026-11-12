@@ -8,6 +8,8 @@ import kotlinx.serialization.Serializable
 sealed class Command {
     abstract val label: String
     abstract val timeout: Long
+    abstract val onTimeout: OnTimeout
+    abstract val interruptGraceSeconds: Long
     abstract val continueIfFail: Boolean
     abstract val finishExitCode: Int?
     abstract val resultEnvParam: List<ResultEnvParam>
@@ -35,6 +37,8 @@ sealed class Command {
         val cmd: List<String>,
         override val label: String = "cmd",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -55,6 +59,8 @@ sealed class Command {
         val shell: String = "sh",
         override val label: String = "script",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -71,6 +77,8 @@ sealed class Command {
         override val retry: LlmRetry? = null,
         override val label: String = "claude",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -95,6 +103,8 @@ sealed class Command {
         override val retry: LlmRetry? = null,
         override val label: String = "codex",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -119,6 +129,8 @@ sealed class Command {
         override val retry: LlmRetry? = null,
         override val label: String = "opencode",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -142,6 +154,8 @@ sealed class Command {
         val inputEnv: String = EnvConstants.LG_INPUT,
         override val label: String = "langgraph",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -160,6 +174,8 @@ sealed class Command {
         val syncFromRemote: List<String> = emptyList(),
         override val label: String = "runnerCmd",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -180,6 +196,8 @@ sealed class Command {
         val queryParams: List<AgentCommandParam> = emptyList(),
         override val label: String = "agent",
         override val timeout: Long = 60,
+        override val onTimeout: OnTimeout = OnTimeout.FAIL,
+        override val interruptGraceSeconds: Long = DEFAULT_INTERRUPT_GRACE_SECONDS,
         override val continueIfFail: Boolean = false,
         override val finishExitCode: Int? = null,
         override val resultEnvParam: List<ResultEnvParam> = emptyList(),
@@ -188,6 +206,25 @@ sealed class Command {
     ) : Command()
     // jscpd:ignore-end
 }
+
+/** What a step's own `timeout` does: fail the run at once (`fail`, the default) or stop it gracefully (`stop`). */
+@Serializable
+enum class OnTimeout {
+    @SerialName("fail")
+    FAIL,
+
+    @SerialName("stop")
+    STOP,
+}
+
+/** Default `Command.interruptGraceSeconds`: how long a stopped command may take to exit before SIGKILL. */
+const val DEFAULT_INTERRUPT_GRACE_SECONDS = 30L
+
+/** CWE-400: a grace wait holds a runner slot, so it is bounded (ADR-0047 rule 4, ADR-0105). */
+const val MAX_INTERRUPT_GRACE_SECONDS = 600L
+
+/** CWE-400: stop steps run inside the same bounded stop phase, so their count is bounded too (ADR-0047 rule 4). */
+const val MAX_ON_STOP_STEPS = 10
 
 /** The kaml/JSON tag of a command — the same string the status API reports as an execution's `kind`. */
 val Command.kind: String

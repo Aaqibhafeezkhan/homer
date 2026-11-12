@@ -1146,6 +1146,288 @@ class KubernetesShellExecutorTest {
         verify(exactly = 1) { req.execute() }
     }
 
+    @Test
+    fun `a grace launches the command under setsid and records its pgid in the workspace dir`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                fakeProcess("", "", 0)
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        val result =
+            executor.cmd(
+                command = listOf("echo", "hi"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 10.seconds,
+                interruptGrace = 5.seconds,
+            )
+
+        assertEquals(0, result.exitCode)
+        assertEquals(listOf("setsid", "-w", "true"), started.first()) // the one-shot capability probe
+        val argv = started.single { "echo" in it }
+        assertEquals(listOf("env", "HMR_WORK_DIR=/homer/workspace/workdir"), argv.take(2))
+        assertEquals(listOf("setsid", "-w", "sh", "-c"), argv.drop(2).take(4))
+        assertEquals(listOf("echo", "hi"), argv.takeLast(2))
+        assertTrue("/homer/workspace/workdir/homer-exec-1.pgid" in argv, "the pgid file must sit in the workspace dir: $argv")
+    }
+
+    @Test
+    fun `without a workspace env the pgid file is a dot-homer path relative to the cwd`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                fakeProcess("", "", 0)
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        executor.cmd(
+            command = listOf("echo"),
+            stdOut = tmp.resolve("out"),
+            stdErr = tmp.resolve("err"),
+            timeout = 10.seconds,
+            interruptGrace = 5.seconds,
+        )
+
+        assertTrue(".homer/homer-exec-1.pgid" in started.single { "echo" in it }, "expected a .homer pgid path: $started")
+    }
+
+    @Test
+    fun `without a grace the exec argv and the call count are unchanged`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                fakeProcess("", "", 0)
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        executor.cmd(
+            command = listOf("echo", "hi"),
+            stdOut = tmp.resolve("out"),
+            stdErr = tmp.resolve("err"),
+            env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir", "FOO" to "bar"),
+            timeout = 10.seconds,
+        )
+
+        assertEquals(listOf(listOf("env", "HMR_WORK_DIR=/homer/workspace/workdir", "FOO=bar", "echo", "hi")), started)
+    }
+
+    @Test
+    fun `a graced timeout interrupts the group and runs no pod-wide kill`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                if (isSignalling(argv) || argv.last() == "true") fakeProcess("", "", 0) else neverFinishing()
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            executor.cmd(
+                command = listOf("sleep", "1000"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 1.seconds,
+                interruptGrace = 1.seconds,
+            )
+        }
+
+        assertTrue(started.none { it == KILL_ARGV }, "the group interrupt replaces the pod-wide kill: $started")
+        val script = started.single { isSignalling(it) }[2]
+        val guard = script.indexOf(KubernetesShellExecutor.PGID_GUARD)
+        val interrupt = script.indexOf("kill -INT -\"\$p\"")
+        val kill = script.indexOf("kill -KILL -\"\$p\"")
+        assertTrue(script.contains("cat \"\$1\""), "the pgid must come from the recorded file: $script")
+        assertTrue(guard >= 0, "the pgid must be validated: $script")
+        assertTrue(interrupt > guard, "the group is signalled only after the pgid is validated: $script")
+        assertTrue(kill > interrupt, "SIGKILL follows the interrupt: $script")
+        assertFalse(script.contains("kill -INT -1") || script.contains("kill -KILL -1"), "never target -1: $script")
+    }
+
+    @Test
+    fun `the pgid guard refuses anything that is not a plain integer greater than 1`(
+        @TempDir tmp: Path,
+    ) {
+        val file = tmp.resolve("pgid")
+        for (content in listOf("", "0", "1", "-1", "abc", "1 2", "-0", "12a", "9999999999999999999999")) {
+            file.toFile().writeText(content)
+            assertTrue(runGuard(file) != 0, "content '$content' must be refused, not signalled")
+        }
+        file.toFile().writeText("12345")
+        assertEquals(0, runGuard(file), "a plain pgid greater than 1 must pass the guard")
+    }
+
+    /** Runs the guard exactly as the signalling exec does, but on its own: no kill can follow it. */
+    private fun runGuard(pgidFile: Path): Int =
+        ProcessBuilder(
+            "sh",
+            "-c",
+            "p=\$(cat \"\$1\" 2>/dev/null); ${KubernetesShellExecutor.PGID_GUARD}; exit 0",
+            "homer-signal",
+            pgidFile.toString(),
+        ).redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .redirectError(ProcessBuilder.Redirect.DISCARD)
+            .start()
+            .waitFor()
+
+    @Test
+    fun `a refused pgid falls back to the pod-wide kill`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                // The signalling exec rejected the pgid: no valid group was interrupted.
+                when {
+                    argv.last() == "true" -> fakeProcess("", "", 0)
+                    isSignalling(argv) -> fakeProcess("", "", KubernetesShellExecutor.SIGNAL_REJECTED)
+                    else -> neverFinishing()
+                }
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            executor.cmd(
+                command = listOf("sleep", "1000"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 1.seconds,
+                interruptGrace = 1.seconds,
+            )
+        }
+
+        assertTrue(KILL_ARGV in started, "the pod-wide kill must run when the pgid is refused: $started")
+    }
+
+    @Test
+    fun `a signalling exec that fails to start falls back to the pod-wide kill`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                when {
+                    argv.last() == "true" -> fakeProcess("", "", 0)
+                    isSignalling(argv) -> throw IllegalStateException("exec refused")
+                    else -> neverFinishing()
+                }
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            executor.cmd(
+                command = listOf("sleep", "1000"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 1.seconds,
+                interruptGrace = 1.seconds,
+            )
+        }
+
+        assertTrue(KILL_ARGV in started, "the pod-wide kill must run when the signalling exec cannot start: $started")
+    }
+
+    @Test
+    fun `a hung signalling exec is abandoned at its bound and the pod-wide kill still runs`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val hungSignal =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+            }
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                when {
+                    argv.last() == "true" -> fakeProcess("", "", 0)
+                    isSignalling(argv) -> hungSignal
+                    else -> neverFinishing()
+                }
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1", signalExecSlackMs = 200)
+
+        val startedAt = System.nanoTime()
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            executor.cmd(
+                command = listOf("sleep", "1000"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 1.seconds,
+                interruptGrace = 1.seconds,
+            )
+        }
+        val tookMs = (System.nanoTime() - startedAt) / 1_000_000
+
+        assertTrue(tookMs < 5_000, "the abort waited $tookMs ms on a hung signalling exec; it must be bounded")
+        assertTrue(KILL_ARGV in started, "the pod-wide kill must run after a hung signalling exec: $started")
+        verify { hungSignal.destroyForcibly() }
+    }
+
+    @Test
+    fun `a pod without setsid is launched unchanged and killed pod-wide`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                // No setsid: both probe forms fail, so the command runs exactly as it does today.
+                if (argv.last() == "true") throw IllegalStateException("setsid: not found") else neverFinishing()
+            }
+        val executor = KubernetesShellExecutor(client, mockk(relaxed = true), "homer", "pod-1")
+
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            executor.cmd(
+                command = listOf("sleep", "1000"),
+                stdOut = tmp.resolve("out"),
+                stdErr = tmp.resolve("err"),
+                env = mapOf("HMR_WORK_DIR" to "/homer/workspace/workdir"),
+                timeout = 1.seconds,
+                interruptGrace = 1.seconds,
+            )
+        }
+
+        assertEquals(listOf(listOf("setsid", "-w", "true"), listOf("setsid", "true")), started.take(2))
+        assertEquals(listOf("env", "HMR_WORK_DIR=/homer/workspace/workdir", "sleep", "1000"), started[2])
+        assertTrue(KILL_ARGV in started, "without setsid the kill stays pod-wide: $started")
+    }
+
+    /** True when [argv] is the executor's own signalling exec, not the command's. */
+    private fun isSignalling(argv: List<String>) = argv.getOrNull(3) == "homer-signal"
+
+    private fun neverFinishing(): Process =
+        mockk(relaxed = true) {
+            every { inputStream } returns ByteArrayInputStream(ByteArray(0))
+            every { errorStream } returns ByteArrayInputStream(ByteArray(0))
+            every { outputStream } returns ByteArrayOutputStream()
+            every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+            every { exitValue() } returns 137
+            every { destroyForcibly() } returns this
+        }
+
     private fun fakeProcess(
         stdout: String,
         stderr: String,

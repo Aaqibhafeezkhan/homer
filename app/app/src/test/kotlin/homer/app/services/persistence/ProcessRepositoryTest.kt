@@ -1346,6 +1346,32 @@ class ProcessRepositoryTest {
         }
 
     @Test
+    fun `execution stop fields round-trip and an old row without them reads as not stopped`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.completeStep(id, execution("interrupted").copy(stoppedBy = "step_timeout"), null, null)
+            repo.completeStep(id, execution("save").copy(onStop = true), null, null)
+
+            val execs = repo.getInfo(id)!!.executions
+            assertEquals("step_timeout", execs[0].stoppedBy)
+            assertEquals(false, execs[0].onStop)
+            assertNull(execs[1].stoppedBy)
+            assertEquals(true, execs[1].onStop)
+
+            // Simulate a pre-release row: raw JSON without either field (ADR-0105).
+            db.query {
+                Processes.update({ Processes.id eq id }) {
+                    it[executions] = """[{"label":"l","start":1,"end":2,"resultCode":0,"stdOut":null,"stdErr":null,"errMsg":null}]"""
+                }
+            }
+            val old = repo.getInfo(id)!!.executions.single()
+            assertNull(old.stoppedBy)
+            assertEquals(false, old.onStop)
+        }
+
+    @Test
     fun `cost_source starts as cli and stays cli for cli charges`() =
         runTest {
             val repo = repo()
