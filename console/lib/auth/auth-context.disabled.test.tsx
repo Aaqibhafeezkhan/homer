@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const getAuthMe = vi.fn();
@@ -32,15 +32,23 @@ vi.mock('@/lib/api/client', () => ({
 }));
 
 // Mutable so the two shapes of "auth is off" can share this file; the provider
-// re-reads it on every re-import (see renderDisabled).
+// re-reads it on every re-import (see renderWithCurrentConfig).
 const config = vi.hoisted(() => ({ enabled: false, mode: 'disabled' }));
 
+// The mock factory runs once per file and its result is cached — vi.resetModules()
+// re-evaluates the modules that import it, not the factory itself — so the fields
+// below are getters. A snapshot would freeze whichever shape ran first and every
+// later row would silently be testing that one.
 vi.mock('@/lib/config/app-config', () => ({
   appConfig: {
     api: { baseUrl: 'http://localhost:8080' },
     auth: {
-      enabled: config.enabled,
-      mode: config.mode,
+      get enabled() {
+        return config.enabled;
+      },
+      get mode() {
+        return config.mode;
+      },
       allowBearer: false,
       tokenKey: 'homer_auth_token',
     },
@@ -51,7 +59,7 @@ vi.mock('@/lib/config/app-config', () => ({
 // pinned by re-importing the provider (and the instance store it reads) after
 // the config is set. This suite therefore cannot use auth-test-utils, whose
 // AuthProvider is bound at load time.
-async function renderDisabled() {
+async function renderWithCurrentConfig() {
   vi.resetModules();
   const [{ AuthProvider, useAuth }, { resetInstancesStoreForTests }] = await Promise.all([
     import('./auth-context'),
@@ -81,6 +89,14 @@ async function renderDisabled() {
   );
 }
 
+beforeEach(() => {
+  getAuthMe.mockReset();
+  login.mockReset();
+  logout.mockReset();
+  getHeartbeat.mockReset();
+  localStorage.clear();
+});
+
 describe.each([
   ['CONSOLE_AUTH_ENABLED=false', { enabled: false, mode: 'cookie' }],
   ['auth.mode=disabled', { enabled: true, mode: 'disabled' }],
@@ -88,17 +104,12 @@ describe.each([
   beforeEach(() => {
     config.enabled = auth.enabled;
     config.mode = auth.mode;
-    getAuthMe.mockReset();
-    login.mockReset();
-    logout.mockReset();
-    getHeartbeat.mockReset();
-    localStorage.clear();
   });
 
   it('pins authed with no principal and probes nothing', async () => {
     // The unsecured opt-in (ADR-0036): the console is signed in without a
     // session, so no credential is asked for and no probe is sent.
-    await renderDisabled();
+    await renderWithCurrentConfig();
 
     expect(screen.getByTestId('status')).toHaveTextContent('authed');
     expect(screen.getByTestId('username')).toHaveTextContent('');
@@ -109,7 +120,7 @@ describe.each([
   it('stays authed across logout and calls no logout endpoint', async () => {
     // With auth off there is no session to end, so logout must not reach the
     // backend; the pinned state outranks it either way.
-    await renderDisabled();
+    await renderWithCurrentConfig();
     expect(screen.getByTestId('status')).toHaveTextContent('authed');
 
     await act(async () => {
@@ -118,5 +129,21 @@ describe.each([
 
     expect(screen.getByTestId('status')).toHaveTextContent('authed');
     expect(logout).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthProvider (auth on: control)', () => {
+  it('probes the backend instead of pinning authed', async () => {
+    // Control for the lazy config above: with auth on the same re-import path
+    // must resolve from the probe. If the mock ever froze a shape again, this
+    // would keep reading the "auth off" one and fail.
+    config.enabled = true;
+    config.mode = 'cookie';
+    getAuthMe.mockRejectedValue(new HomerApiError('Unauthorized', 401));
+
+    await renderWithCurrentConfig();
+
+    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('anon'));
+    expect(getAuthMe).toHaveBeenCalled();
   });
 });
