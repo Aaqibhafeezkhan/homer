@@ -30,12 +30,7 @@ internal class PostCommitFailureConnection(
         method: Method,
         args: Array<out Any?>?,
     ): Any? {
-        val result =
-            try {
-                method.invoke(real, *(args ?: emptyArray()))
-            } catch (e: java.lang.reflect.InvocationTargetException) {
-                throw e.targetException
-            }
+        val result = delegate(real, method, args)
         // After the delegation, never before: the commit has landed.
         if (method.name == "commit") {
             commits.incrementAndGet()

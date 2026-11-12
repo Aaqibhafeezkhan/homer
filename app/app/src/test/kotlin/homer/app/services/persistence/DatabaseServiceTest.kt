@@ -310,6 +310,16 @@ class DatabaseServiceTest {
             }
         }
 
+    /** The planner statistics the last `ANALYZE` left, row for row: what `PRAGMA optimize` writes. */
+    private fun statistics(path: String): List<String> =
+        DriverManager.getConnection("jdbc:sqlite:$path").use { conn ->
+            conn.createStatement().use { st ->
+                st.executeQuery("SELECT tbl, idx, stat FROM sqlite_stat1 ORDER BY tbl, idx").use { rs ->
+                    generateSequence { if (rs.next()) "${rs.getString(1)}|${rs.getString(2)}|${rs.getString(3)}" else null }.toList()
+                }
+            }
+        }
+
     @Test
     fun `maintenance re-runs optimize until close`(
         @TempDir dir: Path,
@@ -342,6 +352,52 @@ class DatabaseServiceTest {
         while (!analyzed() && System.currentTimeMillis() < deadline) Thread.sleep(20)
         assertTrue(analyzed(), "maintenance never gathered statistics")
         svc.close()
+    }
+
+    @Test
+    fun `optimize on an analyzed database writes no new statistics`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("homer.db").toString()
+        val svc = DatabaseService(dbPath, logger)
+        svc.migrate()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use {
+                it.execute(
+                    "INSERT INTO processes (status, agent_name, history, executions) " +
+                        "VALUES ('FINISHED', 'a', '[]', '[]')",
+                )
+            }
+        }
+        svc.optimize()
+        val analyzed = statistics(dbPath)
+        assertTrue(analyzed.any { it.startsWith("processes|") }, "optimize gathered no statistics: $analyzed")
+        // Nothing changed since the analysis, so the second call must leave sqlite_stat1 as it is.
+        svc.optimize()
+        assertEquals(analyzed, statistics(dbPath), "the second optimize rewrote the statistics")
+        svc.close()
+    }
+
+    @Test
+    fun `optimize warns and returns when its statement fails`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val (logbackLogger, appender) = attachListAppender()
+        try {
+            // A writer handle that cannot hand out a statement: every raw-SQL path on it fails, so
+            // the failure can only be reported, never thrown at the caller.
+            val svc =
+                DatabaseService(
+                    dir.resolve("homer.db").toString(),
+                    logbackLogger,
+                    wrapWriterConnection = FailingStatementConnection::wrap,
+                )
+            svc.optimize()
+            val failures = appender.list.filter { it.formattedMessage.contains("PRAGMA optimize failed") }
+            assertEquals(1, failures.size, "expected one warning, got: ${appender.list.map { it.formattedMessage }}")
+        } finally {
+            logbackLogger.detachAppender(appender)
+        }
     }
 
     @Test
