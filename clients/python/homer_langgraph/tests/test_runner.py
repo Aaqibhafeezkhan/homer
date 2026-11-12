@@ -730,6 +730,27 @@ def test_ungrouped_retry_redispatches_only_the_failed_branch(
     assert len(captured_runs) == 1
     assert _agent_of(captured_runs[0]) != first_agent
 
+    # Segments 4+: the still-parked branches each finish on their first attempt,
+    # one segment per sub, until none is pending and the graph completes with
+    # all three results.
+    finished = {first_agent: "R2"}
+    while captured_runs:
+        argv = captured_runs[-1]
+        agent = _agent_of(argv)
+        thread_i, iid_i = _thread_and_iid(argv)
+        _resume(
+            monkeypatch, thread_i, iid_i,
+            json.dumps({"status": "FINISHED", "processId": 3, "result": f"R_{agent}"}),
+        )
+        finished[agent] = f"R_{agent}"
+        captured_runs.clear()
+        assert runner.run(module=THREE_RETRY_FANOUT) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    for agent, result in finished.items():
+        assert out[agent.split("_")[1].lower()]["result"] == result
+    assert all(out[key]["status"] == "FINISHED" for key in ("a", "b", "c"))
+
 
 def test_grouped_retry_redispatches_only_the_failed_member(
     env, shared_saver, captured_calls, capsys, monkeypatch

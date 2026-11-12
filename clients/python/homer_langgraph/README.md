@@ -179,21 +179,27 @@ if result["status"] != "FINISHED":
   pending member resolves it through the sequential path. After the last attempt,
   that attempt's payload reaches the graph unchanged.
 - **Two budgets, each capped at `MAX_FANOUT_RETRIES` (5).** `retries` counts
-  `FAILED` outcomes; `infra_retries` counts infrastructure ones — `UNKNOWN`, a
-  missing or unrecognized status, a runner or continuation lost, or an
-  undecodable resume payload. They are spent separately, so a broken runner
-  cannot eat the failure budget. A payload that is still undecodable once
-  `infra_retries` is spent raises, exactly as it does with no retries at all. A
-  budget that is not an `int`, or lies outside `0 … MAX_FANOUT_RETRIES`, raises
-  `ValueError` before anything is parked.
+  `FAILED` outcomes; `infra_retries` counts infrastructure ones — `UNKNOWN`
+  (Homer restarted mid-run), a missing or unrecognized status, or an
+  undecodable resume payload. They are spent separately, so an infrastructure
+  outcome never eats the failure budget. The budget boundary is the payload's
+  status, and only that: a runner lost mid-run **fails** its sub-runs, so they
+  come back `FAILED` and spend `retries`; a lost continuation delivers no
+  resume payload at all, so the node is never re-run and no budget is spent. A
+  payload that is still undecodable once `infra_retries` is spent raises,
+  exactly as it does with no retries at all. A budget that is not an `int`, or
+  lies outside `0 … MAX_FANOUT_RETRIES`, raises `ValueError` before anything is
+  parked.
 - **The attempt count is the node's own replay.** LangGraph re-runs the node from
   its start and replays the thread's recorded resume values in order, so the
   counters rebuild on every segment from the checkpoint itself: no state key to
   maintain, no side file, and no value a graph (or an agent) can write to raise
   the count. Each attempt logs one line to stderr —
   `homer_fanout: retrying <agent> attempt k/N after <status>` — carrying the
-  agent, the attempt and the status only, never params, results or a `resultRef`
-  token. Since a later segment replays the earlier attempts, it re-logs them.
+  agent, the attempt and a known status only (any other value the payload
+  passes off as a status prints as a fixed label), never params, results or a
+  `resultRef` token. Since a later segment replays the earlier attempts, it
+  re-logs them.
 - **Idempotency is yours.** The node body re-runs from its start on every
   attempt, so write each fan-out result to its own slot; an additive reducer over
   it double-applies.

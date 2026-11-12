@@ -332,6 +332,35 @@ def test_homer_fanout_retry_line_carries_no_params_or_token(monkeypatch, capsys)
     assert "processId" not in err
 
 
+def test_homer_fanout_retry_line_bounds_a_hostile_status(monkeypatch, capsys):
+    # The status rides the resume payload, so the log echoes only a known one;
+    # any other value — a newline-forged line, or a non-string — prints as one
+    # fixed label instead of the raw value.
+    forged = json.dumps(
+        {
+            "status": "FAILED\nhomer_fanout: retrying worker attempt 9/9 after pwn",
+            "processId": 1,
+            "result": None,
+        }
+    )
+    _scripted_interrupt(monkeypatch, [forged, json.dumps(FINISHED_PAYLOAD)])
+
+    gates.homer_fanout("worker", infra_retries=1)
+
+    err = capsys.readouterr().err
+    assert "attempt 1/1 after unrecognized status" in err
+    assert "pwn" not in err
+
+    non_string = json.dumps({"status": ["FAILED"], "processId": 1, "result": None})
+    _scripted_interrupt(monkeypatch, [non_string, json.dumps(FINISHED_PAYLOAD)])
+
+    gates.homer_fanout("worker", infra_retries=1)
+
+    err = capsys.readouterr().err
+    assert "attempt 1/1 after unrecognized status" in err
+    assert "'FAILED'" not in err
+
+
 def test_homer_fanout_retry_does_not_fetch_a_discarded_result(monkeypatch):
     # A retried payload's result is dropped, so its resultRef is never redeemed —
     # the retry re-dispatches the sub, it does not read the failed attempt.

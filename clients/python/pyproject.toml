@@ -10,7 +10,10 @@ license = { text = "Apache-2.0" }
 readme = "homer_langgraph/README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "langgraph",
+    # Bounded to the minor line the suite is verified against: the runtime leans on
+    # LangGraph internals (see homer_langgraph/CLAUDE.md), so a bump re-verifies and
+    # moves this bound deliberately.
+    "langgraph>=1.1,<1.2",
     "langgraph-checkpoint-sqlite",
 ]
 

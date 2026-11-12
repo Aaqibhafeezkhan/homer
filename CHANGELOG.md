@@ -4,7 +4,7 @@
 
 ### Homer
 
-- **Added: `retries` and `infra_retries` on `homer_fanout`** — A LangGraph fan-out node re-dispatches a sub that failed, up to a bounded number of attempts and with a separate budget for infrastructure outcomes, instead of resuming with the same failed payload forever.
+- **Added: `retries` and `infra_retries` on `homer_fanout`** — A LangGraph fan-out node re-dispatches a sub that failed, up to a bounded number of attempts and with a separate budget for infrastructure outcomes, instead of resuming with the same failed payload forever. See [ADR-0103](docs/adr/0103-langgraph-fanout-retries-are-client-side.md).
 - **Fixed: recovering a LangGraph thread whose node raised** — A thread whose latest checkpoint still holds a failed task is re-entered instead of being reported finished with an empty final state.
 - **Fixed: a failed dispatch's reported error reason** — A failure carrying no message now reports the same `Dispatch failed` fallback the stored row keeps, instead of an empty error.
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.

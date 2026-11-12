@@ -35,6 +35,11 @@ _FINAL_STATUSES = ("FINISHED", "KILLED")
 # The one terminal status worth re-dispatching: the sub ran and failed.
 _FAILED_STATUS = "FAILED"
 
+# Statuses the retry log may echo verbatim; anything else the resume payload
+# carries prints as a fixed label — never the raw value, which can hold
+# newlines or unbounded text.
+_LOG_STATUSES = ("FAILED", "UNKNOWN", "malformed payload", "no status")
+
 
 def homer_interrupt(
     text: str,
@@ -126,10 +131,12 @@ def _resolve_result(payload: dict[str, Any]) -> dict[str, Any]:
 def _retry_kind(payload: dict[str, Any]) -> str:
     """Which retry budget a payload draws on: ``"failed"``, ``"infra"`` or ``""``.
 
-    Anything that is not a terminal status is an infrastructure outcome — an
-    ``UNKNOWN`` sub, a runner lost mid-run, a missing or unrecognized status —
-    so a broken runner cannot spend the failure budget, and an unknown status is
-    never read as success.
+    Classified by the payload's status alone: anything that is not a terminal
+    status is an infrastructure outcome — an ``UNKNOWN`` sub (Homer restarted
+    mid-run), a missing or unrecognized status — so an outcome the payload does
+    not classify never spends the failure budget, and an unknown status is never
+    read as success. A runner lost mid-run is not infrastructure: its runs fail,
+    so its payload status is ``FAILED``.
     """
     status = payload.get("status")
     if status in _FINAL_STATUSES:
@@ -138,13 +145,16 @@ def _retry_kind(payload: dict[str, Any]) -> str:
 
 
 def _log_retry(agent: str, attempt: int, limit: int, status: Any) -> None:
-    """Report one retry on stderr — agent, attempt and status only.
+    """Report one retry on stderr — agent, attempt and a bounded status label.
 
-    Never the params, the result, the processId or a resultRef token: the sub's
-    caller supplied the first and the sub returned the rest.
+    The status arrives in the resume payload, so only a known status is echoed;
+    any other value — a non-string, newlines, unbounded text — prints as one
+    fixed label. Never the params, the result, the processId or a resultRef
+    token: the sub's caller supplied the first and the sub returned the rest.
     """
+    label = status if status in _LOG_STATUSES else "unrecognized status"
     print(
-        f"homer_fanout: retrying {agent} attempt {attempt}/{limit} after {status}",
+        f"homer_fanout: retrying {agent} attempt {attempt}/{limit} after {label}",
         file=sys.stderr,
     )
 
@@ -191,9 +201,10 @@ def homer_fanout(
             failed fan-outs".
         infra_retries: The same, for infrastructure outcomes: ``UNKNOWN``, a
             missing or unrecognized status, or an undecodable resume payload.
-            Kept separate from ``retries`` so a broken runner cannot spend the
-            failure budget. A payload that is still undecodable once this budget
-            is spent raises, exactly as it does with no retries at all.
+            Kept separate from ``retries`` so an infrastructure outcome cannot
+            spend the failure budget. A payload that is still undecodable once
+            this budget is spent raises, exactly as it does with no retries at
+            all.
 
     Returns:
         The decoded resume payload dict with ``status``, ``processId`` and
