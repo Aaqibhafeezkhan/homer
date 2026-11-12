@@ -2,7 +2,7 @@
 status: proposed
 date: 2026-10-27
 deciders: Lukáš Vlk
-consulted: ADR-0020, ADR-0047, ADR-0052, ADR-0058, ADR-0066, ADR-0077
+consulted: ADR-0020, ADR-0047, ADR-0052, ADR-0058, ADR-0066, ADR-0077, ADR-0101
 ---
 
 # ADR-0098: The stored pre-start failure reason is a fixed-vocabulary sentence
@@ -39,15 +39,16 @@ failure cause extends it, and every reader who can open the run sees it.
 Chosen option: **"Map each typed cause to a fixed-vocabulary sentence built
 from its typed fields, never the exception message."**
 
-Exactly six causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
+Exactly seven causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
 parallel-run cap, the full parallel-run wait queue, the full lock wait queue,
-the claim timeout and the full claim queue.
+the claim timeout, the full claim queue and an unresolved `lockStrategy.key`
+placeholder (the amendment below).
 *(Amended 2026-11-12: the full lock wait queue is the sixth — the bound a run
 waiting for a subject lock is refused by, added by
-[ADR-0103](0103-lock-before-slot-admission-order.md).)* Any other exception — including one that failed a run
-mid-flight — stores no reason: its message may carry anything, and the reader
-gains nothing from it that the run's own record does not say (ADR-0047 rule 7:
-secrets travel never in error text).
+[ADR-0103](0103-lock-before-slot-admission-order.md).)* Any other exception —
+including one that failed a run mid-flight — stores no reason: its message may
+carry anything, and the reader gains nothing from it that the run's own record
+does not say (ADR-0047 rule 7: secrets travel never in error text).
 
 The mapping's obligations, which every new cause must keep:
 
@@ -85,6 +86,36 @@ The mapping's obligations, which every new cause must keep:
   accepted: keeping the event-emitting writes on one path is worth more than
   the tick of delay, and the reason write must never change the status a kill
   or a failure already committed.
+
+## Amendment (2026-11-12): an unresolved lock key placeholder is the seventh cause
+
+A `lockStrategy.key` whose `{{NAME}}` the run's environment cannot resolve used
+to be left as literal text, so every run of that agent rendered the same key and
+unrelated subjects collided: one caller's run was skipped, queued behind or
+killed by another's. The run is now refused before it starts — before it takes a
+lock, a parallel-run slot or a workspace — and stores a reason naming the
+placeholder.
+
+**The decision.** `UnresolvedLockKeyPlaceholderException` is the seventh mapped
+cause, and its obligations are the ones this ADR already fixes, applied to a
+field that is new here: the reason names the **placeholder names only** — never
+the rendered key, which holds input values, and never any value. The names are
+deduplicated, sorted and bounded (five) before they leave the exception, so the
+sentence stays short and stable whatever a template holds; a key with more
+unresolved names is still refused, just not fully named.
+
+The alternative — leaving the placeholder literal and letting the collision
+happen — was rejected because it is an availability defect rather than a
+cosmetic one: `KILL_OLD_RUN_CURRENT` on such a key lets any caller kill an
+unrelated run, and `WAIT` lets any caller queue behind one (ADR-0047).
+
+**Implementation.** `renderTemplatedKey` in `WorkspaceConfigFactory` checks the
+template's placeholder names against the run's env and throws; `Process.execute`
+already calls it above the workspace, slot and lock gates, so the denial
+precedes all three, the `acceptParentLock` pass-through included. A resumed
+continuation segment that does not inherit the registering run's inputs has no
+value for a subject input, so a key templated on one needs
+`continuation.inheritInputs` (ADR-0101).
 
 ## More Information
 

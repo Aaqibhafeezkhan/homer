@@ -720,6 +720,86 @@ describe('useProcessLangGraph', () => {
     expect(homerApi.getProcessLangGraph).toHaveBeenCalledWith(7, { graph: true });
     expect(result.current.data).toEqual(status);
   });
+
+  describe('polling', () => {
+    const status = {
+      label: 'Deploy',
+      module: 'deploy.graph',
+      threadId: 't-1',
+      topology: { nodes: [{ id: 'a' }], edges: [] },
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.mocked(homerApi.getProcessLangGraph).mockResolvedValue(status);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Flush the pending queryFn promise while the fake clock stays put.
+    async function flush() {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+
+    it('polls on the caller\'s interval', async () => {
+      renderHook(
+        () => useProcessLangGraph(7, { graph: false, enabled: true, refetchInterval: 5_000 }),
+        { wrapper: wrapper(client) },
+      );
+      await flush();
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not poll when the caller omits refetchInterval', async () => {
+      renderHook(
+        () => useProcessLangGraph(7, { graph: false, enabled: true }),
+        { wrapper: wrapper(client) },
+      );
+      await flush();
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not poll when the caller turns polling off explicitly', async () => {
+      renderHook(
+        () => useProcessLangGraph(7, { graph: false, enabled: true, refetchInterval: false }),
+        { wrapper: wrapper(client) },
+      );
+      await flush();
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(homerApi.getProcessLangGraph).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays idle when disabled, whatever the interval', async () => {
+      renderHook(
+        () => useProcessLangGraph(7, { graph: false, enabled: false, refetchInterval: 5_000 }),
+        { wrapper: wrapper(client) },
+      );
+      await flush();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(homerApi.getProcessLangGraph).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('process hooks', () => {
@@ -800,6 +880,21 @@ describe('process hooks', () => {
       offset: 0,
       limit: 50,
     });
+
+    renderHook(() => useProcesses(), { wrapper: wrapper(client) });
+    await flush();
+    expect(homerApi.getProcesses).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(homerApi.getProcesses).toHaveBeenCalledTimes(3);
+  });
+
+  it('useProcesses keeps polling while the page has no data at all', async () => {
+    // The interval predicate runs before the first page arrives, so a query that
+    // failed to load must not be read as settled either.
+    vi.mocked(homerApi.getProcesses).mockRejectedValue(new Error('Failed to fetch'));
 
     renderHook(() => useProcesses(), { wrapper: wrapper(client) });
     await flush();
@@ -892,6 +987,34 @@ describe('process hooks', () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
     expect(homerApi.getProcess).toHaveBeenCalledTimes(2);
+  });
+
+  it('useProcess keeps polling after a failure, with no data to read', async () => {
+    // The interval predicate runs on a query whose data is still undefined — at
+    // mount and after the rejection — so a status read that assumes data would
+    // break the very query it is polling.
+    const failure = new Error('Failed to fetch');
+    vi.mocked(homerApi.getProcess).mockRejectedValue(failure);
+
+    const { result } = renderHook(() => useProcess(7), { wrapper: wrapper(client) });
+    await flush();
+    expect(result.current.error).toBe(failure);
+    expect(homerApi.getProcess).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(homerApi.getProcess).toHaveBeenCalledTimes(3);
+  });
+
+  it('useProcess never fetches while disabled', async () => {
+    renderHook(() => useProcess(7, false), { wrapper: wrapper(client) });
+    await flush();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(homerApi.getProcess).not.toHaveBeenCalled();
   });
 
   it('useProcess exposes the failure, so the page can say why nothing loaded', async () => {

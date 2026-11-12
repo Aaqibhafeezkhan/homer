@@ -39,8 +39,7 @@ vi.mock('@/lib/config/app-config', () => ({
   },
 }));
 
-import { useAuth } from './auth-context';
-import { renderWithProvider } from './auth-test-utils';
+import { LoginOutcomeProbe, renderWithProvider } from './auth-test-utils';
 import { resetInstancesStoreForTests } from '@/lib/instances/store';
 
 // Bearer tokens are namespaced per instance; the seeded default instance's key.
@@ -109,25 +108,14 @@ describe('AuthProvider (bearer mode)', () => {
     getHeartbeat.mockRejectedValue(new Error('401'));
 
     let loginResult: string | undefined;
-    function LoginResultProbe() {
-      const { status, login } = useAuth();
-      return (
-        <div>
-          <div data-testid="status">{status}</div>
-          <button
-            onClick={() =>
-              void login('alice', 'tok').then((r) => {
-                loginResult = r;
-              })
-            }
-          >
-            do-login
-          </button>
-        </div>
-      );
-    }
-
-    renderWithProvider(<LoginResultProbe />);
+    renderWithProvider(
+      <LoginOutcomeProbe
+        password="tok"
+        onResult={(r) => {
+          loginResult = r;
+        }}
+      />,
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId('status')).toHaveTextContent('anon'),
@@ -144,6 +132,37 @@ describe('AuthProvider (bearer mode)', () => {
     // A plain (non-HomerApiError) rejection classifies as 'error', not a
     // credential rejection — the form maps this to "could not reach the server".
     expect(loginResult).toBe('error');
+  });
+
+  it.each([
+    ['rate-limited', () => new HomerApiError('Too Many Requests', 429)],
+    ['invalid-credentials', () => new HomerApiError('Unauthorized', 401)],
+  ])('login reports %s when the /heartbeat probe rejects the token', async (expected, failure) => {
+    // Same classification as cookie mode: a throttled backend must not read as a
+    // bad token, or the user retries harder against the limiter.
+    getHeartbeat.mockRejectedValue(failure());
+
+    let loginResult: string | undefined;
+    renderWithProvider(
+      <LoginOutcomeProbe
+        password="dummy-token"
+        onResult={(r) => {
+          loginResult = r;
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('status')).toHaveTextContent('anon'),
+    );
+
+    await act(async () => {
+      screen.getByText('do-login').click();
+    });
+
+    await waitFor(() => expect(loginResult).toBe(expected));
+    // A rejected token is not kept, and the console stays signed out.
+    expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(screen.getByTestId('status')).toHaveTextContent('anon');
   });
 
   it('logout removes the token and lands anon without calling homerApi.logout', async () => {

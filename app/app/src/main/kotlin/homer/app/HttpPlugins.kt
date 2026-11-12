@@ -48,6 +48,7 @@ import homer.app.exceptions.TooManyRunnerInstancesException
 import homer.app.exceptions.TooManyRunnerPollsException
 import homer.app.exceptions.TooManyRunnerTransfersException
 import homer.app.exceptions.TooManySessionPollsException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.exceptions.ValidationException
 import homer.app.exceptions.WorkspaceException
 import homer.app.models.ErrorResponse
@@ -307,6 +308,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is RunnerClaimTimeoutException,
         is MaintenanceWaitTimeoutException,
         is ServerDrainingException,
+        is UnresolvedLockKeyPlaceholderException,
         -> {
             transferCapacityOrServerStatus(e)
         }

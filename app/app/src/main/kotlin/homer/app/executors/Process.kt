@@ -91,6 +91,9 @@ class Process(
         // remote (so allowlisted host env stays off a remote machine) and supplies
         // its own per-runner env layer. See ADR-0003.
         val runner = runnerRegistry.forAgent(agent)
+        // No reorder: this renders the lock key and denies a run whose placeholder has no value,
+        // so it stays above the workspace, the slot and the lock — a denied run takes none of
+        // them (it also covers the acceptParentLock pass-through below). See ADR-0047.
         val workspaceConfig =
             workspaceConfigFor(
                 processId,

@@ -35,7 +35,7 @@ always-on "does the production Dockerfile still build" gate.
   runs on a 60-second tick against minute-granularity `purgeAfter` /
   `retain.recordFor` durations, which makes a black-box wait-and-assert flaky.
   Its lifecycle coverage lives in `WorkspacePurgeServiceTest` /
-  `ProcessRepositoryTest`. Two of the six pre-start failure causes are
+  `ProcessRepositoryTest`. Two of the seven pre-start failure causes are
   excluded for the same flakiness reason: the claim timeout and the full
   claim queue need a claim that is accepted but never answered — a timing
   race, not a black-box assertion. Their sentences are pinned by
@@ -44,7 +44,7 @@ always-on "does the production Dockerfile still build" gate.
   waiters capped at `maxParallelRuns`) stores the lock-wait sentence no e2e
   fixture exercises — the `lock-queue-cap` fixture sets `maxQueuedRuns: 0`,
   so its surplus waiter shares the slot queue's counter and stores the
-  wait-queue sentence instead. The other three causes and the withholding
+  wait-queue sentence instead. The other four causes and the withholding
   of the blocking run's id from a caller who cannot see it are covered
   (`ConcurrencyAndLimitsTest`, `ProcessIsolationTest`). The full wait queue
   is covered without a saturation race through that fixture, so the surplus

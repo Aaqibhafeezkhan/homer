@@ -50,6 +50,7 @@ class AgentCatalogTest : E2eTestBase() {
                     "parallel-reject",
                     "lock-subject",
                     "lock-queue-cap",
+                    "lock-unresolved-placeholder",
                     "inputs",
                     "schema-guard",
                     "artifact-writer",

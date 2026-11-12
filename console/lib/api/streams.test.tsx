@@ -13,6 +13,7 @@ vi.mock('./sse', () => ({
 }));
 
 import { useProcessLogStream, useProcessStatusStream, type LogStreamState } from './streams';
+import { queryKeys } from './queries';
 
 describe('useProcessStatusStream', () => {
   // Animation frames run only when a test calls nextFrame, so a test decides which
@@ -25,6 +26,9 @@ describe('useProcessStatusStream', () => {
       frames.clear();
       due.forEach((cb) => cb(0));
     });
+  // The callbacks scheduled but not yet run — what a browser would call on the next
+  // tick, whether or not the component is still mounted.
+  const pendingFrames = () => [...frames.values()];
 
   beforeEach(() => {
     openStreamMock.mockReset();
@@ -83,7 +87,7 @@ describe('useProcessStatusStream', () => {
     return {
       emit: (name: string, data: unknown) => act(() => captured!.onEvent(name, data)),
       keys,
-      count: (key: unknown[]) => keys().filter((k) => JSON.stringify(k) === JSON.stringify(key)).length,
+      count: (key: readonly unknown[]) => keys().filter((k) => JSON.stringify(k) === JSON.stringify(key)).length,
       unmount,
     };
   }
@@ -198,6 +202,71 @@ describe('useProcessStatusStream', () => {
     // The root itself, whose summary lists only its descendants.
     act(() => captured!.onEvent('question.asked', { processId: 3, questionId: 'q-1', agentName: 'a' }));
     expect([invalidated(1), invalidated(3)]).toEqual([false, true]);
+  });
+
+  it('leaves a flow summary that holds no data yet alone (the predicate reads it optionally)', () => {
+    let captured: { onEvent: (n: string, d: unknown) => void } | undefined;
+    openStreamMock.mockImplementation((_p: string, h: { onEvent: (n: string, d: unknown) => void }) => {
+      captured = h;
+      return () => {};
+    });
+    const qc = new QueryClient();
+    // A summary the list mounted but whose first fetch has not resolved: it is in
+    // the cache with no data, so the predicate must not dereference it.
+    qc.getQueryCache().build(qc, { queryKey: queryKeys.flowSummary(9) });
+    render(
+      <QueryClientProvider client={qc}>
+        <StatusHarness />
+      </QueryClientProvider>
+    );
+    if (!captured) throw new Error('openStream not called');
+
+    act(() => captured!.onEvent('process.cmd', { processId: 11 }));
+    nextFrame();
+
+    expect(qc.getQueryState(queryKeys.flowSummary(9))?.isInvalidated).toBe(false);
+  });
+
+  it('flushes nothing when the scheduled frame runs after unmount', () => {
+    const { emit, keys, unmount } = mountWithSpy();
+
+    emit('process.status', { processId: 7, status: 'WORKING' });
+    // The cleanup cancels the frame, but the browser may still hand the callback over.
+    const scheduled = pendingFrames();
+    expect(scheduled).toHaveLength(1);
+    unmount();
+    act(() => scheduled.forEach((cb) => cb(0)));
+
+    expect(keys()).toEqual([]);
+  });
+
+  it('does not replay the previous frame\'s processes when a frame holds none', () => {
+    const { emit, count } = mountWithSpy();
+
+    emit('process.status', { processId: 1, status: 'WORKING' });
+    nextFrame();
+    expect(count(queryKeys.process(1))).toBe(1);
+
+    // An event with no numeric processId still flushes — the list is refreshed —
+    // but the ids the previous frame collected are spent, so nothing is refetched
+    // a second time for them.
+    emit('process.status', { status: 'WORKING' });
+    nextFrame();
+
+    expect(count(queryKeys.allProcesses())).toBe(2);
+    expect(count(queryKeys.process(1))).toBe(1);
+    expect(count(queryKeys.artifactContentByProcess(1))).toBe(1);
+  });
+
+  it('a frame with no numeric process id refreshes only the list, not the flow summaries', () => {
+    const { emit, keys } = mountWithSpy();
+
+    emit('process.status', { status: 'WORKING' });
+    nextFrame();
+
+    // Nothing per-process to invalidate, so the flush stops before it would ask
+    // any flow summary — the summaries ride their own poll instead.
+    expect(keys()).toEqual([queryKeys.allProcesses()]);
   });
 });
 

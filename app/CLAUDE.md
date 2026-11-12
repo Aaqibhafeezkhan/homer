@@ -286,8 +286,10 @@ Important invariant enforced by `ProcessExecutor`:
    because a terminal status landed first, the executor reflects the actual final status in
    telemetry and logs a warning instead of forcing `FINISHED`.
 3. A `CancellationException` after KILLED preserves KILLED and sets telemetry to KILLED.
-4. `AnotherProcessStillActive` (from `SKIP_CURRENT` lock) or `MaxParallelRunsExceededException`
-   (from `REJECT`) → FAILED (never ran).
+4. `AnotherProcessStillActive` (from `SKIP_CURRENT` lock), `MaxParallelRunsExceededException`
+   (from `REJECT`) or `UnresolvedLockKeyPlaceholderException` (a `lockStrategy.key` whose
+   `{{NAME}}` the run's env cannot resolve, so unrelated runs would otherwise share one key)
+   → FAILED (never ran).
 5. Any other exception → FAILED.
 6. **`UNKNOWN`-on-restart**: a process still `CREATED`/`WORKING` at boot is moved to `UNKNOWN` by
    `StartupReconciliation` (its coroutine is gone). `UNKNOWN` is terminal — in `ProcessRepository`'s

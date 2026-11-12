@@ -715,8 +715,8 @@ agents/web-pipeline/nodes/analysis/agent.yaml   # a nested agent</code></pre>
           <h3>Process lifecycle <span class="where">status</span></h3>
           <p><code>CREATED → WORKING → FINISHED | FAILED | KILLED</code>. A run interrupted by a server restart is
             reconciled to <code>UNKNOWN</code> (also terminal). A run that fails before any command starts — a claim
-            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap or a full queue — carries a stored
-            <code>failureReason</code> saying which.</p>
+            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap, a full queue or an unresolved
+            <code>lockStrategy.key</code> placeholder — carries a stored <code>failureReason</code> saying which.</p>
           <pre><code>curl "$HOMER/api/v1/status/12345"</code></pre>
         </article>
 
@@ -1517,7 +1517,7 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
 
       <figure class="diagram">
         <svg viewBox="0 0 1160 372" role="img"
-             aria-label="Two limiters in series, the lock first. Concurrent runs of one agent first need the lock named by their key template: WAIT queues behind the holder while holding no run slot, SKIP_CURRENT fails the new run at once, and KILL_OLD_RUN_CURRENT kills the holder once the new run holds a run slot — a run refused its slot leaves the holder alive. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set, but still needs a slot. Runs waiting for a lock are bounded: by maxQueuedRuns when it is set, otherwise by maxParallelRuns, and the surplus run ends FAILED. A run holding the lock then needs a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. Slots are per agent; lock keys are global across agents.">
+             aria-label="Two limiters in series, the lock first. Concurrent runs of one agent first need the lock named by their key template: WAIT queues behind the holder while holding no run slot, SKIP_CURRENT fails the new run at once, and KILL_OLD_RUN_CURRENT kills the holder once the new run holds a run slot — a run refused its slot leaves the holder alive. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set, but still needs a slot. A run whose key template still holds a placeholder its environment cannot resolve is refused before either gate, so it takes no slot and no lock. Runs waiting for a lock are bounded: by maxQueuedRuns when it is set, otherwise by maxParallelRuns, and the surplus run ends FAILED. A run holding the lock then needs a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. Slots are per agent; lock keys are global across agents.">
           <defs>
             <marker id="cc-arrow" viewBox="0 0 10 10" refX="9" refY="5"
                     markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -1591,9 +1591,11 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
           agent's other subjects, and <code>maxParallelRuns</code> bounds the runs that are actually executing. The
           scoping differs too: slots are counted per agent, while lock keys are a single global namespace, so two
           different agents whose key templates resolve to the same string genuinely contend — deliberate, and the
-          mechanism behind serializing a whole <code>RunAgent</code> flow on one key. <code>cooldown</code> is not one
-          of these gates and is not drawn here: it is a separate bound, refused at the request boundary before either
-          gate, so a start it turns away never queues behind anything.</figcaption>
+          mechanism behind serializing a whole <code>RunAgent</code> flow on one key. A key template the run cannot
+          render in full fails it closed: the run ends <code>FAILED</code> with a reason naming the placeholder, before
+          it reaches either gate. <code>cooldown</code> is not one of these gates and is not drawn here: it is a
+          separate bound, refused at the request boundary before either gate, so a start it turns away never queues
+          behind anything.</figcaption>
       </figure>
 
       <div class="grid">
@@ -1601,7 +1603,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <article class="f">
           <h3>Lock keys <span class="where">agent.yaml</span></h3>
           <p>A templated key decides which runs collide. The default (<code>{{HMR_PROCESS_ID}}</code>) is unique per run,
-            so nothing collides. Keys are global across agents.</p>
+            so nothing collides. Keys are global across agents. Every placeholder must have a value: one the run cannot
+            resolve fails the run before it starts rather than being left as literal text, so unrelated runs never share
+            a key by accident.</p>
           <pre><code>lockStrategy:
   key: "deploy-{{ENVIRONMENT}}"
   onCollision: WAIT</code></pre>
@@ -1651,7 +1655,7 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
           <h3>Cooldown between runs <span class="where">agent.yaml</span></h3>
           <p>The third bound, and the one about frequency rather than overlap. <code>minInterval</code> spaces out
             every start; <code>afterFailure</code> backs off only after a run that failed while executing a command —
-            a run refused before it started (a lock skip, a rejected parallel run, a full wait queue, a claim timeout, a full claim queue) never arms it — so a
+            a run refused before it started (a lock skip, a rejected parallel run, a full wait queue, a claim timeout, a full claim queue, an unresolved lock-key placeholder) never arms it — so a
             fast-failing watcher on a one-minute schedule stops repeating its side effect while a healthy one keeps
             its cadence. A refused start launches nothing: an HTTP run, retry, resume or debug start returns
             <code>429</code>, a cron tick and

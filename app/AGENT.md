@@ -1215,7 +1215,7 @@ commands:
 
 `HMR_LG_THREAD` is reserved — external HTTP/MCP callers and declared inputs cannot set it — and is absent on a fresh run. It is set only when re-entering an existing thread: by a running agent's dispatch/continuation request (`continueThread`, which is how the runtime resumes a parked thread), or by Homer on a recover via the resume endpoint. That is what makes `when: '[ -z "$HMR_LG_THREAD" ]'` a reliable "is this a fresh run, not a resume?" gate.
 
-A resumed segment is a new run, so the graph's own inputs are only what the resume carries. An agent whose lock key, `tags.fromInputs` or command gates read a subject input can keep the registering run's values by setting `continuation: { inheritInputs: true }` — see [Inheriting the registering run's inputs](#inheriting-the-registering-runs-inputs) for the rules and the two compatibility notes that come with it.
+A resumed segment is a new run, so the graph's own inputs are only what the resume carries. An agent whose lock key, `tags.fromInputs` or command gates read a subject input can keep the registering run's values by setting `continuation: { inheritInputs: true }`; a lock key templated on a subject input needs it, since the resumed segment otherwise has no value for the placeholder and is refused before it starts (see [Lock Fields](#lock-fields)). See [Inheriting the registering run's inputs](#inheriting-the-registering-runs-inputs) for the rules and the two compatibility notes that come with it.
 
 #### Multiple simultaneous interrupts
 
@@ -2203,7 +2203,9 @@ responsibility:
   string share the lock, so with `KILL_OLD_RUN_CURRENT` a run of one agent can
   kill a colliding run of another. Only agent authors choose key templates, so
   a collision is a configuration choice; keep colliding keys to agents that are
-  meant to serialize together.
+  meant to serialize together. A placeholder the run cannot resolve refuses the
+  run before it starts instead of being left literal, so a key never collapses
+  onto one shared string by accident.
 - **Workspace paths.** Templating `workspace.path` on an input keeps runs
   inside the workspace root, but callers can deliberately share a directory
   with another run of the same agent.
@@ -2684,7 +2686,7 @@ lockStrategy:
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `key` | `String` | No | `{{HMR_PROCESS_ID}}` | Lock identifier template (supports variable substitution). With the default, every process has its own unique lock, so no two processes ever collide. |
+| `key` | `String` | No | `{{HMR_PROCESS_ID}}` | Lock identifier template (supports variable substitution). With the default, every process has its own unique lock, so no two processes ever collide. Every placeholder must resolve from the run's environment: a `{{NAME}}` left without a value refuses the run before it starts — it ends `FAILED` with a `failureReason` naming the placeholder, and takes no lock, no parallel-run slot and no workspace. |
 | `onCollision` | `LockCollision` | No | `WAIT` | Behavior when lock is already held |
 | `acceptParentLock` | `Boolean` | No | `false` | When `true` and this run's resolved key is already held by an ancestor in its invocation chain (a `RunAgent` flow), skip lock acquisition entirely — the flow does not self-collide on a shared key. Parallel-run limits (`maxParallelRuns`) still apply. Has no effect on top-level runs or when the key does not match an ancestor's. |
 
@@ -2791,7 +2793,7 @@ commands:
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `minInterval` | `String?` | No | `null` | Minimum time since the previous run of this agent **started**. Spaces out every run, healthy or not. |
-| `afterFailure` | `String?` | No | `null` | Minimum time since the previous run **ended**, applied only when that run `FAILED` while executing a command. A run refused before it started — a `SKIP_CURRENT` lock skip, a `REJECT`, a full wait queue, a claim timeout, a full claim queue — ends `FAILED` without arming the window. Backs off a failing agent without slowing down a healthy one. |
+| `afterFailure` | `String?` | No | `null` | Minimum time since the previous run **ended**, applied only when that run `FAILED` while executing a command. A run refused before it started — a `SKIP_CURRENT` lock skip, a `REJECT`, a full wait queue, a claim timeout, a full claim queue, an unresolved `lockStrategy.key` placeholder — ends `FAILED` without arming the window. Backs off a failing agent without slowing down a healthy one. |
 
 Durations use the same grammar as `workspace.purgeAfter`: an integer plus
 `m` / `h` / `d` / `w` (there is no seconds unit). At least one field must be
@@ -3207,7 +3209,8 @@ above query params.
 Because `HMR_AGENT_NAME` (layer 7) is appended after the workspace path is
 already resolved (layer 6), `{{HMR_AGENT_NAME}}` is **not** usable in
 `workspace.path` (or `lockStrategy.key`) templates — it stays a literal,
-unsubstituted placeholder there.
+unsubstituted placeholder in a workspace path, and in a lock key it refuses
+the run before it starts (see [Lock Fields](#lock-fields)).
 
 ### Variable Substitution
 
@@ -3216,7 +3219,9 @@ Use `{{VAR_NAME}}` syntax to substitute variables in:
 - the `cmd` of a `!<claude>` / `!<codex>` / `!<opencode>` command (every workspace-env variable resolves there — `HMR_*`, `globalEnv`, the runner's `env`, local-runner `parentEnvAllowlist` values; a declared-input reference fails load)
 - `!<agent>` `agentName`
 - `workspace.path`
-- `lockStrategy.key`
+- `lockStrategy.key` — every `{{NAME}}` here must resolve from the run's
+  environment; an unresolved one is not left as literal text but refuses the run
+  before it starts (see [Lock Fields](#lock-fields))
 - `artifactNameTemplate`
 
 `{{VAR}}` is **not** substituted in a `!<cmd>` `cmd` or a `!<script>`
@@ -3637,10 +3642,13 @@ win on conflict. The rest is bounded on purpose:
 
 Two things change for an agent that turns the flag on, and both are worth a look
 before enabling it. The lock key becomes **real**: a resumed segment now renders
-`ticket-{{TICKET_ID}}` with the inherited subject and holds that key, where
-without the flag it held the literal `ticket-{{TICKET_ID}}` — so it now collides
-with a fresh run for the same subject exactly as `onCollision` says it should.
-And a command gated on an input being *unset* (e.g. `when: '[ -z "${HOLD_SEC:-}" ]'`)
+`ticket-{{TICKET_ID}}` with the inherited subject and holds that key, so it
+collides with a fresh run for the same subject exactly as `onCollision` says it
+should. Without the flag there is nothing to render: the segment has no value for
+`TICKET_ID`, so such a run is refused before it starts (see
+[Lock Fields](#lock-fields)) — which makes the flag a requirement for an agent
+whose key names a subject input, not a nicety. And a command gated on an input
+being *unset* (e.g. `when: '[ -z "${HOLD_SEC:-}" ]'`)
 now sees the registering run's value set, so it may run where it previously did
 not. Gate on the `HMR_LG_THREAD` marker for "is this a fresh run?" instead — it
 is reserved and never inherited. See
