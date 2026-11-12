@@ -587,6 +587,20 @@ class LlmHarnessExecutorTest {
         }
 
     @Test
+    fun `an attempt whose stream has no start event writes no session onto the command span`() =
+        runTest {
+            // Same guard on the inline path: a stream with no start event (a crashed CLI) scans
+            // to a null session id, and the command span must carry no session attribute for it.
+            stdOut.writeText("{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+
+            val result = run(processId = 7, agentName = "demo")
+
+            verify { span.setAttribute("llm.cost_usd", 0.42) }
+            verify(exactly = 0) { span.setAttribute("llm.session_id", any<String>()) }
+            assertNull(result.llmAccounting?.sessionId)
+        }
+
+    @Test
     fun `with a configured resolver the attempt returns on the cli figure before the session lookup answers`() =
         runTest {
             stdOut.writeText("{\"t\":\"start\",\"sid\":\"sess-9\"}\n{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
@@ -1210,6 +1224,30 @@ class LlmHarnessExecutorTest {
             verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.cache_read", 0L) }
             verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.cache_write", 0L) }
             verify(exactly = 1) { settlementSpan.setAttribute("llm.usage.reasoning", 0L) }
+        }
+
+    @Test
+    fun `a settlement of a stream with no start event writes no session onto the settlement span`() =
+        runTest {
+            // A crashed CLI's stream carries no start event, so the scan has no session id and
+            // still settles: the `settled.sessionId?.let` guard must drop the attribute rather
+            // than write it unconditionally. See ADR-0089.
+            stdOut.writeText("{\"t\":\"end\",\"ok\":true,\"cost\":0.42}")
+            every { resolver.configured } returns true
+            val lookup = CompletableDeferred<ResolvedCost>()
+            coEvery { resolver.resolve(any(), any(), any(), any(), any()) } coAnswers { lookup.await() }
+            val settlementSpan = TestFixtures.mockSpan()
+            every { telemetry.tracer } returns TestFixtures.mockTracer(settlementSpan)
+
+            run(processId = 7, agentName = "demo", exec = newExecutor(FakeHarness(), settlementScope = backgroundScope))
+            lookup.complete(ResolvedCost(0.18, CostSource.SESSION))
+            runCurrent()
+
+            // The rest of the settled figure still lands, so the absence is the guard's, not a
+            // settlement that never happened.
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost.source", "session") }
+            verify(exactly = 1) { settlementSpan.setAttribute("llm.cost_usd", 0.18) }
+            verify(exactly = 0) { settlementSpan.setAttribute("llm.session_id", any<String>()) }
         }
 
     @Test
