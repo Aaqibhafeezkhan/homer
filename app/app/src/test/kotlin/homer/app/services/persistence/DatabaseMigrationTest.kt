@@ -73,8 +73,14 @@ class DatabaseMigrationTest {
                 assertTrue("thread_id" in columnNames(st, "continuations"))
                 assertTrue("failure_reason" in columnNames(st, "processes"))
                 assertTrue("failure_reason_run_id" in columnNames(st, "processes"))
+                assertTrue("kind" in columnNames(st, "dispatches"))
                 val tables = tableNames(st)
                 assertTrue("dispatches" in tables)
+                assertTrue("dispatch_group_questions" in tables)
+                assertEquals(
+                    listOf("dispatch_id", "question_id", "position"),
+                    columnNames(st, "dispatch_group_questions"),
+                )
                 assertTrue("continuations" in tables)
                 assertTrue("continuation_watches" in tables)
                 assertTrue("result_tokens" in tables)
@@ -796,6 +802,113 @@ class DatabaseMigrationTest {
                     }
                 assertTrue(analyzed > 0, "no planner statistics for continuation_watches")
                 assertContinuationWatchesBatchPlan(svc, st)
+            }
+        }
+        svc.close()
+    }
+
+    /**
+     * The index a member statement must be served by: the question_id index when its WHERE
+     * constrains the member question (a member→group lookup), the (dispatch_id, position)
+     * primary key when it constrains the dispatch (one group's ordered members). Read off the
+     * WHERE clause, not the whole statement: a join's ON clause names the other column too.
+     */
+    private fun memberIndexFor(sql: String): String =
+        if ("dispatch_group_questions.dispatch_id" in sql.substringAfter(" WHERE ")) {
+            "sqlite_autoindex_dispatch_group_questions_1"
+        } else {
+            "dispatch_group_questions_question_id"
+        }
+
+    /**
+     * dispatch_group_questions (schema v31) carries the two shapes every answer and the group's
+     * fire gate send. A member question id resolves to its group on
+     * `dispatch_group_questions_question_id` — [DispatchRepository.findByQuestionId]'s join and
+     * [DispatchRepository.findByQuestionIds]' batched member read — and one dispatch's ordered
+     * members are read on the (dispatch_id, position) primary key, which is also the order, so no
+     * sort step: the all-answered read behind the fire gate ([DispatchRepository.groupMembers])
+     * and the boot re-fire ([DispatchRepository.listPendingAnswered]). Plans the statements the
+     * repository actually sends. See ADR-0105.
+     */
+    private suspend fun assertDispatchGroupMemberPlans(
+        svc: DatabaseService,
+        st: java.sql.Statement,
+    ) {
+        val repository = DispatchRepository(svc)
+        val sent = mutableListOf<String>()
+        // A member question resolves to its group: the direct `dispatches.question_id` read
+        // misses and the join through the member table finds it.
+        SqlStatementRecorder.reset()
+        assertEquals(1, repository.findByQuestionId("q-1")?.id)
+        sent += SqlStatementRecorder.statements()
+        // The same member batched with another group's, as the questions inbox reads them.
+        SqlStatementRecorder.reset()
+        assertEquals(setOf("q-1", "q-2"), repository.findByQuestionIds(listOf("q-1", "q-2")).keys)
+        sent += SqlStatementRecorder.statements()
+        // One group's ordered members: the fire gate's all-answered read.
+        SqlStatementRecorder.reset()
+        assertEquals(listOf("q-1", "q-30001"), repository.groupMembers(1).take(2).map { it.questionId })
+        sent += SqlStatementRecorder.statements()
+        // The boot re-fire's, over the groups still PENDING.
+        SqlStatementRecorder.reset()
+        assertTrue(repository.listPendingAnswered().isNotEmpty(), "no answered group to re-fire")
+        sent += SqlStatementRecorder.statements()
+
+        val members = sent.filter { "dispatch_group_questions" in it }
+        assertTrue(members.isNotEmpty(), "no member statement was sent: $sent")
+        for (sql in members) {
+            val index = memberIndexFor(sql)
+            val plan = plan(st, sql)
+            assertTrue(plan.none { it.startsWith("SCAN dispatch_group_questions") }, "table scan for '$sql': $plan")
+            assertTrue(plan.any { "INDEX $index" in it }, "'$sql' not planned on $index: $plan")
+            assertTrue(plan.none { it.startsWith("USE TEMP B-TREE") }, "'$sql' sorts in a temp b-tree: $plan")
+        }
+    }
+
+    @Test
+    fun `the member lookup and the all-answered read stay on their indexes at 150k member rows, with and without statistics`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("fresh.db").toString()
+        val svc = DatabaseService(dbPath, logger)
+        svc.migrate()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                // Production-shaped fan-out: 150k members over 30k groups (5 each), most groups
+                // already settled, a few still PENDING, and the member questions they name.
+                val rows = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 150000) "
+                st.execute(
+                    rows +
+                        "INSERT INTO dispatches (id, question_id, status, agent_name, answer_param, params, " +
+                        "origin_process_id, origin_agent_name, created_at, kind) " +
+                        "SELECT i, 'group:' || i, CASE WHEN i % 500 = 0 THEN 'PENDING' ELSE 'DISPATCHED' END, " +
+                        "'agent-' || (i % 12), 'a', '{}', 1, 'o', i, 'GROUP' FROM n WHERE i <= 30000",
+                )
+                st.execute(
+                    rows +
+                        "INSERT INTO dispatch_group_questions (dispatch_id, question_id, position) " +
+                        "SELECT ((i - 1) % 30000) + 1, 'q-' || i, (i - 1) / 30000 FROM n",
+                )
+                st.execute(
+                    rows +
+                        "INSERT INTO questions (id, process_id, agent_name, text, options, status, answer, created_at, dispatch_bound) " +
+                        "SELECT 'q-' || i, 1, 'agent-1', 't', '[]', " +
+                        "CASE WHEN i % 7 = 0 THEN 'OPEN' ELSE 'ANSWERED' END, " +
+                        "CASE WHEN i % 7 = 0 THEN NULL ELSE 'a' || i END, i, 1 FROM n",
+                )
+                assertDispatchGroupMemberPlans(svc, st)
+            }
+        }
+        svc.optimize()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                val analyzed =
+                    st.executeQuery("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'dispatch_group_questions'").use { rs ->
+                        rs.next()
+                        rs.getInt(1)
+                    }
+                assertTrue(analyzed > 0, "no planner statistics for dispatch_group_questions")
+                assertDispatchGroupMemberPlans(svc, st)
             }
         }
         svc.close()
