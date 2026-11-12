@@ -4,6 +4,7 @@ import homer.app.exceptions.CooldownActiveException
 import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.Cooldown
+import homer.app.models.Param
 import homer.app.services.persistence.ProcessRepository
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -100,6 +101,64 @@ class CooldownGateTest {
             assertTrue(e.message!!.contains("last run failed"), e.message!!)
         }
 
+    // --- cooldown.key: the same windows, counted per subject ---
+
+    @Test
+    fun `a keyed afterFailure refuses the same subject and leaves another alone`() =
+        runTest {
+            // mr-1's failure is on record; mr-2 has none. The two lookups are scoped to
+            // the start's own key, so one subject's failure cannot bar another's start.
+            coEvery { repo.latestFailureEndedAt("watcher", "mr-1") } returns now - 60
+            coEvery { repo.latestFailureEndedAt("watcher", "mr-2") } returns null
+
+            val e =
+                assertFailsWith<CooldownActiveException> {
+                    gate().check(agent(Cooldown(afterFailure = "15m", key = "mr-{{MR}}")), "mr-1")
+                }
+
+            assertTrue(e.message!!.contains("last run failed"), e.message!!)
+            gate().check(agent(Cooldown(afterFailure = "15m", key = "mr-{{MR}}")), "mr-2")
+        }
+
+    @Test
+    fun `a keyed minInterval spaces one subject's starts only`() =
+        runTest {
+            coEvery { repo.latestRunStartedAt("watcher", "mr-1") } returns now - 60
+            coEvery { repo.latestRunStartedAt("watcher", "mr-2") } returns null
+
+            assertFailsWith<CooldownActiveException> {
+                gate().check(agent(Cooldown(minInterval = "5m", key = "mr-{{MR}}")), "mr-1")
+            }
+            gate().check(agent(Cooldown(minInterval = "5m", key = "mr-{{MR}}")), "mr-2")
+        }
+
+    @Test
+    fun `a key is never echoed in the refusal`() =
+        runTest {
+            // §12 rule 7: the key is derived from the run's inputs, which may be secret
+            // under another agent's definition — the refusal names the agent, not the key.
+            coEvery { repo.latestRunStartedAt("watcher", "mr-s3cr3t") } returns now - 60
+
+            val e =
+                assertFailsWith<CooldownActiveException> {
+                    gate().check(agent(Cooldown(minInterval = "5m", key = "mr-{{MR}}")), "mr-s3cr3t")
+                }
+
+            assertTrue(!e.message!!.contains("mr-s3cr3t"), e.message!!)
+        }
+
+    @Test
+    fun `without a key both lookups stay unscoped`() =
+        runTest {
+            // The strict mock is the assertion: a null key must not reach the repository
+            // as anything but null, or a keyless agent would stop seeing its own rows.
+            coEvery { repo.latestRunStartedAt("watcher", null) } returns now - 60
+
+            assertFailsWith<CooldownActiveException> {
+                gate().check(agent(Cooldown(minInterval = "5m")))
+            }
+        }
+
     @Test
     fun `an empty cooldown block is rejected at load rather than silently doing nothing`() {
         assertFailsWith<IllegalArgumentException> { Cooldown() }
@@ -111,6 +170,43 @@ class CooldownGateTest {
         assertFailsWith<IllegalArgumentException> { Cooldown(minInterval = "5x") }
     }
 
+    @Test
+    fun `a blank or malformed cooldown key is rejected at load`() {
+        assertFailsWith<IllegalArgumentException> { Cooldown(minInterval = "1m", key = "  ") }
+        // A `{{` that never closes would otherwise be stored as the literal every subject
+        // shares — the one outcome `key` exists to prevent.
+        assertFailsWith<IllegalArgumentException> { Cooldown(minInterval = "1m", key = "mr-{{MR") }
+        assertFailsWith<IllegalArgumentException> { Cooldown(minInterval = "1m", key = "mr-{{M R}}") }
+        assertFailsWith<IllegalArgumentException> { Cooldown(minInterval = "1m", key = "x".repeat(257)) }
+        // At the cap, and a well-formed placeholder, both load.
+        Cooldown(minInterval = "1m", key = "x".repeat(256))
+        Cooldown(minInterval = "1m", key = "mr-{{MR}}")
+    }
+
+    @Test
+    fun `a cooldown key naming a secret input is rejected at load`() {
+        // A secret input's value would otherwise land in `processes.cooldown_key`, where it
+        // outlives the run and is readable by anyone who can list the agent's runs.
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                Agent(
+                    name = "watcher",
+                    commands = listOf(Command.Cmd(cmd = listOf("true"))),
+                    inputs = listOf(Param(paramName = "MR", secret = true)),
+                    cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}"),
+                )
+            }
+
+        assertTrue(e.message!!.contains("MR"), e.message!!)
+        // A non-secret input of the same name is exactly what the key is for.
+        Agent(
+            name = "watcher",
+            commands = listOf(Command.Cmd(cmd = listOf("true"))),
+            inputs = listOf(Param(paramName = "MR", secret = false)),
+            cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}"),
+        )
+    }
+
     // --- withoutFailureBackoff: the manual-recovery (retry/resume/debug) view ---
 
     @Test
@@ -118,6 +214,17 @@ class CooldownGateTest {
         val recovery = agent(Cooldown(minInterval = "1m", afterFailure = "15m")).withoutFailureBackoff()
 
         assertEquals(Cooldown(minInterval = "1m"), recovery.cooldown)
+    }
+
+    @Test
+    fun `withoutFailureBackoff keeps a key alongside minInterval`() {
+        // A keyed `minInterval` is still pacing, so a manual recovery keeps the key and
+        // its subject — dropping it would let a retry start inside the window it is
+        // pacing. `afterFailure` goes; the key is not its property.
+        val recovery =
+            agent(Cooldown(minInterval = "1m", afterFailure = "15m", key = "mr-{{MR}}")).withoutFailureBackoff()
+
+        assertEquals(Cooldown(minInterval = "1m", key = "mr-{{MR}}"), recovery.cooldown)
     }
 
     @Test

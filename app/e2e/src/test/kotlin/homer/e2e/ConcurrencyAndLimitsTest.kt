@@ -3,7 +3,9 @@ package homer.e2e
 import homer.e2e.support.Awaits
 import homer.e2e.support.E2e
 import homer.e2e.support.E2eTestBase
+import homer.e2e.support.ErrorBody
 import homer.e2e.support.HomerApi
+import homer.e2e.support.ProcessList
 import homer.e2e.support.RunResponse
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
@@ -175,6 +177,55 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             // failure just above) must not refuse it.
             val response = debugResponse("cooldown-fail-debug")
             assertEquals(HttpStatusCode.OK, response.status, "a manual debug run must not be held back by afterFailure")
+        }
+
+    // cooldown.key (ADR-0103): both windows are counted per rendered subject, and a
+    // key that cannot be rendered refuses the start instead of sharing one window.
+
+    @Test
+    fun `a keyed afterFailure refuses the same subject and admits another`() =
+        runBlocking {
+            val failedId = HomerApi.startRun("cooldown-key", query = mapOf("mr" to "1"))
+            assertEquals("FAILED", Awaits.awaitTerminal(failedId).status)
+
+            // The failure armed afterFailure (1h) for mr-1 only.
+            val sameSubject = HomerApi.run("cooldown-key", query = mapOf("mr" to "1"))
+            assertEquals(
+                HttpStatusCode.TooManyRequests,
+                sameSubject.status,
+                "a keyed afterFailure must refuse the subject that failed: ${sameSubject.bodyAsText()}",
+            )
+
+            val otherSubject = HomerApi.run("cooldown-key", query = mapOf("mr" to "2"))
+            assertEquals(
+                HttpStatusCode.OK,
+                otherSubject.status,
+                "another subject must not be held back: ${otherSubject.bodyAsText()}",
+            )
+            Awaits.awaitTerminal(HomerApi.decode<RunResponse>(otherSubject).processId)
+
+            // Neither refusal left a row behind: the failed run and the admitted mr-2 run.
+            val list: ProcessList = HomerApi.decode(HomerApi.statusAll(mapOf("agentName" to "cooldown-key")))
+            assertEquals(2, list.total, "a refused keyed start must not create a run")
+        }
+
+    @Test
+    fun `an unrenderable cooldown key is refused with 400 and creates no run`() =
+        runBlocking {
+            // `mr` is optional, so the request resolves; `{{MR}}` then has nothing to
+            // render from and the start must fail closed rather than run under a key
+            // every subject would share.
+            val response = HomerApi.run("cooldown-key")
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                response.status,
+                "an unresolved cooldown key must be refused: ${response.bodyAsText()}",
+            )
+            val error = E2e.json.decodeFromString<ErrorBody>(response.bodyAsText())
+            assertTrue(error.msg.contains("MR"), "the refusal should name the placeholder: ${error.msg}")
+
+            val list: ProcessList = HomerApi.decode(HomerApi.statusAll(mapOf("agentName" to "cooldown-key")))
+            assertEquals(0, list.total, "a refused key must not create a run")
         }
 
     private suspend fun debugResponse(agent: String): HttpResponse =

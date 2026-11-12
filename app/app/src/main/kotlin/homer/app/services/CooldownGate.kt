@@ -28,14 +28,23 @@ internal class CooldownGate(
     /**
      * Throws [CooldownActiveException] when [agent]'s cooldown has not elapsed. No-op when unset.
      *
+     * [cooldownKey] is the run's already-rendered `cooldown.key`, or null when the agent
+     * sets none: it narrows both lookups to the rows of one subject, and the decision
+     * itself is the same arithmetic either way. The caller renders it — a keyed agent can
+     * only be checked after its inputs are resolved — and a key that does not render
+     * throws there, before this is reached.
+     *
      * Pre-flight only: it refuses before the run does any work, but it is *not*
      * the bound. Two concurrent starts can both pass here, so the authoritative
      * check runs inside `ProcessRepository.obtainProcessId`'s transaction, atomic
      * with the INSERT. Keep both — this one preserves the caller-facing exception
      * ordering (cost cap → cooldown → input validation) and avoids resolving
-     * inputs for a start that is going to be refused. See ADR-0051.
+     * inputs for a start that is going to be refused. See ADR-0051, ADR-0103.
      */
-    suspend fun check(agent: Agent) {
+    suspend fun check(
+        agent: Agent,
+        cooldownKey: String? = null,
+    ) {
         val cooldown = agent.cooldown ?: return
         CooldownDecision
             .evaluate(
@@ -43,8 +52,8 @@ internal class CooldownGate(
                 cooldown = cooldown,
                 nowSec = nowSec(),
                 // Read only what the configured windows need.
-                latestRunStartedAt = cooldown.minIntervalSeconds?.let { repository.latestRunStartedAt(agent.name) },
-                latestFailureEndedAt = cooldown.afterFailureSeconds?.let { repository.latestFailureEndedAt(agent.name) },
+                latestRunStartedAt = cooldown.minIntervalSeconds?.let { repository.latestRunStartedAt(agent.name, cooldownKey) },
+                latestFailureEndedAt = cooldown.afterFailureSeconds?.let { repository.latestFailureEndedAt(agent.name, cooldownKey) },
             )?.let { throw it }
     }
 }
@@ -56,8 +65,10 @@ internal class CooldownGate(
  *
  * `minInterval` is a pacing bound on every start of the agent, so it always
  * survives — and when it is unset the whole cooldown is dropped, because
- * `Cooldown`'s `init` rejects a value with neither window set. Retry, resume and
- * debug all start through this, so the rule is stated once. See ADR-0051.
+ * `Cooldown`'s `init` rejects a value with neither window set. A `key` rides
+ * `minInterval` for the same reason: a keyed `minInterval` is still pacing, and it
+ * scopes the surviving window to its subject. Retry, resume and debug all start
+ * through this, so the rule is stated once. See ADR-0051, ADR-0103.
  */
 internal fun Agent.withoutFailureBackoff(): Agent =
     cooldown
@@ -73,6 +84,10 @@ internal fun Agent.withoutFailureBackoff(): Agent =
  * `ProcessRepository.obtainProcessId`'s transaction share one implementation and
  * cannot drift apart — a transaction cannot call the suspending gate, and a second
  * copy of the arithmetic is exactly how the two would come to disagree.
+ *
+ * `cooldown.key` deliberately does not appear here: scoping a window to one subject is
+ * which rows the two lookups return, not how a window is measured, so both callers pass
+ * the rendered key to their reads and the arithmetic stays one copy. See ADR-0103.
  */
 internal object CooldownDecision {
     /** The refusal to throw, or null when the start is allowed. */

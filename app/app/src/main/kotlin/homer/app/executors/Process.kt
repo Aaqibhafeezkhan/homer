@@ -49,6 +49,10 @@ class Process(
     val rootProcessId: Int? = null,
     private val workspaceFactory: (WorkspaceConfig, Span, suspend () -> Boolean) -> Workspace =
         { config, span, isSharedWithLiveSibling -> Workspace(config, span, isSharedWithLiveSibling) },
+    // The run's already-rendered `cooldown.key`, or null when the agent sets none. Read by
+    // ProcessExecutor, stored with the row at INSERT and used to scope the cooldown reads
+    // in the same transaction. Rendered by the caller, never re-derived here. ADR-0103.
+    val cooldownKey: String? = null,
 ) {
     val name = agent.name
 
@@ -260,6 +264,8 @@ internal class ProcessFactory(
         extraSecretInputKeys: Set<String> = emptySet(),
         parentProcessId: Int? = null,
         rootProcessId: Int? = null,
+        // The rendered `cooldown.key` of this run; null when the agent sets none. See ADR-0103.
+        cooldownKey: String? = null,
     ): Process =
         Process(
             workspaceConfigFactory = workspaceConfigFactory,
@@ -283,5 +289,6 @@ internal class ProcessFactory(
             ancestorLockKeys = ancestorLockKeys,
             parentProcessId = parentProcessId,
             rootProcessId = rootProcessId,
+            cooldownKey = cooldownKey,
         )
 }

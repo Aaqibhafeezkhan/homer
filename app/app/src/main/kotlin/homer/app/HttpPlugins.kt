@@ -12,6 +12,7 @@ import homer.app.exceptions.ConfigurationException
 import homer.app.exceptions.ContinuationNotFoundException
 import homer.app.exceptions.ContinuationNotPendingException
 import homer.app.exceptions.CooldownActiveException
+import homer.app.exceptions.CooldownKeyInvalidException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.CsrfValidationException
 import homer.app.exceptions.DispatchAgentNotFoundException
@@ -274,6 +275,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is InvocationDepthExceededException,
         is InvocationCycleDetectedException,
         is RunnerRegistrationRejectedException,
+        is CooldownKeyInvalidException,
         -> {
             requestErrorStatus(e)
         }

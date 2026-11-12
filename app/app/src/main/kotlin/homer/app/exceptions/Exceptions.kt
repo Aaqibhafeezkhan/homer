@@ -183,6 +183,21 @@ class CooldownActiveException(
     )
 
 /**
+ * Raised when an agent's `cooldown.key` cannot produce a usable key: a placeholder the
+ * run's env and inputs do not resolve, or a rendered key that is empty, too long or
+ * outside the allowed character set. Mapped to 400 Bad Request — the caller can fix the
+ * inputs it supplied. Fail closed: a key that cannot be rendered is never replaced by a
+ * shared or per-agent one, which would silently widen the bound to every subject.
+ *
+ * The message names the placeholder or the broken rule and never an env value, a
+ * rendered key or the key itself. §12 rule 7, ADR-0103.
+ */
+class CooldownKeyInvalidException(
+    val agentName: String,
+    reason: String,
+) : HomerException("Agent '$agentName' has an unusable cooldown.key: $reason")
+
+/**
  * Raised when a Claude invocation would push the rolling cost window over a
  * configured cap (`server.costLimits.globalUsdPerMin` or per-agent
  * `costLimits.perAgentUsdPerDay`). Mapped to 429 Too Many Requests at the HTTP

@@ -1,6 +1,7 @@
 package homer.app.services
 
 import homer.app.exceptions.CooldownActiveException
+import homer.app.exceptions.CooldownKeyInvalidException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.HomerException
 import homer.app.exceptions.InvocationCycleDetectedException
@@ -14,6 +15,7 @@ import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.TestFixtures
 import homer.app.models.Agent
 import homer.app.models.AgentTelemetry
+import homer.app.models.Cooldown
 import homer.app.models.Param
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessStatus
@@ -338,11 +340,12 @@ class AgentRunStarterTest {
         costMeter: CostMeter = mockk(relaxed = true),
         parentStatus: ProcessStatus = ProcessStatus.UNKNOWN,
         processReads: ProcessRecordReads = mockk { coEvery { getProcessStatus(any()) } returns parentStatus },
+        processFactory: ProcessFactory = mockk(relaxed = true),
     ): AgentRunStarter =
         AgentRunStarter(
             serverId = "test-server",
             processExecutor = processExecutor,
-            processFactory = mockk(relaxed = true),
+            processFactory = processFactory,
             telemetryService = TestFixtures.mockTelemetryService(TestFixtures.mockSpan()),
             costMeter = costMeter,
             maxInvocationDepth = 5,
@@ -425,6 +428,112 @@ class AgentRunStarterTest {
                 coVerify(exactly = 1) { cooldownGate.check(any()) }
                 coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
             }
+        }
+
+    // ===== cooldown.key: rendered from the resolved inputs, before any row exists =====
+
+    /** An agent whose cooldown key is a template over one declared input. */
+    private fun keyedAgent(cooldown: Cooldown? = Cooldown(minInterval = "1m", key = "mr-{{MR}}")) =
+        AgentFixtures
+            .simpleAgent(name = "child")
+            .copy(
+                inputs = listOf(Param(paramName = "mr", envName = "MR", required = false)),
+                cooldown = cooldown,
+            )
+
+    @Test
+    fun `a keyed cooldown is checked after the inputs are resolved, and its key reaches the row`() =
+        runBlocking {
+            // The key is a template over the inputs, so the cooldown check cannot run before they
+            // are resolved — but it must still run before `create`, so a refused or unrenderable
+            // start leaves no process row behind. See ADR-0103.
+            val order = mutableListOf<String>()
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val cooldownGate = mockk<CooldownGate>(relaxed = true)
+            coEvery { cooldownGate.check(any(), any()) } coAnswers {
+                order += "cooldown"
+            }
+            val processFactory = mockk<ProcessFactory>(relaxed = true)
+            val starter =
+                starterWithGate(
+                    mockk(relaxed = true),
+                    processExecutor,
+                    cooldownGate = cooldownGate,
+                    processFactory = processFactory,
+                )
+
+            assertEquals(
+                7,
+                starter.start(keyedAgent(), emptyList(), "http") {
+                    order += "inputs"
+                    mapOf("MR" to "1")
+                },
+            )
+
+            assertEquals(listOf("inputs", "cooldown"), order)
+            coVerify(exactly = 1) { cooldownGate.check(any(), "mr-1") }
+            // The same rendered value goes to the row, so the pre-flight gate and the
+            // authoritative check inside the INSERT cannot scope differently.
+            verify {
+                processFactory.create(
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    "mr-1",
+                )
+            }
+        }
+
+    @Test
+    fun `a keyless cooldown is still checked before the inputs are resolved`() =
+        runBlocking {
+            // The order the keyless path always had: cycle → depth → cost cap → cooldown →
+            // input validation, so a start that is going to be refused resolves nothing.
+            val order = mutableListOf<String>()
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
+            val cooldownGate = mockk<CooldownGate>(relaxed = true)
+            coEvery { cooldownGate.check(any(), any()) } coAnswers {
+                order += "cooldown"
+            }
+            val starter = starterWithGate(mockk(relaxed = true), processExecutor, cooldownGate = cooldownGate)
+
+            starter.start(keyedAgent(cooldown = Cooldown(minInterval = "1m")), emptyList(), "http") {
+                order += "inputs"
+                mapOf("MR" to "1")
+            }
+
+            assertEquals(listOf("cooldown", "inputs"), order)
+            coVerify(exactly = 1) { cooldownGate.check(any(), null) }
+        }
+
+    @Test
+    fun `an unresolvable key fails the start and creates no run`() =
+        runBlocking {
+            val processExecutor = mockk<ProcessExecutor>(relaxed = true)
+            val processFactory = mockk<ProcessFactory>(relaxed = true)
+            val starter =
+                starterWithGate(
+                    mockk(relaxed = true),
+                    processExecutor,
+                    processFactory = processFactory,
+                )
+
+            assertFailsWith<CooldownKeyInvalidException> {
+                starter.start(keyedAgent(), emptyList(), "http") { emptyMap() }
+            }
+            verify(exactly = 0) {
+                processFactory.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+            coVerify(exactly = 0) { processExecutor.execute(any(), any()) }
         }
 
     @Test

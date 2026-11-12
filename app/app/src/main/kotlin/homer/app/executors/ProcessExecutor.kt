@@ -39,6 +39,7 @@ class ProcessExecutor(
                 process.queryParams,
                 owner = process.owner,
                 cooldown = process.cooldown,
+                cooldownKey = process.cooldownKey,
                 secretInputKeys = process.secretInputKeys,
                 parentProcessId = process.parentProcessId,
                 rootProcessId = process.rootProcessId,

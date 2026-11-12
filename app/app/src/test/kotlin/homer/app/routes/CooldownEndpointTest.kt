@@ -17,6 +17,8 @@ import homer.app.infra.QuestionsWorkspaceSetup
 import homer.app.infra.WorkspaceConfigFactory
 import homer.app.models.Agent
 import homer.app.models.Cooldown
+import homer.app.models.Param
+import homer.app.models.ParamType
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.runners.ActiveSessionsRegistry
@@ -75,7 +77,8 @@ class CooldownEndpointTest {
     /** Only the failure backoff set — the window these three paths deliberately ignore. */
     private val failureOnly = Cooldown(afterFailure = "15m")
 
-    private val debugBody = """{"commandIndex":0,"env":{},"queryParams":{},"headers":{}}"""
+    /** The subject input the keyed cases template their `cooldown.key` over. */
+    private val mrInput = Param(paramName = "mr", envName = "MR", type = ParamType.STR, required = false)
 
     /** A real start path over a fresh temp database, with the agent under test. */
     private inner class Deps(
@@ -122,8 +125,8 @@ class CooldownEndpointTest {
          * every run these tests actually launch ends `FINISHED` — and the admission
          * cases would pass whether or not the fix is present.
          */
-        suspend fun seedFailedRun() {
-            val id = processManager.obtainProcessId(agent.name, emptyMap())
+        suspend fun seedFailedRun(cooldownKey: String? = null) {
+            val id = processManager.obtainProcessId(agent.name, emptyMap(), cooldownKey = cooldownKey)
             processManager.setProcessStatus(id, ProcessStatus.WORKING)
             processManager.setProcessStatus(id, ProcessStatus.FAILED)
         }
@@ -207,10 +210,10 @@ class CooldownEndpointTest {
 
     private suspend fun ApplicationTestBuilder.postResume() = client.post("/api/v1/processes/42/resume")
 
-    private suspend fun ApplicationTestBuilder.postDebug() =
+    private suspend fun ApplicationTestBuilder.postDebug(queryParams: String = "{}") =
         client.post("/api/v1/agents/watcher/debug") {
             contentType(ContentType.Application.Json)
-            setBody(debugBody)
+            setBody("""{"commandIndex":0,"env":{},"queryParams":$queryParams,"headers":{}}""")
         }
 
     // ===== minInterval is honoured: refused with 429, nothing launched =====
@@ -314,5 +317,103 @@ class CooldownEndpointTest {
                 "investigating a failure must not be held back by afterFailure",
             )
             assertEquals(3, deps.processCount())
+        }
+
+    // ===== cooldown.key: the same windows, counted per subject (ADR-0103) =====
+
+    private fun keyed(cooldown: Cooldown) =
+        AgentFixtures
+            .simpleAgent(name = "watcher")
+            .copy(inputs = listOf(mrInput), cooldown = cooldown)
+
+    /** A source run that carried `MR=1`, so a replay renders the key `mr-1`. */
+    private fun keyedSource() = failedSource().copy(inputParams = mapOf("MR" to "1"))
+
+    @Test
+    fun `retry inside its subject's keyed minInterval window is refused and launches nothing`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = keyedSource(),
+            mount = { deps -> mountRetry(deps) },
+        ) { deps ->
+            assertEquals(HttpStatusCode.OK, postRetry().status, "the first retry opens mr-1's window")
+            assertEquals(
+                HttpStatusCode.TooManyRequests,
+                postRetry().status,
+                "a replay of the same subject must be refused inside its own window",
+            )
+            assertEquals(1, deps.processCount(), "the refused retry must not create a run")
+        }
+
+    @Test
+    fun `resume inside its subject's keyed minInterval window is refused and launches nothing`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = keyedSource(),
+            mount = { deps -> mountResume(deps) },
+        ) { deps ->
+            assertEquals(HttpStatusCode.OK, postResume().status, "the first resume opens mr-1's window")
+            assertEquals(
+                HttpStatusCode.TooManyRequests,
+                postResume().status,
+                "a replay of the same subject must be refused inside its own window",
+            )
+            assertEquals(1, deps.processCount(), "the refused resume must not create a run")
+        }
+
+    @Test
+    fun `retry with a key is still admitted despite a keyed afterFailure`() =
+        scenario(
+            agent = keyed(Cooldown(afterFailure = "15m", key = "mr-{{MR}}")),
+            source = keyedSource(),
+            mount = { deps -> mountRetry(deps) },
+        ) { deps ->
+            deps.seedFailedRun(cooldownKey = "mr-1")
+            assertEquals(HttpStatusCode.OK, postRetry().status)
+            assertEquals(
+                HttpStatusCode.OK,
+                postRetry().status,
+                "a key narrows the window; it does not make afterFailure gate manual recovery",
+            )
+            assertEquals(3, deps.processCount())
+        }
+
+    @Test
+    fun `debug with a key paces its own subject and leaves another alone`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = failedSource(),
+            mount = { deps -> mountDebug(deps) },
+        ) { deps ->
+            assertEquals(HttpStatusCode.OK, postDebug("""{"mr":"1"}""").status, "the first debug opens mr-1's window")
+            assertEquals(
+                HttpStatusCode.TooManyRequests,
+                postDebug("""{"mr":"1"}""").status,
+                "mr-1 must be refused inside its own window",
+            )
+            assertEquals(
+                HttpStatusCode.OK,
+                postDebug("""{"mr":"2"}""").status,
+                "mr-2 is a different subject and must not be paced by mr-1",
+            )
+            assertEquals(2, deps.processCount(), "the refused debug must not create a run")
+        }
+
+    @Test
+    fun `debug with an unresolvable key is refused with 400 and launches nothing`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = failedSource(),
+            mount = { deps -> mountDebug(deps) },
+        ) { deps ->
+            // `mr` is optional, so the request resolves and the key is what fails: a
+            // template left as a literal would give every subject the same window.
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                postDebug().status,
+                "an unresolved cooldown key must fail the start",
+            )
+            // `-1` is the empty-table sentinel of the id high-water read: no row was inserted.
+            assertEquals(-1, deps.processCount(), "a refused key must not create a run")
         }
 }

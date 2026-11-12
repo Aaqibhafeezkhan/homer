@@ -161,3 +161,4 @@ One of:
 | [0100](0100-kubernetes-job-workload-and-pod-run-limit.md) | The Kubernetes runner can run a session in a one-pod Job, and its run limit is on the pod | proposed |
 | [0101](0101-continuation-inherits-origin-run-inputs.md) | A continuation can inherit the registering run's inputs | proposed |
 | [0102](0102-shutdown-drain-waits-for-descendant-runs.md) | The shutdown drain re-reads the run jobs it joins, admits the runs they start, and stops the consumers last | proposed |
+| [0103](0103-cooldown-key-scopes-windows-per-subject.md) | `cooldown.key` counts the cooldown windows per rendered subject | proposed |

@@ -13,6 +13,7 @@ import homer.app.models.Command
 import homer.app.models.ProcessStatus
 import homer.app.services.persistence.ProcessRecordReads
 import io.opentelemetry.api.common.Attributes
+import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.context.Context
 
@@ -83,47 +84,25 @@ internal class AgentRunStarter(
             val context = Context.current().with(span)
             val admitted = admittedByLiveParent(serverDerivedParent, parentProcessId)
             // Parks this start while maintenance mode is on, before any preflight: a released
-            // start must re-run the checks and resolve its inputs at dequeue, not at enqueue.
+            // start re-runs the checks and resolves its inputs at dequeue, not at enqueue.
             // See ADR-0092.
             val processId =
                 maintenanceGate.gated(owner, admitted) {
-                    checkPreflight(agent, invocationChain)
-                    val newChain = invocationChain + agent.name
-                    val queryParamsEnv = resolveInputs()
-                    // Current flags for a fresh run; union with the registration snapshot when
-                    // this is a replay of stored inputs.
-                    val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
-                    val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
-                    span.stampLangfuseTrace(agent, traceTags)
-
-                    val result =
-                        processExecutor.execute(
-                            processFactory.create(
-                                agent = agent,
-                                queryParams = queryParamsEnv,
-                                parentContext = context,
-                                invocationChain = newChain,
-                                ancestorLockKeys = ancestorLockKeys,
-                                owner = owner,
-                                extraSecretInputKeys = secretEnvNames,
-                                parentProcessId = parentProcessId,
-                                rootProcessId = rootProcessId,
-                            ),
-                            context,
-                        )
-
-                    span.setAllAttributes(
-                        runAttributes(
-                            result.processId,
-                            agent,
-                            source,
-                            parentProcessId,
-                            rootProcessId,
-                            admitted,
-                            extraAttributes,
-                        ),
+                    startGated(
+                        agent = agent,
+                        span = span,
+                        context = context,
+                        admitted = admitted,
+                        source = source,
+                        invocationChain = invocationChain,
+                        ancestorLockKeys = ancestorLockKeys,
+                        owner = owner,
+                        extraSecretInputKeys = extraSecretInputKeys,
+                        parentProcessId = parentProcessId,
+                        rootProcessId = rootProcessId,
+                        extraAttributes = extraAttributes,
+                        resolveInputs = resolveInputs,
                     )
-                    result.processId
                 }
             span.setStatus(StatusCode.OK)
 
@@ -135,6 +114,74 @@ internal class AgentRunStarter(
         } finally {
             span.end()
         }
+    }
+
+    /**
+     * The preflight, input resolution, record creation and launch of one admitted start —
+     * everything [start] does between the maintenance gate and the run's id, split out to
+     * keep [start]'s body inside the size rule (ADR-0083).
+     */
+    private suspend fun startGated(
+        agent: Agent,
+        span: Span,
+        context: Context,
+        admitted: Boolean,
+        source: String,
+        invocationChain: List<String>,
+        ancestorLockKeys: List<String>,
+        owner: String?,
+        extraSecretInputKeys: Set<String>,
+        parentProcessId: Int?,
+        rootProcessId: Int?,
+        extraAttributes: Attributes,
+        resolveInputs: suspend () -> Map<String, String>,
+    ): Int {
+        // A keyed cooldown is checked after the inputs are resolved, because its key is a
+        // template over them; a keyless one is refused by `checkPreflight`, before anything
+        // is resolved. Both keep cycle → depth → cost cap → cooldown. See ADR-0103.
+        val keyedCooldown = agent.cooldown?.key != null
+        checkPreflight(agent, invocationChain, withCooldown = !keyedCooldown)
+        val newChain = invocationChain + agent.name
+        val queryParamsEnv = resolveInputs()
+        // Rendered here, before `create`: an unusable key fails the start with no process row
+        // to clean up, and the same value goes to the pre-flight gate and to the row, so the
+        // two cannot scope differently. See ADR-0103.
+        val cooldownKey = if (keyedCooldown) agent.renderCooldownKey(queryParamsEnv) else null
+        if (keyedCooldown) cooldownGate.check(agent, cooldownKey)
+        // Current flags for a fresh run, unioned with a replay's snapshot.
+        val secretEnvNames = agent.secretEnvNames + extraSecretInputKeys
+        val traceTags = listOf(source) + langfuseTraceTags(agent, queryParamsEnv, secretEnvNames)
+        span.stampLangfuseTrace(agent, traceTags)
+
+        val result =
+            processExecutor.execute(
+                processFactory.create(
+                    agent = agent,
+                    queryParams = queryParamsEnv,
+                    parentContext = context,
+                    invocationChain = newChain,
+                    ancestorLockKeys = ancestorLockKeys,
+                    owner = owner,
+                    extraSecretInputKeys = secretEnvNames,
+                    parentProcessId = parentProcessId,
+                    rootProcessId = rootProcessId,
+                    cooldownKey = cooldownKey,
+                ),
+                context,
+            )
+
+        span.setAllAttributes(
+            runAttributes(
+                result.processId,
+                agent,
+                source,
+                parentProcessId,
+                rootProcessId,
+                admitted,
+                extraAttributes,
+            ),
+        )
+        return result.processId
     }
 
     /**
@@ -163,10 +210,15 @@ internal class AgentRunStarter(
     /**
      * The request-boundary refusals, in order: invocation cycle, depth, cost cap,
      * cooldown. Each throws the HomerException the caller maps to its error surface.
+     *
+     * [withCooldown] is false for an agent whose `cooldown.key` has to be rendered from the
+     * resolved inputs: the cycle, depth and cost-cap checks stay where they are, and the
+     * caller runs the cooldown check itself once the key exists. See ADR-0103.
      */
     private suspend fun checkPreflight(
         agent: Agent,
         invocationChain: List<String>,
+        withCooldown: Boolean = true,
     ) {
         if (agent.name in invocationChain) {
             throw InvocationCycleDetectedException(agent.name, invocationChain)
@@ -186,7 +238,7 @@ internal class AgentRunStarter(
         // Frequency bound, after the spend bound: both are pre-flight refusals at
         // the request boundary, and a caller over its cost cap should hear about
         // that first — it is the more consequential of the two.
-        cooldownGate.check(agent)
+        if (withCooldown) cooldownGate.check(agent)
     }
 
     /** The `agent_request` span's attributes for the started run [processId]. */
