@@ -5,6 +5,7 @@ import homer.app.exceptions.ClaimQueueFullException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.SecretRedactor
 import homer.app.infra.TelemetryService
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -1126,6 +1128,48 @@ class ProcessExecutorTest {
             executeAndJoin()
 
             coVerify { mockProcessManager.setFailureReason(1, match { it.contains("SKIP_CURRENT") }, 999) }
+        }
+
+    @Test
+    fun `an unresolved lock key placeholder ends the run FAILED with the placeholder stored`() =
+        runBlocking {
+            val exception = UnresolvedLockKeyPlaceholderException(listOf("TICKET_ID"))
+            every { mockProcess.failureReasonRedactor } returns SecretRedactor.NONE
+            coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
+            coEvery { mockProcess.execute(any(), any()) } throws exception
+            // Status is not KILLED: the run never started, and no other run's collision was
+            // resolved here (no SKIP, no kill). See ADR-0047.
+            coEvery { mockProcessManager.getProcessStatus(1) } returns ProcessStatus.CREATED
+            coEvery { mockProcessManager.setFailureReason(1, any(), any()) } returns true
+
+            executeAndJoin()
+
+            coVerify { mockProcessManager.compareAndSetStatus(1, any(), ProcessStatus.FAILED) }
+            coVerify {
+                mockProcessManager.setFailureReason(
+                    1,
+                    "Lock key placeholder {{TICKET_ID}} has no value (lockStrategy.key), so this run never started.",
+                    null,
+                )
+            }
+            // The never-ran branch: reported as a cancellation, without the failure stack trace.
+            verify { mockSpan.setAttribute("process.status", "FAILED") }
+            verify { mockLogger.error("Process {} cancelled: {}", 1, exception.message) }
+        }
+
+    @Test
+    fun `a lock key placeholder denial is stored redacted`() =
+        runBlocking {
+            // The run's own redactor screens the stored sentence, exactly as it does for the
+            // other pre-start causes (ADR-0052/ADR-0098).
+            val redactor = SecretRedactor.from(mapOf("SECRET_TOKEN" to "s3cr3t-value"), setOf("SECRET_TOKEN"))
+            val reason = storedReasonFor(UnresolvedLockKeyPlaceholderException(listOf("TICKET_ID")), redactor)!!
+
+            assertEquals(
+                "Lock key placeholder {{TICKET_ID}} has no value (lockStrategy.key), so this run never started.",
+                reason,
+            )
+            assertTrue(!reason.contains("s3cr3t-value"), "reason=$reason")
         }
 
     @Test

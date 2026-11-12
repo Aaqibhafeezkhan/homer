@@ -1517,7 +1517,7 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
 
       <figure class="diagram">
         <svg viewBox="0 0 1160 372" role="img"
-             aria-label="Two independent limiters in series. Concurrent runs of one agent first need a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. A run holding a slot then needs the lock named by its key template: WAIT queues behind the holder, SKIP_CURRENT fails the new run, and KILL_OLD_RUN_CURRENT kills the holder. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set. Slots are per agent; lock keys are global across agents.">
+             aria-label="Two independent limiters in series. Concurrent runs of one agent first need a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. A run holding a slot then needs the lock named by its key template: WAIT queues behind the holder, SKIP_CURRENT fails the new run, and KILL_OLD_RUN_CURRENT kills the holder. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set. A run whose key template still holds a placeholder its environment cannot resolve is refused before either gate, so it takes no slot and no lock. Slots are per agent; lock keys are global across agents.">
           <defs>
             <marker id="cc-arrow" viewBox="0 0 10 10" refX="9" refY="5"
                     markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -1585,7 +1585,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
           fix a problem caused by the other — a queue that never drains is usually a lock, not a slot. The scoping
           differs too: slots are counted per agent, while lock keys are a single global namespace, so two different
           agents whose key templates resolve to the same string genuinely contend — deliberate, and the mechanism behind
-          serializing a whole <code>RunAgent</code> flow on one key. <code>cooldown</code> is not one of these gates and
+          serializing a whole <code>RunAgent</code> flow on one key. A key template the run cannot render in full fails
+          it closed: the run ends <code>FAILED</code> with a reason naming the placeholder, before it reaches either
+          gate. <code>cooldown</code> is not one of these gates and
           is not drawn here: it is a separate bound, refused at the request boundary before either gate, so a start it
           turns away never queues behind anything.</figcaption>
       </figure>
@@ -1595,7 +1597,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <article class="f">
           <h3>Lock keys <span class="where">agent.yaml</span></h3>
           <p>A templated key decides which runs collide. The default (<code>{{HMR_PROCESS_ID}}</code>) is unique per run,
-            so nothing collides. Keys are global across agents.</p>
+            so nothing collides. Keys are global across agents. Every placeholder must have a value: one the run cannot
+            resolve fails the run before it starts rather than being left as literal text, so unrelated runs never share
+            a key by accident.</p>
           <pre><code>lockStrategy:
   key: "deploy-{{ENVIRONMENT}}"
   onCollision: WAIT</code></pre>

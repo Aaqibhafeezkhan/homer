@@ -76,6 +76,29 @@ class AnotherProcessStillActive(
     val activeProcessId: Int,
 ) : HomerException("The process $activeProcessId is still active, stopping current")
 
+/**
+ * Raised when a lock key template names a `{{NAME}}` the run's env does not hold.
+ * [DefaultTextCompiler][homer.app.infra.DefaultTextCompiler] would leave that name as its
+ * literal text, so every run of that agent computes the same key and unrelated subjects
+ * collide: one caller's run is skipped, queued behind or killed by an unrelated one (ADR-0047).
+ * The run is denied before it takes a slot, a lock or a workspace.
+ *
+ * [placeholders] carries the unresolved names only — never the rendered key, which may hold an
+ * input value, and never any value. See ADR-0098.
+ */
+class UnresolvedLockKeyPlaceholderException(
+    names: Collection<String>,
+) : HomerException("Lock key placeholder(s) ${namedPlaceholders(names).joinToString(", ") { "{{$it}}" }} has no value") {
+    /** The unresolved placeholder names, distinct and sorted, bounded to what a denial may name. */
+    val placeholders: List<String> = namedPlaceholders(names)
+}
+
+/** Bounds how many names a denial echoes: a key with more is still denied, just not fully named. */
+private const val MAX_NAMED_PLACEHOLDERS = 5
+
+/** The distinct placeholder names a denial names, in a stable order. */
+private fun namedPlaceholders(names: Collection<String>): List<String> = names.distinct().sorted().take(MAX_NAMED_PLACEHOLDERS)
+
 class MaxParallelRunsExceededException(
     val agentName: String,
     val maxParallelRuns: Int,

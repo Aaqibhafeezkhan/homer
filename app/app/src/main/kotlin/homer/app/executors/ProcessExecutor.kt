@@ -2,6 +2,7 @@ package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.MaxParallelRunsExceededException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.infra.TelemetryService
 import homer.app.models.ProcessCreationResult
 import homer.app.models.ProcessStatus
@@ -151,8 +152,8 @@ class ProcessExecutor(
 
         schedulePurge(processId, process)
 
-        if (e is AnotherProcessStillActive || e is MaxParallelRunsExceededException) {
-            // Slot/lock collision - process never ran
+        if (e is AnotherProcessStillActive || e is MaxParallelRunsExceededException || e is UnresolvedLockKeyPlaceholderException) {
+            // Slot/lock collision, or a lock key the run cannot render - process never ran
             processSpan.setAttribute("process.status", ProcessStatus.FAILED.name)
             processSpan.addEvent("process.status.failed")
             processSpan.setStatus(

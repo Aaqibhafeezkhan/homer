@@ -5,6 +5,7 @@ import homer.app.exceptions.ClaimQueueFullException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.models.MAX_FAILURE_REASON_LENGTH
 import homer.app.models.RunnerFilter
 import io.kotest.property.Arb
@@ -89,6 +90,39 @@ class PreStartFailureReasonTest {
     }
 
     @Test
+    fun `an unresolved lock key placeholder names the placeholder and no value`() {
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("TICKET_ID")))!!
+
+        assertEquals(
+            "Lock key placeholder {{TICKET_ID}} has no value (lockStrategy.key), so this run never started.",
+            failure.reason,
+        )
+        assertNull(failure.holderRunId)
+    }
+
+    @Test
+    fun `several unresolved placeholders are named in one sentence`() {
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("B", "A")))!!
+
+        assertEquals(
+            "Lock key placeholders {{A}}, {{B}} have no value (lockStrategy.key), so this run never started.",
+            failure.reason,
+        )
+    }
+
+    @Test
+    fun `a denial naming many placeholders stays one bounded line`() {
+        // The exception bounds the names it carries (five), so the sentence stays short whatever
+        // an agent's template holds — the stored column has a cap of its own (ADR-0098).
+        val failure =
+            PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException((1..50).map { "P%02d".format(it) }))!!
+
+        assertTrue(failure.reason.length <= MAX_FAILURE_REASON_LENGTH, "reason=${failure.reason}")
+        assertTrue(failure.reason.contains("{{P05}}"), "reason=${failure.reason}")
+        assertTrue(!failure.reason.contains("{{P06}}"), "reason=${failure.reason}")
+    }
+
+    @Test
     fun `a reason carrying control characters is stored as one line`() {
         val failure = PreStartFailureReason.of(MaxParallelRunsExceededException("demo\nagent\tx", 2))!!
 
@@ -146,6 +180,9 @@ class PreStartFailureReasonTest {
                             reason = agentName,
                             publicReason = agentName,
                         ),
+                        // A placeholder name is `\w+` in the template, but the denial must stay
+                        // bounded and one-line whatever the exception is handed.
+                        UnresolvedLockKeyPlaceholderException(listOf(agentName, tag)),
                     )
                 exceptions.forEach { e ->
                     val reason = PreStartFailureReason.of(e)!!.reason

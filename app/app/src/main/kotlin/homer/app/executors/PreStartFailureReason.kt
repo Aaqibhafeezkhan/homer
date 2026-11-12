@@ -5,6 +5,7 @@ import homer.app.exceptions.ClaimQueueFullException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.models.RunnerFilter
 import homer.app.models.truncateFailureReason
 
@@ -21,9 +22,10 @@ data class PreStartFailure(
 
 /**
  * Maps the typed pre-start causes to a stored failure reason: the `SKIP_CURRENT` lock skip,
- * the `REJECT` parallel-run cap, the wait-queue bound, the claim timeout and the claim-queue
- * bound. Any other exception maps to null — it failed the run while it was running, or is a
- * cause the reader gains nothing from — and stores no reason.
+ * the `REJECT` parallel-run cap, the wait-queue bound, the claim timeout, the claim-queue
+ * bound and the unresolved lock-key placeholder. Any other exception maps to null — it failed
+ * the run while it was running, or is a cause the reader gains nothing from — and stores no
+ * reason.
  *
  * The text is built from the exception's typed fields and never from its message: a message
  * can carry a runner alias (admin-only on the status API, ADR-0077), a lock key or a value
@@ -70,9 +72,28 @@ object PreStartFailureReason {
                 )
             }
 
+            is UnresolvedLockKeyPlaceholderException -> {
+                PreStartFailure(
+                    "Lock key ${describePlaceholders(e.placeholders)} (lockStrategy.key), so this run never started.",
+                )
+            }
+
             else -> {
                 null
             }
+        }
+
+    /**
+     * The unresolved placeholder names as the stored sentence names them: `placeholder {{A}}
+     * has no value` for one, `placeholders {{A}}, {{B}} have no value` for several. The names
+     * come from the agent definition (a `\w+` template reference), never from the rendered key
+     * — which may hold an input value — and never from a value. See ADR-0098.
+     */
+    private fun describePlaceholders(placeholders: List<String>): String =
+        if (placeholders.size == 1) {
+            "placeholder {{${placeholders.single()}}} has no value"
+        } else {
+            "placeholders ${placeholders.joinToString(", ") { "{{$it}}" }} have no value"
         }
 
     /**
