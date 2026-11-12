@@ -220,7 +220,7 @@ enum class OnTimeout {
 /** Default `Command.interruptGraceSeconds`: how long a stopped command may take to exit before SIGKILL. */
 const val DEFAULT_INTERRUPT_GRACE_SECONDS = 30L
 
-/** CWE-400: a grace wait holds a runner slot, so it is bounded (ADR-0047 rule 4, ADR-0106). */
+/** CWE-400: a grace wait holds a runner slot, so it is bounded (ADR-0047 rule 4, ADR-0107). */
 const val MAX_INTERRUPT_GRACE_SECONDS = 600L
 
 /** CWE-400: stop steps run inside the same bounded stop phase, so their count is bounded too (ADR-0047 rule 4). */

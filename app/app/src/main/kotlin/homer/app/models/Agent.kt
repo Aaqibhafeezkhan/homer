@@ -25,7 +25,7 @@ data class Agent(
      * Steps run in the same session after a graceful stop — a step's own timeout with
      * `onTimeout: stop`, or the runner's soft run deadline — and before the workspace
      * syncs down and closes, so an agent can save state. Empty = no stop phase.
-     * See ADR-0106.
+     * See ADR-0107.
      */
     val onStop: List<Command> = emptyList(),
     val env: Map<String, String> = emptyMap(),

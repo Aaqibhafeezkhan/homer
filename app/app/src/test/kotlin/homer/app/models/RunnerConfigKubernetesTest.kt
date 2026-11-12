@@ -79,7 +79,7 @@ image: img""",
         assertTrue(ex.message!!.contains("runner 'build-box'"))
     }
 
-    /** The soft deadline of ADR-0106: a `gracefulStopSeconds` on a `maxRunSeconds`-bounded runner. */
+    /** The soft deadline of ADR-0107: a `gracefulStopSeconds` on a `maxRunSeconds`-bounded runner. */
     @Test
     fun `gracefulStopSeconds round-trips and defaults to no soft deadline`() {
         val cfg =

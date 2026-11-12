@@ -31,7 +31,7 @@ import kotlin.time.Duration.Companion.seconds
  * enforced by the instance (`timedOut` in the result); Homer bounds the wait for
  * that result by `timeoutMs + heartbeatTimeoutSec`, plus the interrupt grace when
  * one is set, because the instance then stops the command gracefully before it
- * answers (ADR-0066, ADR-0106).
+ * answers (ADR-0066, ADR-0107).
  */
 class ExternalShellExecutor(
     private val session: ExternalRunnerSession,

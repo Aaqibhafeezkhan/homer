@@ -74,7 +74,7 @@ data class ProcessInfo(
     // like every other run link. See ADR-0058.
     val failureReasonRunId: Int? = null,
     // Why and where this run was stopped gracefully; null for a run that was not.
-    // The run's status stays FAILED — no new ProcessStatus. See ADR-0106.
+    // The run's status stays FAILED — no new ProcessStatus. See ADR-0107.
     val stop: RunStop? = null,
 )
 
@@ -205,7 +205,7 @@ data class ExecutionInfo(
     // empty for rows written before this field existed.
     val kind: String = "",
     // Why this step was interrupted by a graceful stop (`step_timeout`, `run_deadline`),
-    // or null when it was not. See ADR-0106.
+    // or null when it was not. See ADR-0107.
     val stoppedBy: String? = null,
     // Whether this row is one of the agent's `onStop:` steps.
     val onStop: Boolean = false,

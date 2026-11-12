@@ -15,7 +15,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * The `HMR_STOP_*` environment of a graceful stop's steps (ADR-0106).
+ * The `HMR_STOP_*` environment of a graceful stop's steps (ADR-0107).
  *
  * Every value here is attacker-influenced — the label is author- and template-written, the
  * session id is parsed out of a CLI's own stdout — so the tests that matter are the ones that

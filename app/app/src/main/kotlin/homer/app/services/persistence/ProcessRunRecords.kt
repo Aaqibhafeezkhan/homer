@@ -27,7 +27,7 @@ interface ProcessRunRecords {
 
     /**
      * Records what a graceful stop did to the run: its cause, the step it interrupted and the
-     * stop steps' outcome. Written once by the stop phase, and no subscriber is told. See ADR-0106.
+     * stop steps' outcome. Written once by the stop phase, and no subscriber is told. See ADR-0107.
      */
     suspend fun setStop(
         processId: Int,

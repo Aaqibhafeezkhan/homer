@@ -127,7 +127,7 @@ class LocalShellExecutor(
         stopped: Wait,
         interruptGrace: Duration?,
     ) {
-        // Graceful stop (ADR-0106): only a command stopped by its OWN timeout gets the
+        // Graceful stop (ADR-0107): only a command stopped by its OWN timeout gets the
         // grace; an output-cap kill or a caller cancellation keeps today's immediate
         // SIGKILL. The interrupt is only meaningful while the process is still alive.
         val grace = interruptGrace?.takeIf { stopped == Wait.TIMED_OUT && process.isAlive }

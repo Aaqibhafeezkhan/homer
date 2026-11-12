@@ -185,7 +185,7 @@ class KubernetesRunnerTest {
             val runner = KubernetesRunner("k8s-dev", stopping, api, dummyExecClient(), clock = { 1_000L })
 
             // The pod reports no `startTime`, so the deadline falls back to the stamp Homer read
-            // when it created the pod (ADR-0106).
+            // when it created the pod (ADR-0107).
             assertEquals(RunDeadline(softEpochSec = 56, hardEpochSec = 61), runner.openSession(params).runDeadline)
         }
 

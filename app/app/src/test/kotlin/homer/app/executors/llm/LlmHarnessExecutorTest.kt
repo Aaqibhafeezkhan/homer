@@ -2421,7 +2421,7 @@ class LlmHarnessExecutorTest {
         assertThrows<IllegalArgumentException> { tier(" ", "true") }
     }
 
-    // ========== Graceful stop (ADR-0106) ==========
+    // ========== Graceful stop (ADR-0107) ==========
 
     @Test
     fun `a stop-interrupted attempt that wrote its result is accounted and its session reaches the step's facts`() =

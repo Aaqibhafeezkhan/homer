@@ -361,7 +361,7 @@ class CmdExecutorTest {
     fun `the step's capped timeout and interrupt grace reach the shell`() =
         runTest {
             // A stop step runs under the run's hard deadline and always under a grace, so the
-            // step's own `timeout` must not win here. See ADR-0106.
+            // step's own `timeout` must not win here. See ADR-0107.
             val command = Command.Cmd(cmd = listOf("echo", "stop"), timeout = 600)
             val stopStepContext = executionContext.copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
 

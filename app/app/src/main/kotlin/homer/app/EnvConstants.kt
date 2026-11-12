@@ -126,7 +126,7 @@ object EnvConstants {
      * index and label of the step that was interrupted, the hard deadline in epoch
      * seconds (`run_deadline` only), and the interrupted LLM step's CLI session id
      * (absent when the step exposed none). Set only in the env of an agent's
-     * `onStop:` steps, never in a regular command's. See ADR-0106.
+     * `onStop:` steps, never in a regular command's. See ADR-0107.
      */
     const val STOP_REASON = "HMR_STOP_REASON"
     const val STOP_STEP_INDEX = "HMR_STOP_STEP_INDEX"

@@ -87,7 +87,7 @@ internal class AgentDefinitionValidator(
      * `0..MAX_INTERRUPT_GRACE_SECONDS`, and more stop steps than [MAX_ON_STOP_STEPS].
      *
      * A bare `onStop:` is valid — an agent may declare stop steps while keeping the default
-     * `onTimeout: fail` and be stopped only by the run's deadline. See ADR-0106.
+     * `onTimeout: fail` and be stopped only by the run's deadline. See ADR-0107.
      */
     private fun checkStopPolicy(
         agent: Agent,
