@@ -40,7 +40,9 @@ internal class LlmSpanEmitter(
                 .startSpan()
 
         resultSpan.setAttribute("name", name)
-        resultSpan.setAttribute("prompt", redactor.redact(prompt))
+        // Langfuse reads `langfuse.observation.*` before any framework fallback; the pair it
+        // falls back to for `prompt` expects a different result key, so the result went unread.
+        resultSpan.setAttribute("langfuse.observation.input", redactor.redact(prompt))
         metadata?.let { resultSpan.setAttribute("metadata", it) }
         resultSpan.setAttribute("model", resolved.name)
         resultSpan.setAttribute("usage_details.input_tokens", usage.input)
@@ -77,7 +79,7 @@ internal class LlmSpanEmitter(
                 buildJsonObject { put("total", cost) }.toString(),
             )
         }
-        resultSpan.setAttribute("output", redactor.redact(output.toString()))
+        resultSpan.setAttribute("langfuse.observation.output", redactor.redact(output.toString()))
         if (errorReason != null) {
             // [information_disclosure / CWE-532] the reason is harness stdout, and a status description is exported too.
             resultSpan.setStatus(StatusCode.ERROR, redactor.redact(errorReason))

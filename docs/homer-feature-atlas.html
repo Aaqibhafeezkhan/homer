@@ -2226,6 +2226,17 @@ def approve(state):
         </article>
 
         <article class="f">
+          <h3>Retry a failed fan-out <span class="where">python</span></h3>
+          <p>A failed sub arrives as a value, so a plain resume replays it forever. <code>retries=</code> re-dispatches
+            that sub from the original call's args instead, and <code>infra_retries=</code> covers infrastructure
+            outcomes (unknown or unrecognized status, an undecodable payload) on a separate budget — each capped at
+            5.</p>
+          <pre><code>payload = homer_fanout("research_worker", params={"topic": topic}, retries=2)
+if payload["status"] != "FINISHED":
+    ...  # the last attempt's failure, unchanged</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Fire-and-forget from a graph <span class="where">python</span></h3>
           <p><code>homer_dispatch</code> shells out immediately and returns a process id — never place it before an
             <code>interrupt()</code> in the same node, or it fires twice on resume.</p>
