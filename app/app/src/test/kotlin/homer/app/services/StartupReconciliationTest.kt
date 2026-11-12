@@ -11,6 +11,7 @@ import homer.app.models.Retain
 import homer.app.models.RunMessagesConfig
 import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DatabaseService
+import homer.app.services.persistence.InterruptedResult
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.Processes
 import homer.app.services.persistence.QuestionsRepository
@@ -47,6 +48,7 @@ class StartupReconciliationTest {
                 runMessagesService = runMessagesService,
                 dispatchService = dispatchService,
                 continuationService = continuationService,
+                hookService = TestFixtures.mockHookService(),
                 agentsService = agentsService,
                 logger = TestFixtures.mockLogger(),
                 clock = { 999L },
@@ -212,13 +214,15 @@ class StartupReconciliationTest {
             val processRepository = mockk<ProcessRepository>(relaxed = true)
             val questionsService = mockk<QuestionsService>(relaxed = true)
             val logger = TestFixtures.mockLogger()
-            coEvery { processRepository.markInterruptedAsUnknown(any()) } returns emptyList()
+            coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
+                InterruptedResult(emptyList(), emptyList())
             StartupReconciliation(
                 processRepository,
                 questionsService,
                 mockk<RunMessageExpiry>(relaxed = true),
                 dispatchService,
                 continuationService,
+                mockk(relaxed = true),
                 mockk(relaxed = true),
                 logger,
             ) { 1L }.reconcile()
@@ -236,13 +240,15 @@ class StartupReconciliationTest {
             val processRepository = mockk<ProcessRepository>(relaxed = true)
             val questionsService = mockk<QuestionsService>(relaxed = true)
             val logger = TestFixtures.mockLogger()
-            coEvery { processRepository.markInterruptedAsUnknown(any()) } returns emptyList()
+            coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
+                InterruptedResult(emptyList(), emptyList())
             StartupReconciliation(
                 processRepository,
                 questionsService,
                 mockk<RunMessageExpiry>(relaxed = true),
                 dispatchService,
                 continuationService,
+                mockk(relaxed = true),
                 mockk(relaxed = true),
                 logger,
             ) { 1L }.reconcile()

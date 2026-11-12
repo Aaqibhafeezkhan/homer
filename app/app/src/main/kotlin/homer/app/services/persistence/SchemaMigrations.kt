@@ -20,6 +20,7 @@ internal fun upgradeSchema(
     migrateToV27(st, current)
     migrateToV28(st, current)
     migrateToV30(st, current)
+    migrateToV31(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -328,5 +329,23 @@ private fun migrateToV30(
         // that maps a cause to a reason, and a guessed reason is worse than none.
         addColumnIfMissing(st, "processes", "failure_reason", "TEXT")
         addColumnIfMissing(st, "processes", "failure_reason_run_id", "INTEGER")
+    }
+}
+
+/** Schema steps v30→v31 of [DatabaseService.migrate]; each step is guarded on the version it upgrades from. */
+private fun migrateToV31(
+    st: Statement,
+    current: Int,
+) {
+    if (current in 1 until 31) {
+        // v30→v31 adds the pending_hooks table (ADR-0105). SchemaUtils.create above already
+        // created it on a database that did not have it; the indexes are created here by hand
+        // because SchemaUtils.create only indexes a table it creates. Names and definitions
+        // match the PendingHooks declaration in Tables.kt.
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS pending_hooks_status_next_attempt ON pending_hooks (status, next_attempt_at)",
+        )
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_process_id ON pending_hooks (process_id)")
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_status_created ON pending_hooks (status, created_at)")
     }
 }

@@ -348,7 +348,7 @@ internal class ContinuationFireService(
             // rather than settled FAILED: the origin ended and its resume must not be lost.
             e is ServerDrainingException
 
-    private companion object {
+    internal companion object {
         // Inline results over this size resume by reference (result = null) rather than
         // inflating the resume payload / env. See ADR-0023.
         const val MAX_RESULT_BYTES = 64L * 1024
@@ -356,6 +356,7 @@ internal class ContinuationFireService(
         // A transient fire failure is retried on a doubling delay, bounded by
         // MAX_FIRE_ATTEMPTS and by the continuation's own TTL. The ceiling is an hour so a
         // cost cap on an hourly window gets at least one attempt after the window rolls.
+        // HookFireService retries a hook on the same back-off. See ADR-0105.
         const val MAX_FIRE_ATTEMPTS = 8
         const val RETRY_BASE_DELAY_SEC = 60L
         const val RETRY_MAX_DELAY_SEC = 3600L

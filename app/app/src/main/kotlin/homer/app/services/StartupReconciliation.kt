@@ -33,16 +33,24 @@ internal class StartupReconciliation(
     private val runMessagesService: RunMessageExpiry,
     private val dispatchService: DispatchService,
     private val continuationService: ContinuationService,
+    private val hookService: HookService,
     private val agentsService: AgentsService,
     private val logger: Logger,
     private val clock: () -> Long = { Clock.System.now().epochSeconds },
 ) {
     suspend fun reconcile() {
         val now = clock()
-        val interrupted = processRepository.markInterruptedAsUnknown(now)
-        if (interrupted.isNotEmpty()) {
-            logger.info("Reconciled {} interrupted process(es) to UNKNOWN after restart: {}", interrupted.size, interrupted)
-            for (processId in interrupted) {
+        // The hooks an UNKNOWN transition records are the same per-transition lookup
+        // ProcessManager runs, so a hook declared for UNKNOWN fires for a restart-interrupted
+        // run too. See ADR-0105.
+        val interrupted = processRepository.markInterruptedAsUnknown(now, hookService.recording())
+        if (interrupted.processIds.isNotEmpty()) {
+            logger.info(
+                "Reconciled {} interrupted process(es) to UNKNOWN after restart: {}",
+                interrupted.processIds.size,
+                interrupted.processIds,
+            )
+            for (processId in interrupted.processIds) {
                 questionsService.expireForProcess(processId)
                 runMessagesService.closeForProcess(processId)
             }
@@ -63,5 +71,12 @@ internal class StartupReconciliation(
         // watched process reached a terminal state before this boot (the live hook never ran).
         continuationService.failOrphanedDispatching()
         continuationService.refirePendingTerminal()
+        // Same again for hooks: fail any left mid-fire, fire the rows the UNKNOWN writes above
+        // recorded, then replay whatever else is still PENDING — a server that stopped between
+        // a transition's commit and its fire. The claim CAS keeps a replay from double-firing
+        // against a row a live transition is firing concurrently. See ADR-0105.
+        hookService.failOrphanedDispatching()
+        hookService.onRowsRecorded(interrupted.hookIds)
+        hookService.refirePending()
     }
 }

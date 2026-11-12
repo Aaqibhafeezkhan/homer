@@ -103,6 +103,19 @@
     "cooldown": { "$ref": "#/$defs/Cooldown" },
     "telemetry": { "$ref": "#/$defs/AgentTelemetry" },
     "tags": { "$ref": "#/$defs/Tags" },
+    "hooks": {
+      "type": "array",
+      "maxItems": 16,
+      "default": [],
+      "description": "Status hooks: each entry is a one-key object mapping a run status of THIS agent to the agent Homer starts when a run of this agent reaches it, from every start path (cron, HTTP, MCP, console retry, sub-run). The hook run belongs to the triggering run's owner and is bounded by server.hooks. A status may be listed more than once to fan out. The target must be a loaded agent, must not be this agent, and must not form a hook cycle. See ADR-0105.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "propertyNames": { "enum": ["CREATED", "WORKING", "FINISHED", "KILLED", "FAILED", "UNKNOWN"] },
+        "additionalProperties": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" }
+      }
+    },
     "artifactNameTemplate": {
       "type": "string",
       "minLength": 1,

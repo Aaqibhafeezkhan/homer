@@ -75,6 +75,25 @@ object ReservedEnvNames {
 private val LANGGRAPH_CONTROL_PARAMS =
     setOf(EnvConstants.LG_THREAD, EnvConstants.LG_RESUME, EnvConstants.LG_INTERRUPT)
 
+/**
+ * The `HMR_HOOK_*` params a hook fire merges over the target agent's resolved declared
+ * inputs. An explicit allowlist for the same reason as [LANGGRAPH_CONTROL_PARAMS]: only
+ * these server-minted names may ride a start, so a param map that reached this path from
+ * anywhere else still cannot set `PATH`, `LD_*` or another `HMR_*` identity. See ADR-0105.
+ */
+private val HOOK_CONTROL_PARAMS =
+    setOf(
+        EnvConstants.HOOK_PROCESS_ID,
+        EnvConstants.HOOK_AGENT_NAME,
+        EnvConstants.HOOK_STATUS,
+        EnvConstants.HOOK_FAILURE_REASON,
+        EnvConstants.HOOK_TAGS,
+        EnvConstants.HOOK_DEPTH,
+    )
+
+/** The `HMR_HOOK_*` subset of [params], as a single-valued map. */
+internal fun hookControlParams(params: Map<String, String>): Map<String, String> = params.filterKeys { it in HOOK_CONTROL_PARAMS }
+
 /** The control-marker subset of [params], as a single-valued map (last value wins per key). */
 internal fun reservedControlParams(params: Parameters): Map<String, String> =
     params

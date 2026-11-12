@@ -1,10 +1,12 @@
 package homer.app.services.persistence
 
+import homer.app.EnvConstants
 import homer.app.exceptions.CooldownActiveException
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.SqlStatementRecorder
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.ProcessJobRegistry
+import homer.app.models.AgentHook
 import homer.app.models.Cooldown
 import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
@@ -16,6 +18,7 @@ import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
 import homer.app.models.SubRunProgress
+import homer.app.services.HookStatus
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService.Question
 import homer.app.services.QuestionsService.QuestionStatus
@@ -1393,7 +1396,7 @@ class ProcessRepositoryTest {
 
             val reconciled = repo.markInterruptedAsUnknown(nowSec = 999)
 
-            assertEquals(setOf(created, working), reconciled.toSet())
+            assertEquals(setOf(created, working), reconciled.processIds.toSet())
             assertEquals(ProcessStatus.UNKNOWN, repo.getStatus(created))
             assertEquals(ProcessStatus.UNKNOWN, repo.getStatus(working))
             assertEquals(ProcessStatus.FINISHED, repo.getStatus(finished))
@@ -2185,6 +2188,8 @@ class ProcessRepositoryTest {
                 assertTrue(sql.contains("processes.status"), sql)
                 assertTrue(sql.contains("processes.history"), sql)
                 assertTrue(sql.contains("processes.agent_name"), sql)
+                // The recording attributes the hook run to the owner the row carries (ADR-0105).
+                assertTrue(sql.contains("processes.owner"), sql)
                 assertFalse(sql.contains("processes.input_params"), sql)
                 assertFalse(sql.contains("processes.executions"), sql)
                 assertFalse(sql.contains("processes.runner_state"), sql)
@@ -2420,5 +2425,218 @@ class ProcessRepositoryTest {
 
             assertEquals("alice" to "a", repo.getRunVisibility(id))
             assertNull(repo.getRunVisibility(id + 100))
+        }
+
+    // ── Agent-level status hooks (ADR-0105) ──────────────────────────────────────────────
+    // The hook rows a status write records ride that write's own transaction, so a restart
+    // between the two loses nothing and a guard-rejected CAS records none of them.
+
+    /** The hooks the agent catalog declares, keyed by the status that fires them. */
+    private fun recording(
+        hooks: Map<ProcessStatus, List<String>>,
+        maxPending: Int = 100,
+    ) = HookRecording(
+        hooksFor = { _, status -> hooks[status].orEmpty().map { AgentHook(status, it) } },
+        maxPending = maxPending,
+    )
+
+    @Test
+    fun `obtainProcessId records the run's CREATED hooks in the same write`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+
+            val result =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    owner = "alice",
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            assertEquals(result.processId, hook.processId)
+            assertEquals("declarer", hook.declaringAgent)
+            assertEquals(ProcessStatus.CREATED, hook.triggeringStatus)
+            assertEquals("notifier", hook.targetAgentName)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `an agent with no entry for the new status records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val created =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+            val working =
+                repo.transitionStatus(
+                    created.processId,
+                    ProcessStatus.WORKING,
+                    1000,
+                    null,
+                    hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier"))),
+                )
+
+            assertEquals(emptyList(), working.hookIds)
+            assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
+    fun `a transition records the entries of the new status and the run's owner`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+
+            val result =
+                repo.transitionStatus(
+                    id,
+                    ProcessStatus.FINISHED,
+                    1000,
+                    null,
+                    hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier", "audit"))),
+                )
+
+            assertEquals(2, result.hookIds.size)
+            val recorded = hooks.list(HookStatus.PENDING)
+            assertEquals(listOf("notifier", "audit"), recorded.map { it.targetAgentName })
+            assertEquals(listOf("alice", "alice"), recorded.map { it.owner })
+            assertEquals(listOf(ProcessStatus.FINISHED, ProcessStatus.FINISHED), recorded.map { it.triggeringStatus })
+        }
+
+    @Test
+    fun `a guard-rejected transition records no hook`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100).processId
+
+            val result =
+                repo.transitionStatus(
+                    id,
+                    ProcessStatus.WORKING,
+                    1000,
+                    setOf(ProcessStatus.FINISHED),
+                    hookRecording = recording(mapOf(ProcessStatus.WORKING to listOf("notifier"))),
+                )
+
+            assertFalse(result.updated)
+            assertEquals(emptyList(), result.hookIds)
+            assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
+        }
+
+    @Test
+    fun `killTransition records the KILLED hooks and returns the killed agent`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+
+            val result =
+                repo.killTransition(
+                    id,
+                    1000,
+                    hookRecording = recording(mapOf(ProcessStatus.KILLED to listOf("notifier"))),
+                )
+
+            assertEquals("declarer", result.agentName)
+            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            assertEquals(ProcessStatus.KILLED, hook.triggeringStatus)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `killTransition of a run that already ended records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100).processId
+            repo.transitionStatus(id, ProcessStatus.FINISHED, 900, null)
+
+            val result =
+                repo.killTransition(
+                    id,
+                    1000,
+                    hookRecording = recording(mapOf(ProcessStatus.KILLED to listOf("notifier"))),
+                )
+
+            assertNull(result.agentName)
+            assertEquals(emptyList(), result.hookIds)
+        }
+
+    @Test
+    fun `markInterruptedAsUnknown records the UNKNOWN hooks of every reconciled run`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val first = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+            val second = repo.obtainProcessId("other", emptyMap(), 100).processId
+            repo.transitionStatus(second, ProcessStatus.FINISHED, 900, null)
+
+            val result =
+                repo.markInterruptedAsUnknown(
+                    1000,
+                    hookRecording =
+                        recording(
+                            mapOf(
+                                ProcessStatus.UNKNOWN to listOf("notifier"),
+                                ProcessStatus.FINISHED to listOf("audit"),
+                            ),
+                        ),
+                )
+
+            // Only the run the reconciliation actually moved to UNKNOWN records its hook.
+            assertEquals(listOf(first), result.processIds)
+            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            assertEquals(first, hook.processId)
+            assertEquals("declarer", hook.declaringAgent)
+            assertEquals(ProcessStatus.UNKNOWN, hook.triggeringStatus)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `the pending cap sheds the hooks over it instead of failing the write`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val result =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording =
+                        recording(
+                            mapOf(ProcessStatus.CREATED to listOf("a", "b", "c")),
+                            maxPending = 2,
+                        ),
+                )
+
+            assertEquals(2, result.hookIds.size)
+            assertEquals(2, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
+    fun `a write with no hook recording records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val result = repo.obtainProcessId("declarer", emptyMap(), 100)
+
+            assertEquals(emptyList(), result.hookIds)
+            assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
         }
 }

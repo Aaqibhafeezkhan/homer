@@ -95,4 +95,23 @@ class ServerConfigTest {
         val perRun = assertThrows<IllegalArgumentException> { RunMessagesConfig(maxPerRun = 0) }
         assertTrue(perRun.message!!.contains("server.messages.maxPerRun"), perRun.message)
     }
+
+    @Test
+    fun `hooks defaults to 200 pending rows, chain depth 8 and a 7-day retention`() {
+        assertEquals(HookConfig(maxPending = 200, maxChainDepth = 8, settledRetentionSec = 604_800), Server().hooks)
+    }
+
+    @Test
+    fun `hooks bounds reject a value under their floor and name their key`() {
+        val cases =
+            listOf(
+                "server.hooks.maxPending" to { HookConfig(maxPending = 0) },
+                "server.hooks.maxChainDepth" to { HookConfig(maxChainDepth = 0) },
+                "server.hooks.settledRetentionSec" to { HookConfig(settledRetentionSec = 3599) },
+            )
+        for ((field, build) in cases) {
+            val ex = assertThrows<IllegalArgumentException>("expected rejection of $field") { build() }
+            assertTrue(ex.message!!.contains(field), ex.message)
+        }
+    }
 }

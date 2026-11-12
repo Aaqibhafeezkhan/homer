@@ -44,7 +44,7 @@ See ADR-0020.
   refuses a checkpoint with `SQLITE_LOCKED`. See ADR-0020 (2026-09-29
   amendments).
 - **`ProcessRepository` / `QuestionsRepository` / `DispatchRepository` /
-  `ContinuationRepository` / `CostRepository`** — all access via
+  `ContinuationRepository` / `HookRepository` / `CostRepository`** — all access via
   `DatabaseService.query` (writes) or `DatabaseService.read` (transactions
   that only read). Map rows ↔ `ProcessInfo` / `Question` / `Dispatch` /
   `Continuation` at this boundary; the `ProcessInfo.job` comes from
@@ -69,7 +69,11 @@ See ADR-0020.
   The two tables share the claim-CAS / fire / sweep columns (`FiredRecordTable`),
   and `FiredRecords` holds the statements both repositories run on them: the
   PENDING cap, the claim, the expiry predicate, the list page and the settled
-  prune.
+  prune. `HookRepository` owns the `pending_hooks` table (schema v31), the same
+  family: it takes the claim CAS, the PENDING cap and the settled prune from
+  `FiredRecords`, but its rows are written by `ProcessRepository`'s status
+  transactions through the free `insertPendingHooksTx`, so recording needs no
+  second database handle. See ADR-0105.
   `ResultTokenRepository` owns the `result_tokens` table (schema v4;
   `consumer_agent` audience column v7). See ADR-0025.
   `CostRepository` owns the append-only `cost_entries` LLM-spend ledger
@@ -152,6 +156,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
+| 31 | `pending_hooks` table (agent-level status hooks) | [0105](../../../../../../../../../docs/adr/0105-agent-status-hooks.md) |
 
 ### Schema constraints
 
@@ -297,10 +302,25 @@ Editor-facing constraints the row's ADR does not state:
   (`latestFailureEndedAtTx`): only a run that failed while executing arms the window,
   so a refusal that never ran — a duplicate trigger the lock correctly dropped, for
   this subject or another — does not back the agent off.
+- `pending_hooks` (v31) is the agent-level status-hook queue: one row per hook entry a
+  status transition matched, INSERTed **inside that transition's own transaction** (the
+  `CREATED` INSERT, `transitionStatus`, `killTransition`, `markInterruptedAsUnknown`) and
+  fired after it commits, so a restart between the status and the fire loses nothing. A
+  guard-rejected CAS records none. The rows share `FiredRecords`' claim CAS, PENDING cap and
+  settled prune with `dispatches` and `continuations`. The rows carry no chain depth: a fire
+  derives it from the triggering run's own stored `HMR_HOOK_DEPTH` in `process_inputs` plus
+  one, so the bound is durable without the transition reading or writing anything extra, and
+  the transition stays a projection of `status`/`history`/`agent_name`/`owner`. The cap is
+  checked with one `COUNT` per fan-out, not per row, and rows over it are **dropped**, never
+  queued: a status write is not a request, so there is no caller to reject. Retention is
+  `server.hooks.settledRetentionSec`, swept by the continuation sweep tick through
+  `pending_hooks_status_created`. See ADR-0105.
 
-`transitionStatus` and `killTransition` project `status`, `history` and
-`agent_name` instead of `selectAll()`: they run under the write lock, and pulling
-the blobs of the row into memory only to write them back is pure cost.
+`transitionStatus` and `killTransition` project `status`, `history`, `agent_name`
+and `owner` instead of `selectAll()`: they run under the write lock, and pulling
+the blobs of the row into memory only to write them back is pure cost. `owner` is
+there because the hook rows recorded in the same transaction are owned by the
+triggering run's owner.
 
 Schema: `id`/`status`/`agent_name` are real columns (filtered/sorted on);
 `history`/`executions`/`runner_state` and question `options`

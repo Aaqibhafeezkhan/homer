@@ -138,6 +138,7 @@ data class Server(
     val questions: QuestionsConfig = QuestionsConfig(),
     val messages: RunMessagesConfig = RunMessagesConfig(),
     val dispatch: DispatchConfig = DispatchConfig(),
+    val hooks: HookConfig = HookConfig(),
     val langGraph: LangGraphConfig = LangGraphConfig(),
     val maintenance: MaintenanceConfig = MaintenanceConfig(),
     /**
@@ -341,6 +342,40 @@ data class DispatchConfig(
         }
         require(resultTokenTtlSec >= 60) {
             "server.dispatch.resultTokenTtlSec must be >= 60; got $resultTokenTtlSec"
+        }
+    }
+}
+
+/**
+ * Agent-level status hooks: the local bounds on the durable hook rows a run's status
+ * transitions can queue, and on how deep a chain of hook-started runs may go. See ADR-0105.
+ */
+@Serializable
+data class HookConfig(
+    /**
+     * Global cap on PENDING hook rows. A status transition that would push the table past
+     * it drops the excess with a log line rather than failing the transition — a burst of
+     * runs cannot queue unbounded rows behind one busy target. §12 rule 4.
+     */
+    val maxPending: Int = 200,
+    /**
+     * Longest chain of hook-started runs Homer will follow: a hook whose triggering run is
+     * already at this depth is dropped with a log line. Complements the load-time cycle
+     * rejection, which cannot see a hook agent reloaded after the declaring agent loaded.
+     */
+    val maxChainDepth: Int = 8,
+    /**
+     * How long (seconds, from creation) a settled hook — any status but PENDING and
+     * DISPATCHING — is kept before the sweep deletes it. Floored at one hour, like
+     * `server.dispatch.settledRetentionSec`.
+     */
+    val settledRetentionSec: Long = 604_800,
+) {
+    init {
+        require(maxPending > 0) { "server.hooks.maxPending must be > 0; got $maxPending" }
+        require(maxChainDepth >= 1) { "server.hooks.maxChainDepth must be >= 1; got $maxChainDepth" }
+        require(settledRetentionSec >= 3600) {
+            "server.hooks.settledRetentionSec must be >= 3600; got $settledRetentionSec"
         }
     }
 }

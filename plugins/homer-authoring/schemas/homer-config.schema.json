@@ -249,6 +249,7 @@
         },
         "maintenance": { "$ref": "#/$defs/MaintenanceConfig" },
         "dispatch": { "$ref": "#/$defs/DispatchConfig" },
+        "hooks": { "$ref": "#/$defs/HookConfig" },
         "langGraph": { "$ref": "#/$defs/LangGraphConfig" },
         "agentGrants": {
           "type": "object",
@@ -340,6 +341,31 @@
           "minimum": 1,
           "default": 32,
           "description": "Maximum sub-agents a single POST /api/v1/callback/joins request may fan out to. Each sub starts a process immediately, so this caps synchronous per-request fan-out; an over-limit request is rejected with 400."
+        }
+      }
+    },
+    "HookConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Agent-declared status hooks: a run's status transition records a durable row per matching hook entry, and Homer starts the target agent after that write commits. See ADR-0105.",
+      "properties": {
+        "maxPending": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 200,
+          "description": "Global cap on the number of simultaneously PENDING hook rows. A status transition that would push the table past the cap drops the excess with a log line; the transition still commits. Default 200."
+        },
+        "maxChainDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "Longest chain of hook-started runs Homer will follow. A hook whose triggering run is already that many hook hops deep is dropped rather than attempted. Complements the load-time cycle rejection, which cannot see a hook target reloaded after the declaring agent loaded. Default 8."
+        },
+        "settledRetentionSec": {
+          "type": "integer",
+          "minimum": 3600,
+          "default": 604800,
+          "description": "How long (seconds) a settled hook (any status but PENDING and DISPATCHING) is kept, measured from its createdAt; the continuation sweep tick then deletes it. Default 604800 (7 days), minimum 3600."
         }
       }
     },

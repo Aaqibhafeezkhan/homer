@@ -7,6 +7,8 @@ import homer.app.infra.ShellExecutor
 import homer.app.infra.TelemetryService
 import homer.app.infra.Workspace
 import homer.app.infra.WorkspaceConfig
+import homer.app.services.HookService
+import homer.app.services.persistence.HookRecording
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -57,6 +59,17 @@ object TestFixtures {
      * Creates a relaxed mock Logger that allows all method calls
      */
     fun mockLogger(): Logger = mockk(relaxed = true)
+
+    /**
+     * Creates a relaxed mock `HookService` whose recording records no hooks. `recording()` hands
+     * back a `HookRecording`, whose hook lookup is a lambda *property*: invoking the lambda a
+     * relaxed mock returns yields a bare `Object`, not a list, so a test that drives a status
+     * write through a mocked hook layer must stub this one method.
+     */
+    fun mockHookService(): HookService =
+        mockk(relaxed = true) {
+            every { recording() } returns HookRecording({ _, _ -> emptyList() }, maxPending = 200)
+        }
 
     /**
      * Creates a mock Span with common method stubs

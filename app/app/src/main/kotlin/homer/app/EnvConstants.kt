@@ -122,6 +122,27 @@ object EnvConstants {
     const val LLM_EXIT_CODE = "HMR_LLM_EXIT_CODE"
 
     /**
+     * The triggering run's metadata, injected into a run Homer starts from an agent's
+     * `hooks` entry: the run that reached the status ([HOOK_PROCESS_ID]), its agent
+     * ([HOOK_AGENT_NAME]), the status itself ([HOOK_STATUS]), the pre-start failure reason
+     * when the run carries one ([HOOK_FAILURE_REASON]) and the run's `key:value` subject
+     * tags ([HOOK_TAGS], comma-joined). Server-minted from the stored run only — never a
+     * secret input value, and never a caller-supplied param. See ADR-0105.
+     */
+    const val HOOK_PROCESS_ID = "HMR_HOOK_PROCESS_ID"
+    const val HOOK_AGENT_NAME = "HMR_HOOK_AGENT_NAME"
+    const val HOOK_STATUS = "HMR_HOOK_STATUS"
+    const val HOOK_FAILURE_REASON = "HMR_HOOK_FAILURE_REASON"
+    const val HOOK_TAGS = "HMR_HOOK_TAGS"
+
+    /**
+     * How many hook hops deep the run carrying this param is: 1 for a run a hook started
+     * from an ordinary run, one more per further hop. Bounded by `server.hooks.maxChainDepth`.
+     * Internal — not part of the documented agent-facing contract. See ADR-0105.
+     */
+    const val HOOK_DEPTH = "HMR_HOOK_DEPTH"
+
+    /**
      * Default `Agent.artifactNameTemplate` stem: renders the same path on every
      * attempt, so a command's artifacts truncate in place exactly as before that
      * field existed. Single source shared by the model default

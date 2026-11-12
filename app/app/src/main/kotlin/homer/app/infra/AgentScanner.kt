@@ -58,6 +58,18 @@ internal class AgentScanner(
             errors.add("Directory scan failed: ${e.message}")
         }
 
+        // Cross-agent `hooks` checks last, so they see the whole catalog: a hook target must be
+        // a loaded agent and the hook graph must be acyclic. A rejected agent's directory is
+        // still present (its files are on disk), so it stays in presentDirNames. See ADR-0105.
+        for ((name, hookErrors) in AgentHookValidation.apply(parsed)) {
+            sourceDirs.remove(name)
+            for (error in hookErrors) {
+                val msg = "Agent '$name': $error; the agent is skipped."
+                logger.error(msg)
+                errors.add(msg)
+            }
+        }
+
         return AgentScan(parsed, sourceDirs, presentDirNames, errors)
     }
 
