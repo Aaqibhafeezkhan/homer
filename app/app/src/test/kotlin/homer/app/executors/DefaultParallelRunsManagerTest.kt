@@ -278,6 +278,34 @@ class DefaultParallelRunsManagerTest {
         }
 
     @Test
+    fun `enterLockWait keys the fallback bound per agent, so two agents sharing one lock key each get their own cap`() =
+        runTest {
+            // Two agents declare the same lock key; the fallback counter is keyed on the agent
+            // name, so each parks one waiter against the key without consuming the other's place.
+            val ticketA = manager.enterLockWait("a", maxParallelRuns = 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            val ticketB = manager.enterLockWait("b", maxParallelRuns = 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+
+            // A second waiter of either agent is over that agent's cap…
+            assertFailsWith<MaxLockWaitersExceededException> {
+                manager.enterLockWait("a", 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            }
+            val ex =
+                assertFailsWith<MaxLockWaitersExceededException> {
+                    manager.enterLockWait("b", 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+                }
+            assertEquals("Agent 'b' has reached the maximum of 1 runs waiting for a lock", ex.message)
+
+            // …and closing one agent's ticket frees only that agent's place.
+            ticketA.close()
+            manager.enterLockWait("a", 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null).close()
+            assertFailsWith<MaxLockWaitersExceededException> {
+                manager.enterLockWait("b", 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            }
+
+            ticketB.close()
+        }
+
+    @Test
     fun `closing a lock-wait ticket twice frees one place, and a reload does not misdirect it`() =
         runTest {
             val agent = "idempotent-close"
