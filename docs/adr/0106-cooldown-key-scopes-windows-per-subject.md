@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0020, ADR-0047, ADR-0051, ADR-0052, ADR-0083
 ---
 
-# ADR-0105: `cooldown.key` counts the cooldown windows per rendered subject
+# ADR-0106: `cooldown.key` counts the cooldown windows per rendered subject
 
 ## Context and Problem Statement
 

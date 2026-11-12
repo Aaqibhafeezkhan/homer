@@ -153,7 +153,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
-| 31 | `processes.cooldown_key` (left NULL, no backfill) + `processes_agent_cooldown_key` and `processes_agent_cooldown_status_ended` | [0105](../../../../../../../../../docs/adr/0105-cooldown-key-scopes-windows-per-subject.md) |
+| 31 | `processes.cooldown_key` (left NULL, no backfill) + `processes_agent_cooldown_key` and `processes_agent_cooldown_status_ended` | [0106](../../../../../../../../../docs/adr/0106-cooldown-key-scopes-windows-per-subject.md) |
 
 ### Schema constraints
 
@@ -176,7 +176,7 @@ Editor-facing constraints the row's ADR does not state:
   or `_` matches only itself; they read through
   `processes_agent_cooldown_key` and
   `processes_agent_cooldown_status_ended`, while the keyless shapes stay on
-  `processes_agent_name` and `processes_agent_status_ended`. See ADR-0105.
+  `processes_agent_name` and `processes_agent_status_ended`. See ADR-0106.
 - `processes.secret_input_keys` (v15) records the `envName`s the agent declared
   `secret: true` **at run time**; API redaction reads it in preference to the
   agent's current definition, so an input later flipped to `secret: false`

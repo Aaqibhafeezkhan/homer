@@ -267,7 +267,7 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             assertEquals(HttpStatusCode.OK, response.status, "a manual debug run must not be held back by afterFailure")
         }
 
-    // cooldown.key (ADR-0105): both windows are counted per rendered subject, and a
+    // cooldown.key (ADR-0106): both windows are counted per rendered subject, and a
     // key that cannot be rendered refuses the start instead of sharing one window.
 
     @Test

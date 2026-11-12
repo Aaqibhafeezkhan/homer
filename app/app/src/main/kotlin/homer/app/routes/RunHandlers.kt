@@ -173,7 +173,7 @@ internal suspend fun handleAgentDebug(
         // `afterFailure`-only cooldown entirely, which would render null here where the other
         // paths store the subject, and a window read after the operator later adds
         // `minInterval` would count this row for no subject. Fails the request before any row
-        // exists. See ADR-0105.
+        // exists. See ADR-0106.
         val cooldownKey = mergedEnvAgent.renderCooldownKey(resolvedQueryParams)
         val result =
             processExecutor.execute(
@@ -259,7 +259,7 @@ internal suspend fun handleRetry(
         // A replay carries the source run's subject, so a keyed `minInterval` still paces it
         // against that subject's other starts — and the stored-secret snapshot, so a key
         // naming an input that was secret when the source run stored its inputs is refused
-        // instead of rendering the value into the row. See ADR-0105.
+        // instead of rendering the value into the row. See ADR-0106.
         val retryCooldownKey = agent.renderCooldownKey(retryParams, retrySecretEnvNames)
 
         val result =
@@ -334,7 +334,7 @@ internal suspend fun handleResume(
         span.stampLangfuseTrace(agent, listOf("resume") + langfuseTraceTags(agent, resumeParams, resumeSecretEnvNames))
         // Same as retry: the resumed segment keeps the source run's subject, and the
         // stored-secret snapshot refuses a key naming an input that was secret when the
-        // source run stored its inputs. See ADR-0105.
+        // source run stored its inputs. See ADR-0106.
         val resumeCooldownKey = agent.renderCooldownKey(resumeParams, resumeSecretEnvNames)
 
         val result =

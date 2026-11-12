@@ -138,7 +138,7 @@ internal class AgentRunStarter(
     ): Int {
         // A keyed cooldown is checked after the inputs are resolved, because its key is a
         // template over them; a keyless one is refused by `checkPreflight`, before anything
-        // is resolved. Both keep cycle → depth → cost cap → cooldown. See ADR-0105.
+        // is resolved. Both keep cycle → depth → cost cap → cooldown. See ADR-0106.
         val keyedCooldown = agent.cooldown?.key != null
         checkPreflight(agent, invocationChain, withCooldown = !keyedCooldown)
         val newChain = invocationChain + agent.name
@@ -147,7 +147,7 @@ internal class AgentRunStarter(
         // to clean up, and the same value goes to the pre-flight gate and to the row, so the
         // two cannot scope differently. A replay's stored-secret snapshot rides along, so a
         // key naming an input that was secret when the source run stored its inputs is
-        // refused too. See ADR-0105.
+        // refused too. See ADR-0106.
         val cooldownKey = if (keyedCooldown) agent.renderCooldownKey(queryParamsEnv, extraSecretInputKeys) else null
         if (keyedCooldown) cooldownGate.check(agent, cooldownKey)
         // Current flags for a fresh run, unioned with a replay's snapshot.
@@ -215,7 +215,7 @@ internal class AgentRunStarter(
      *
      * [withCooldown] is false for an agent whose `cooldown.key` has to be rendered from the
      * resolved inputs: the cycle, depth and cost-cap checks stay where they are, and the
-     * caller runs the cooldown check itself once the key exists. See ADR-0105.
+     * caller runs the cooldown check itself once the key exists. See ADR-0106.
      */
     private suspend fun checkPreflight(
         agent: Agent,

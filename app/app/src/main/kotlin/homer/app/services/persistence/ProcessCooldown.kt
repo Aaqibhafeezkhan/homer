@@ -10,7 +10,7 @@ import org.jetbrains.exposed.v1.jdbc.select
 
 // The cooldown bound's two lookups in the transaction-local form `obtainProcessId` evaluates inside
 // the INSERT's transaction (ADR-0051), plus the subject filter they share, so a keyed and a keyless
-// start cannot scope differently (ADR-0105). The `db.read` forms `CooldownGate` calls stay on
+// start cannot scope differently (ADR-0106). The `db.read` forms `CooldownGate` calls stay on
 // ProcessRepository, where the pre-flight gate can stub them.
 
 // Transaction-local forms of the two reads `CooldownGate` calls, so the authoritative cooldown
@@ -33,7 +33,7 @@ internal fun ProcessRepository.latestRunStartedAtTx(
  * the start carries one. A null key adds nothing, so a keyless cooldown keeps counting
  * every row of the agent — including rows written by a keyed definition, and rows from
  * before v31 — exactly as it did before the key existed. A key is compared with `eq`
- * (a bound parameter), so a `%`, `_` or `'` in it matches nothing but itself. ADR-0105.
+ * (a bound parameter), so a `%`, `_` or `'` in it matches nothing but itself. ADR-0106.
  */
 private fun ProcessRepository.cooldownPredicate(
     agentName: String,

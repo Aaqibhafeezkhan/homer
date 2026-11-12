@@ -249,7 +249,7 @@ class CooldownActiveException(
  * shared or per-agent one, which would silently widen the bound to every subject.
  *
  * The message names the placeholder or the broken rule and never an env value, a
- * rendered key or the key itself. §12 rule 7, ADR-0105.
+ * rendered key or the key itself. §12 rule 7, ADR-0106.
  */
 class CooldownKeyInvalidException(
     val agentName: String,

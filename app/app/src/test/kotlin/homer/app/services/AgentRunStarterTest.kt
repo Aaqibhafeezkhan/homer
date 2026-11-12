@@ -447,7 +447,7 @@ class AgentRunStarterTest {
         runBlocking {
             // The key is a template over the inputs, so the cooldown check cannot run before they
             // are resolved — but it must still run before `create`, so a refused or unrenderable
-            // start leaves no process row behind. See ADR-0105.
+            // start leaves no process row behind. See ADR-0106.
             val order = mutableListOf<String>()
             val processExecutor = mockk<ProcessExecutor>(relaxed = true)
             coEvery { processExecutor.execute(any(), any()) } returns ProcessCreationResult(processId = 7)
@@ -542,7 +542,7 @@ class AgentRunStarterTest {
         runBlocking {
             // A dispatch or continuation fire replays stored inputs with their source run's
             // secret snapshot: a key naming an input that was secret then is refused before
-            // any row exists, instead of storing the value in `cooldown_key`. See ADR-0105.
+            // any row exists, instead of storing the value in `cooldown_key`. See ADR-0106.
             val processExecutor = mockk<ProcessExecutor>(relaxed = true)
             val processFactory = mockk<ProcessFactory>(relaxed = true)
             val starter =

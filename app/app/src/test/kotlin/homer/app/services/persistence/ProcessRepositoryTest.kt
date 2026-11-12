@@ -1851,7 +1851,7 @@ class ProcessRepositoryTest {
             repo.obtainProcessId("flaky", emptyMap(), 100, cooldown = cooldown, nowSec = 260)
         }
 
-    // ========== cooldown.key: the same windows, counted per subject (ADR-0105) ==========
+    // ========== cooldown.key: the same windows, counted per subject (ADR-0106) ==========
 
     @Test
     fun `obtainProcessId stores the rendered key on the row`() =

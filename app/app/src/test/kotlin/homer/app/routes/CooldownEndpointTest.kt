@@ -321,7 +321,7 @@ class CooldownEndpointTest {
             assertEquals(3, deps.processCount())
         }
 
-    // ===== cooldown.key: the same windows, counted per subject (ADR-0105) =====
+    // ===== cooldown.key: the same windows, counted per subject (ADR-0106) =====
 
     private fun keyed(cooldown: Cooldown) =
         AgentFixtures
