@@ -960,7 +960,20 @@ class ProcessRepositoryTest {
             repo.transitionStatus(alreadySwept, ProcessStatus.FINISHED, 1, null)
             repo.setPurgeAt(alreadySwept, 500)
 
-            assertEquals(listOf(due), repo.getWorkspacePurgeable(terminal, nowSec = 1000).map { it.id })
+            // The expiry boundary itself: exactly at its purge second is due, one second later is not.
+            val exactlyDue = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(exactlyDue, ProcessStatus.FINISHED, 1, null)
+            repo.setArtifactsDir(exactlyDue, "/tmp/ws/exactly/artifacts")
+            repo.setPurgeAt(exactlyDue, 1000)
+
+            val oneSecondShort = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(oneSecondShort, ProcessStatus.FINISHED, 1, null)
+            repo.setArtifactsDir(oneSecondShort, "/tmp/ws/short/artifacts")
+            repo.setPurgeAt(oneSecondShort, 1001)
+
+            assertEquals(listOf(due, exactlyDue), repo.getWorkspacePurgeable(terminal, nowSec = 1000).map { it.id }.sorted())
+            // One second earlier: the exactly-due row is not due yet either.
+            assertEquals(listOf(due), repo.getWorkspacePurgeable(terminal, nowSec = 999).map { it.id }.sorted())
         }
 
     @Test
@@ -972,9 +985,39 @@ class ProcessRepositoryTest {
             repo.transitionStatus(id, ProcessStatus.FINISHED, 1, null)
             repo.setPurgeAt(id, purgeAt = 500, recordPurgeAt = 5000)
 
+            // The record window's own boundary: exactly at record_purge_at is due, one second later is not.
+            val exactlyDue = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(exactlyDue, ProcessStatus.FINISHED, 1, null)
+            repo.setPurgeAt(exactlyDue, purgeAt = 500, recordPurgeAt = 6000)
+
+            val oneSecondLater = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(oneSecondLater, ProcessStatus.FINISHED, 1, null)
+            repo.setPurgeAt(oneSecondLater, purgeAt = 500, recordPurgeAt = 6001)
+
             // The directory window has passed; the record window has not.
             assertEquals(emptyList(), repo.getRecordPurgeable(terminal, nowSec = 1000).map { it.id })
-            assertEquals(listOf(id), repo.getRecordPurgeable(terminal, nowSec = 6000).map { it.id })
+            // One second short of the window, then exactly at it.
+            assertEquals(emptyList(), repo.getRecordPurgeable(terminal, nowSec = 4999).map { it.id })
+            assertEquals(listOf(id), repo.getRecordPurgeable(terminal, nowSec = 5000).map { it.id })
+            assertEquals(listOf(id, exactlyDue), repo.getRecordPurgeable(terminal, nowSec = 6000).map { it.id }.sorted())
+        }
+
+    @Test
+    fun `getRecordPurgeable falls back to purgeAt for a row with no record window`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.transitionStatus(id, ProcessStatus.FINISHED, 1, null)
+            repo.setPurgeAt(id, purgeAt = 500, recordPurgeAt = 5000)
+            // A row written before v12 carries no record window at all.
+            db.query { Processes.update({ Processes.id eq id }) { it[Processes.recordPurgeAt] = null } }
+
+            // Not due by purge_at yet: the fallback arm, not the absent column, decides.
+            assertEquals(emptyList(), repo.getRecordPurgeable(terminal, nowSec = 499).map { it.id })
+            // Exactly at purge_at — long before the record window this row no longer has.
+            assertEquals(listOf(id), repo.getRecordPurgeable(terminal, nowSec = 500).map { it.id })
         }
 
     @Test
