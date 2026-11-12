@@ -5,6 +5,7 @@ import homer.app.fixtures.TestFixtures
 import homer.app.models.Agent
 import homer.app.models.ClaudeCmdOptions
 import homer.app.models.Command
+import homer.app.models.Cooldown
 import homer.app.models.LlmPrompt
 import homer.app.models.Param
 import homer.app.models.ParamSource
@@ -137,6 +138,37 @@ class AgentInputChecksTest {
             )
 
         checks.warnOnUncontainedClaudeTools(agent)
+
+        verify(exactly = 0) { logger.warn(any<String>(), any<Any>(), any<Any>()) }
+    }
+
+    @Test
+    fun `an input templated into the cooldown key warns like the lock key`() {
+        // The rendered key decides which pacing window a run lands in, so a caller-chosen
+        // input chooses the subject — the steering class the lock key is warned for.
+        val agent =
+            agentWith(Param(paramName = "mr", envName = "MR"))
+                .copy(cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}"))
+
+        checks.warnOnInputSteering(agent)
+
+        val names = mutableListOf<String>()
+        val steered = mutableListOf<String>()
+        verify(exactly = 1) { logger.warn(any<String>(), capture(names), capture(steered)) }
+        assertEquals("a", names.single())
+        assertTrue(steered.single().contains("cooldown.key uses input '{{MR}}'"), steered.toString())
+    }
+
+    @Test
+    fun `a cooldown key over the agent env or a literal steers no input`() {
+        checks.warnOnInputSteering(
+            agentWith(Param(paramName = "mr", envName = "MR"))
+                .copy(cooldown = Cooldown(minInterval = "1m", key = "mr-{{TEAM}}")),
+        )
+        checks.warnOnInputSteering(
+            agentWith(Param(paramName = "mr", envName = "MR"))
+                .copy(cooldown = Cooldown(minInterval = "1m", key = "nightly")),
+        )
 
         verify(exactly = 0) { logger.warn(any<String>(), any<Any>(), any<Any>()) }
     }

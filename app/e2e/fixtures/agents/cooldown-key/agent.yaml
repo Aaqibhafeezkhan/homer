@@ -1,0 +1,18 @@
+name: cooldown-key
+description: Keyed afterFailure; a failure on one subject must refuse only that subject, and a key that cannot be rendered must refuse the start
+inputs:
+  - paramName: mr
+    envName: MR
+    src: query
+    type: string
+    required: false
+cooldown:
+  afterFailure: 1h
+  key: "mr-{{MR}}"
+commands:
+  - !<script>
+    label: fail-loudly
+    content: |
+      sleep 1
+      echo "deliberate cooldown-key failure" >&2
+      exit 7

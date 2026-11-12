@@ -5,6 +5,7 @@ import homer.app.models.Command
 import homer.app.models.ParamSource
 import homer.app.models.TagValidation
 import homer.app.models.bypassesPermissionsWithoutToolLimit
+import homer.app.models.templatePlaceholderPattern
 import org.slf4j.Logger
 
 /**
@@ -19,7 +20,6 @@ internal class AgentInputChecks(
     private val paramValidator: ParamValidator,
 ) {
     private val envNamePattern = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
-    private val templateRefPattern = Regex("""\{\{(\w+)\}\}""")
 
     /** Rejects reserved header params and reserved or malformed input envNames; `false` = skip the agent. */
     fun checkInputEnvNames(
@@ -273,7 +273,7 @@ internal class AgentInputChecks(
             agent.commands
                 .filterIsInstance<Command.LlmCommand>()
                 .firstNotNullOfOrNull { cmd ->
-                    templateRefPattern
+                    templatePlaceholderPattern
                         .findAll(cmd.cmd)
                         .map { it.groupValues[1] }
                         .firstOrNull { it in inputEnvNames }
@@ -314,9 +314,10 @@ internal class AgentInputChecks(
 
     /**
      * WARN when caller-supplied inputs can steer run identity: an input-bound
-     * envName referenced from the workspace path, the lock key, or a RunAgent
-     * target template lets a caller pick another run's directory / lock / target.
-     * Legitimate (e.g. per-tenant lock keys) — hence a warning, not an error.
+     * envName referenced from the workspace path, the lock key, the cooldown key,
+     * or a RunAgent target template lets a caller pick another run's directory /
+     * lock / target / pacing window. Legitimate (e.g. per-tenant lock keys) —
+     * hence a warning, not an error.
      */
     fun warnOnInputSteering(agent: Agent) {
         val inputEnvNames =
@@ -326,11 +327,15 @@ internal class AgentInputChecks(
                 .toSet()
         if (inputEnvNames.isEmpty()) return
 
-        fun refs(template: String) = templateRefPattern.findAll(template).map { it.groupValues[1] }.toSet() intersect inputEnvNames
+        fun refs(template: String) = templatePlaceholderPattern.findAll(template).map { it.groupValues[1] }.toSet() intersect inputEnvNames
         val steered =
             buildList {
                 refs(agent.workspace.path).forEach { add("workspace.path uses input '{{$it}}'") }
                 refs(agent.lockStrategy.key).forEach { add("lockStrategy.key uses input '{{$it}}'") }
+                // The rendered cooldown key decides which pacing window a run lands in, so a
+                // caller-chosen value chooses the subject — the same identity-steering class
+                // as the lock key.
+                agent.cooldown?.key?.let { key -> refs(key).forEach { add("cooldown.key uses input '{{$it}}'") } }
                 agent.commands.filterIsInstance<Command.RunAgent>().forEach { cmd ->
                     refs(cmd.agentName).forEach { add("agent command '${cmd.label}' target uses input '{{$it}}'") }
                 }

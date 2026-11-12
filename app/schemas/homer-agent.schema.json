@@ -153,7 +153,7 @@
     "Cooldown": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Minimum spacing between runs of this agent. At least one field must be set. Durations use the purgeAfter grammar (m/h/d/w).",
+      "description": "Minimum spacing between runs of this agent. At least one of minInterval and afterFailure must be set. Durations use the purgeAfter grammar (m/h/d/w). By default both windows are counted per agent; key narrows them to one subject.",
       "minProperties": 1,
       "properties": {
         "minInterval": {
@@ -165,6 +165,12 @@
           "type": "string",
           "pattern": "^[0-9]+[mhdw]$",
           "description": "Minimum time since the previous run ended, applied only when that run FAILED."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Optional {{VAR}} template naming the subject both windows are counted per (a merge request, a branch, a ticket), rendered at start from the run's env and resolved inputs. A placeholder that does not resolve fails the run before it starts, never as a shared literal. The rendered value must be at most 128 characters of [A-Za-z0-9._:/-] and must not reference a secret input."
         }
       }
     },

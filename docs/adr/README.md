@@ -164,3 +164,4 @@ One of:
 | [0103](0103-a-lost-exec-channel-kills-and-fails-without-reattach.md) | A lost exec channel kills the leftover command and fails the step — there is no reattach | proposed |
 | [0104](0104-lock-before-slot-admission-order.md) | A run takes its lock before its parallel-run slot, and the lock-wait queue is bounded | proposed |
 | [0105](0105-langgraph-fanout-retries-are-client-side.md) | Fan-out retries are a client-side graph capability with replay-derived attempt counts | proposed |
+| [0106](0106-cooldown-key-scopes-windows-per-subject.md) | `cooldown.key` counts the cooldown windows per rendered subject | proposed |
