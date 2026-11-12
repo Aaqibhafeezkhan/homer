@@ -42,7 +42,10 @@ real Homer wrappers or network are required.
 `langgraph` is unpinned, so a local run only verifies the line the package
 index resolves: CI installs the newest, while an index missing the newest
 wheels backtracks to an older one — a green run there has been mistaken for a
-fresh-install green. Check what resolved (`.venv/bin/pip show langgraph`); when
+fresh-install green. The `homer-python-tests` CI job is the fresh-install check
+(it installs from `pyproject.toml` on a full index and resolves the newest line),
+so read its result before treating a local green as covering that line. Check
+what resolved (`.venv/bin/pip show langgraph`); when
 touching LangGraph-internals behavior, verify on the newest line explicitly,
 e.g. `.venv/bin/pip install 'langgraph==<newest>' 'langgraph-checkpoint==<newest>'
 'langgraph-checkpoint-sqlite==<newest>'`.

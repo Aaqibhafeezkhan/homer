@@ -25,6 +25,7 @@ import kotlin.test.assertTrue
 import ch.qos.logback.classic.Level as LogbackLevel
 import ch.qos.logback.classic.Logger as LogbackLogger
 import java.util.logging.Handler as JulHandler
+import java.util.logging.Level as JulLevel
 import java.util.logging.LogRecord as JulLogRecord
 import java.util.logging.Logger as JulLogger
 
@@ -156,6 +157,10 @@ class OtelTelemetryServiceTest {
             }
         exporterLogger.addHandler(handler)
         try {
+            // The JUL effective level is not this test's own state: an earlier test in the
+            // same JVM can leave the logger silenced, and the exported batch then never
+            // reaches the handler. Pin the level for the capture window, restore after.
+            exporterLogger.level = JulLevel.ALL
             val service = OtelTelemetryService(langfuseConfig, OpenTelemetryExport.LOG)
             val agent =
                 Agent(
@@ -173,6 +178,10 @@ class OtelTelemetryServiceTest {
             root.end()
             forceFlush(service)
 
+            assertTrue(
+                lines.any { it.contains("otel-wired-child") },
+                "the exported batch carried no line for the child span: ${lines.size} exported line(s): $lines",
+            )
             val childLine = lines.single { it.contains("otel-wired-child") }
             assertTrue(
                 childLine.contains("langfuse.trace.name") && childLine.contains("wired_agent"),
@@ -184,6 +193,7 @@ class OtelTelemetryServiceTest {
             )
         } finally {
             exporterLogger.removeHandler(handler)
+            exporterLogger.level = null
         }
     }
 
@@ -191,7 +201,12 @@ class OtelTelemetryServiceTest {
     private fun forceFlush(service: OtelTelemetryService) {
         val field = OtelTelemetryService::class.java.getDeclaredField("openTelemetry")
         field.isAccessible = true
-        (field.get(service) as OpenTelemetrySdk).sdkTracerProvider.forceFlush()
+        // `forceFlush` hands back a result that is not necessarily complete when it returns,
+        // so the batch export can still race the assertion that follows. Join it, bounded.
+        (field.get(service) as OpenTelemetrySdk)
+            .sdkTracerProvider
+            .forceFlush()
+            .join(10, TimeUnit.SECONDS)
     }
 
     // ========== Endpoint sanitization before logging ==========
