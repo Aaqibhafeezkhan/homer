@@ -1,5 +1,6 @@
 package homer.app.executors
 
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.models.OnMaxParallelRunsStrategy
@@ -7,6 +8,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class DefaultParallelRunsManager : ParallelRunsManager {
@@ -16,6 +18,10 @@ class DefaultParallelRunsManager : ParallelRunsManager {
     // these queued runs hold non-evictable process rows while parked, so this — not
     // the holder count — is what maxQueuedRuns bounds.
     private val waiters = ConcurrentHashMap<String, AtomicInteger>()
+
+    // Count of runs currently suspended waiting for a subject lock, per agent, when they
+    // do not share `waiters`. See enterLockWait.
+    private val lockWaiters = ConcurrentHashMap<String, AtomicInteger>()
 
     private fun getSemaphore(
         agentName: String,
@@ -74,6 +80,29 @@ class DefaultParallelRunsManager : ParallelRunsManager {
             slot.release()
         }
 
+    override fun enterLockWait(
+        agentName: String,
+        maxParallelRuns: Int,
+        strategy: OnMaxParallelRunsStrategy,
+        maxQueuedRuns: Int?,
+    ): LockWaitTicket {
+        // A lock waiter and a slot waiter pin the same kind of row while parked, so when the
+        // slot queue exists and is bounded they share its counter and its cap: one combined
+        // bound, and moving runs off the slot queue cannot raise the number of parked rows.
+        // Otherwise (REJECT, or an unbounded slot queue) they get their own counter capped at
+        // maxParallelRuns — the worst case before lock waiters left the slot queue.
+        val sharedCap = maxQueuedRuns?.takeIf { strategy == OnMaxParallelRunsStrategy.WAIT }
+        val count = (if (sharedCap != null) waiters else lockWaiters).computeIfAbsent(agentName) { AtomicInteger(0) }
+        val bound = sharedCap ?: maxParallelRuns
+        if (count.incrementAndGet() > bound) {
+            count.decrementAndGet()
+            if (sharedCap != null) throw MaxQueuedRunsExceededException(agentName, sharedCap)
+            throw MaxLockWaitersExceededException(agentName, bound)
+        }
+        val freed = AtomicBoolean(false)
+        return LockWaitTicket { if (freed.compareAndSet(false, true)) count.decrementAndGet() }
+    }
+
     override fun onAgentsReloaded(
         updated: Set<String>,
         removed: Set<String>,
@@ -81,6 +110,7 @@ class DefaultParallelRunsManager : ParallelRunsManager {
         (updated + removed).forEach {
             semaphores.remove(it)
             waiters.remove(it)
+            lockWaiters.remove(it)
         }
     }
 }

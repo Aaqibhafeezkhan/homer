@@ -23,6 +23,7 @@ import homer.app.exceptions.InvocationDepthExceededException
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.exceptions.MalformedLlmOutputException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.PayloadSchemaValidationException
@@ -47,6 +48,7 @@ import homer.app.exceptions.TooManyRunnerInstancesException
 import homer.app.exceptions.TooManyRunnerPollsException
 import homer.app.exceptions.TooManyRunnerTransfersException
 import homer.app.exceptions.TooManySessionPollsException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.exceptions.ValidationException
 import homer.app.exceptions.WorkspaceException
 import homer.app.models.ErrorResponse
@@ -282,6 +284,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is RunnerTransferTooLargeException,
         is MaxParallelRunsExceededException,
         is MaxQueuedRunsExceededException,
+        is MaxLockWaitersExceededException,
         is CostCapExceededException,
         is CooldownActiveException,
         is TooManyOpenQuestionsException,
@@ -305,6 +308,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is RunnerClaimTimeoutException,
         is MaintenanceWaitTimeoutException,
         is ServerDrainingException,
+        is UnresolvedLockKeyPlaceholderException,
         -> {
             transferCapacityOrServerStatus(e)
         }
@@ -377,6 +381,7 @@ private fun transferCapacityOrServerStatus(e: HomerException): HttpStatusCode =
 
         is MaxParallelRunsExceededException,
         is MaxQueuedRunsExceededException,
+        is MaxLockWaitersExceededException,
         is CostCapExceededException,
         is CooldownActiveException,
         is TooManyOpenQuestionsException,

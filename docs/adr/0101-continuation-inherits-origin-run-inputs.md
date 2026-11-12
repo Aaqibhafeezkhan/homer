@@ -178,3 +178,7 @@ paramName-keyed params.
 - ADR-0052 — the secret redaction union reused here, unchanged.
 - ADR-0060 — `tags.fromInputs`, the tag derivation this restores for a segment.
 - ADR-0039 — the dispatch hop authority the same-agent gate complements.
+- ADR-0098 — its 2026-11-12 amendment makes an unresolved lock key placeholder
+  fail the run before it starts, so the literal `ticket-{{TICKET_ID}}` key
+  described above is no longer what a resumed segment without this flag gets:
+  that segment is now refused, and this flag is what keeps it runnable.

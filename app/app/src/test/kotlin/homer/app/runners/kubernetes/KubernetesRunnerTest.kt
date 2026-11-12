@@ -468,6 +468,38 @@ class KubernetesRunnerTest {
     }
 
     @Test
+    fun `a lost exec channel on a running pod records ExecChannelLost as the run's termination`(
+        @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
+    ) = runTest {
+        val api = mockk<CoreV1Api>(relaxed = true)
+        stubCreatePod(api)
+        stubEvents(api, emptyList())
+        stubPodStatus(api, readyPod())
+        val exec =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns java.io.ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns java.io.ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<java.util.concurrent.TimeUnit>()) } returns true
+                every { exitValue() } returns EXEC_NO_EXIT_STATUS_SENTINEL
+            }
+        val captured = mutableListOf<RunnerState>()
+        val sink = RunnerStateSink { _, update -> captured.add(update(captured.lastOrNull())) }
+        val runner = KubernetesRunner("k8s-dev", config, api, { _, _, _, _ -> exec }, clock = { 5_000L }, stateSink = sink)
+        val session = runner.openSession(params)
+
+        val e =
+            assertThrows<homer.app.exceptions.PodFailedDuringExecutionException> {
+                session.shell.cmd(listOf("sleep"), tmp.resolve("o"), tmp.resolve("e"), timeout = kotlin.time.Duration.parse("10s"))
+            }
+
+        assertEquals(EXEC_CHANNEL_LOST, e.reason)
+        assertEquals(PodPhase.FAILED, captured.last().podPhase)
+        assertEquals(EXEC_CHANNEL_LOST, captured.last().termination?.reason)
+        assertEquals(5L, captured.last().endedAt)
+    }
+
+    @Test
     fun `a pod stopped mid-run dates the terminated state from the session open time`(
         @org.junit.jupiter.api.io.TempDir tmp: java.nio.file.Path,
     ) = runTest {

@@ -76,6 +76,52 @@ class AnotherProcessStillActive(
     val activeProcessId: Int,
 ) : HomerException("The process $activeProcessId is still active, stopping current")
 
+/**
+ * Raised when a lock key template names a `{{NAME}}` the run's env does not hold; the run is
+ * denied before it takes a slot, a lock or a workspace. See ADR-0098 for why the denial fails
+ * closed (ADR-0047 for the cross-subject collision it prevents).
+ *
+ * [placeholders] carries the unresolved names only — never the rendered key, which may hold an
+ * input value, and never any value.
+ */
+class UnresolvedLockKeyPlaceholderException(
+    names: Collection<String>,
+) : HomerException(denialMessage(namedPlaceholders(names))) {
+    /** The unresolved placeholder names, distinct, sorted and bounded, as the denial names them. */
+    val placeholders: List<String> = namedPlaceholders(names)
+}
+
+/** Bounds how many names a denial echoes: a key with more is still denied, just not fully named. */
+private const val MAX_NAMED_PLACEHOLDERS = 5
+
+/** Bounds each name, so the echoed sentence stays short whatever a template's placeholder is called. */
+private const val MAX_PLACEHOLDER_NAME_LENGTH = 50
+
+/** The distinct placeholder names a denial names, in a stable order, each cut to [MAX_PLACEHOLDER_NAME_LENGTH]. */
+private fun namedPlaceholders(names: Collection<String>): List<String> =
+    names
+        .distinct()
+        .sorted()
+        .take(MAX_NAMED_PLACEHOLDERS)
+        .map { it.take(MAX_PLACEHOLDER_NAME_LENGTH) }
+
+/**
+ * The singular/plural sentence naming unresolved placeholders — `placeholder {{A}} has no value`
+ * for one, `placeholders {{A}}, {{B}} have no value` for several — shared by the denial's log
+ * sentence and the stored pre-start failure reason, so the two wordings cannot drift. The names
+ * come from the agent definition (a `\w+` template reference), never from the rendered key —
+ * which may hold an input value — and never from a value. See ADR-0098.
+ */
+internal fun placeholderSentence(names: List<String>): String =
+    if (names.size == 1) {
+        "placeholder {{${names.single()}}} has no value"
+    } else {
+        "placeholders ${names.joinToString(", ") { "{{$it}}" }} have no value"
+    }
+
+/** The denial's log sentence: the shared placeholder sentence behind the lock-key prefix. */
+private fun denialMessage(names: List<String>): String = "Lock key ${placeholderSentence(names)}"
+
 class MaxParallelRunsExceededException(
     val agentName: String,
     val maxParallelRuns: Int,
@@ -92,6 +138,19 @@ class MaxQueuedRunsExceededException(
     val agentName: String,
     val maxQueuedRuns: Int,
 ) : HomerException("Agent '$agentName' has reached the maximum of $maxQueuedRuns queued runs")
+
+/**
+ * Raised when an agent already has `bound` runs suspended waiting for a subject lock. A run
+ * waiting on a lock no longer holds a parallel-run slot (ADR-0104), so the wait needs its own
+ * local bound: an unbounded lock queue on one agent could pin just as many process rows as the
+ * slot queue could, and starve every other agent. The bound is `maxQueuedRuns` when that shares
+ * the slot queue, and `maxParallelRuns` otherwise — the surplus run is failed instead of parked.
+ * §12 rules 4–5, ADR-0047.
+ */
+class MaxLockWaitersExceededException(
+    val agentName: String,
+    val bound: Int,
+) : HomerException("Agent '$agentName' has reached the maximum of $bound runs waiting for a lock")
 
 /**
  * Raised when an incoming agent invocation would exceed the configured maximum

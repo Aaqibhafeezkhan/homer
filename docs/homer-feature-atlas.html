@@ -715,8 +715,8 @@ agents/web-pipeline/nodes/analysis/agent.yaml   # a nested agent</code></pre>
           <h3>Process lifecycle <span class="where">status</span></h3>
           <p><code>CREATED → WORKING → FINISHED | FAILED | KILLED</code>. A run interrupted by a server restart is
             reconciled to <code>UNKNOWN</code> (also terminal). A run that fails before any command starts — a claim
-            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap or a full queue — carries a stored
-            <code>failureReason</code> saying which.</p>
+            timeout, a <code>SKIP_CURRENT</code> lock skip, a parallel-run cap, a full queue or an unresolved
+            <code>lockStrategy.key</code> placeholder — carries a stored <code>failureReason</code> saying which.</p>
           <pre><code>curl "$HOMER/api/v1/status/12345"</code></pre>
         </article>
 
@@ -1517,7 +1517,7 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
 
       <figure class="diagram">
         <svg viewBox="0 0 1160 372" role="img"
-             aria-label="Two independent limiters in series. Concurrent runs of one agent first need a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. A run holding a slot then needs the lock named by its key template: WAIT queues behind the holder, SKIP_CURRENT fails the new run, and KILL_OLD_RUN_CURRENT kills the holder. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set. Slots are per agent; lock keys are global across agents.">
+             aria-label="Two limiters in series, the lock first. Concurrent runs of one agent first need the lock named by their key template: WAIT queues behind the holder while holding no run slot, SKIP_CURRENT fails the new run at once, and KILL_OLD_RUN_CURRENT kills the holder once the new run holds a run slot — a run refused its slot leaves the holder alive. A run whose key is already held by an ancestor in its own invocation chain skips the lock entirely when acceptParentLock is set, but still needs a slot. A run whose key template still holds a placeholder its environment cannot resolve is refused before either gate, so it takes no slot and no lock. Runs waiting for a lock are bounded: by maxQueuedRuns when it is set, otherwise by maxParallelRuns, and the surplus run ends FAILED. A run holding the lock then needs a parallel-run slot bounded by maxParallelRuns: under REJECT the surplus run ends FAILED at once, under WAIT it queues, and a queue bounded by maxQueuedRuns fails the next run the same way once full. Either way the request itself has already answered 200 with a process id. Slots are per agent; lock keys are global across agents.">
           <defs>
             <marker id="cc-arrow" viewBox="0 0 10 10" refX="9" refY="5"
                     markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -1529,9 +1529,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
             </marker>
           </defs>
 
-          <!-- bypass -->
-          <path class="d-loop" d="M520,74 C610,20 760,20 850,74" marker-end="url(#cc-arrow-accent)" />
-          <text class="d-loop-label" x="686" y="30" text-anchor="middle">acceptParentLock — this flow already holds the key</text>
+          <!-- bypass: the pass-through skips the lock, never the slot -->
+          <path class="d-loop" d="M270,74 C360,20 600,20 681,74" marker-end="url(#cc-arrow-accent)" />
+          <text class="d-loop-label" x="475" y="30" text-anchor="middle">acceptParentLock — this flow already holds the key</text>
 
           <rect class="d-box" x="16" y="78" width="200" height="44" rx="4" />
           <text class="d-name" x="116" y="106" text-anchor="middle">concurrent runs</text>
@@ -1539,39 +1539,43 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
           <path class="d-line" d="M216,100 H268" marker-end="url(#cc-arrow)" />
 
           <rect class="d-box" x="276" y="78" width="230" height="44" rx="4" />
-          <text class="d-name" x="391" y="106" text-anchor="middle">run slot</text>
-          <text class="d-cap" x="391" y="140" text-anchor="middle">maxParallelRuns — per agent</text>
+          <text class="d-name" x="391" y="106" text-anchor="middle">lock</text>
+          <text class="d-cap" x="391" y="140" text-anchor="middle">key template — global across agents</text>
           <path class="d-line" d="M506,100 H558" marker-end="url(#cc-arrow)" />
 
           <rect class="d-box" x="566" y="78" width="230" height="44" rx="4" />
-          <text class="d-name" x="681" y="106" text-anchor="middle">lock</text>
-          <text class="d-cap" x="681" y="140" text-anchor="middle">key template — global across agents</text>
+          <text class="d-name" x="681" y="106" text-anchor="middle">run slot</text>
+          <text class="d-cap" x="681" y="140" text-anchor="middle">maxParallelRuns — per agent</text>
           <path class="d-line" d="M796,100 H848" marker-end="url(#cc-arrow)" />
 
           <rect class="d-box d-ok" x="856" y="78" width="200" height="44" rx="4" />
           <text class="d-name d-ok-t" x="956" y="106" text-anchor="middle">WORKING</text>
 
-          <!-- slot outcomes -->
-          <path class="d-line" d="M341,122 V166 H141 V196" marker-end="url(#cc-arrow)" />
-          <path class="d-line" d="M341,166 H391 V196" marker-end="url(#cc-arrow)" />
-          <rect class="d-box d-fail" x="36" y="200" width="210" height="34" rx="4" />
-          <text class="d-row d-fail-t" x="50" y="221">REJECT → FAILED at once</text>
-          <rect class="d-box" x="286" y="200" width="210" height="34" rx="4" />
-          <text class="d-row" x="300" y="221">WAIT → queue</text>
-          <text class="d-cap" x="391" y="256" text-anchor="middle">maxQueuedRuns bounds that queue —</text>
-          <text class="d-cap" x="391" y="271" text-anchor="middle">the next run ends FAILED instead of parking</text>
-
           <!-- lock outcomes -->
-          <path class="d-line" d="M681,122 V160 H620 V296" />
-          <path class="d-line" d="M620,212 H630" marker-end="url(#cc-arrow)" />
-          <path class="d-line" d="M620,254 H630" marker-end="url(#cc-arrow)" />
-          <path class="d-line" d="M620,296 H630" marker-end="url(#cc-arrow)" />
-          <rect class="d-box" x="636" y="196" width="256" height="32" rx="4" />
-          <text class="d-row" x="650" y="216">WAIT → queue behind it</text>
-          <rect class="d-box d-fail" x="636" y="238" width="256" height="32" rx="4" />
-          <text class="d-row d-fail-t" x="650" y="258">SKIP_CURRENT → FAILED</text>
-          <rect class="d-box d-warn" x="636" y="280" width="256" height="32" rx="4" />
-          <text class="d-row d-warn-t" x="650" y="300">KILL_OLD → holder KILLED</text>
+          <path class="d-line" d="M380,122 V296" />
+          <path class="d-line" d="M380,196 H394" marker-end="url(#cc-arrow)" />
+          <path class="d-line" d="M380,238 H394" marker-end="url(#cc-arrow)" />
+          <path class="d-line" d="M380,280 H394" marker-end="url(#cc-arrow)" />
+          <rect class="d-box" x="400" y="180" width="220" height="32" rx="4" />
+          <text class="d-row" x="414" y="200">WAIT → queue behind it</text>
+          <rect class="d-box d-fail" x="400" y="222" width="220" height="32" rx="4" />
+          <text class="d-row d-fail-t" x="414" y="242">SKIP_CURRENT → FAILED</text>
+          <rect class="d-box d-warn" x="400" y="264" width="220" height="32" rx="4" />
+          <text class="d-row d-warn-t" x="414" y="284">KILL_OLD → holder KILLED</text>
+          <text class="d-cap" x="391" y="326" text-anchor="middle">lock waiters capped by maxQueuedRuns,</text>
+          <text class="d-cap" x="391" y="341" text-anchor="middle">else by maxParallelRuns</text>
+          <text class="d-cap" x="391" y="356" text-anchor="middle">the kill waits for the new run's slot</text>
+
+          <!-- slot outcomes -->
+          <path class="d-line" d="M640,122 V238" />
+          <path class="d-line" d="M640,196 H654" marker-end="url(#cc-arrow)" />
+          <path class="d-line" d="M640,238 H654" marker-end="url(#cc-arrow)" />
+          <rect class="d-box d-fail" x="660" y="180" width="224" height="32" rx="4" />
+          <text class="d-row d-fail-t" x="674" y="200">REJECT → FAILED at once</text>
+          <rect class="d-box" x="660" y="222" width="224" height="32" rx="4" />
+          <text class="d-row" x="674" y="242">WAIT → queue</text>
+          <text class="d-cap" x="772" y="290" text-anchor="middle">maxQueuedRuns bounds that queue —</text>
+          <text class="d-cap" x="772" y="305" text-anchor="middle">the next run ends FAILED instead of parking</text>
 
           <!-- note -->
           <rect class="d-panel" x="912" y="196" width="224" height="116" rx="4" />
@@ -1582,12 +1586,16 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
           <text class="d-row" x="926" y="294">may overlap</text>
         </svg>
         <figcaption>Two gates in series, and they answer different questions. A run needs both, so tuning one cannot
-          fix a problem caused by the other — a queue that never drains is usually a lock, not a slot. The scoping
-          differs too: slots are counted per agent, while lock keys are a single global namespace, so two different
-          agents whose key templates resolve to the same string genuinely contend — deliberate, and the mechanism behind
-          serializing a whole <code>RunAgent</code> flow on one key. <code>cooldown</code> is not one of these gates and
-          is not drawn here: it is a separate bound, refused at the request boundary before either gate, so a start it
-          turns away never queues behind anything.</figcaption>
+          fix a problem caused by the other — a queue that never drains is usually a lock, not a slot. The order is the
+          lock first, so a run waiting on another run's subject lock holds no slot: one busy subject cannot starve the
+          agent's other subjects, and <code>maxParallelRuns</code> bounds the runs that are actually executing. The
+          scoping differs too: slots are counted per agent, while lock keys are a single global namespace, so two
+          different agents whose key templates resolve to the same string genuinely contend — deliberate, and the
+          mechanism behind serializing a whole <code>RunAgent</code> flow on one key. A key template the run cannot
+          render in full fails it closed: the run ends <code>FAILED</code> with a reason naming the placeholder, before
+          it reaches either gate. <code>cooldown</code> is not one of these gates and is not drawn here: it is a
+          separate bound, refused at the request boundary before either gate, so a start it turns away never queues
+          behind anything.</figcaption>
       </figure>
 
       <div class="grid">
@@ -1595,7 +1603,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <article class="f">
           <h3>Lock keys <span class="where">agent.yaml</span></h3>
           <p>A templated key decides which runs collide. The default (<code>{{HMR_PROCESS_ID}}</code>) is unique per run,
-            so nothing collides. Keys are global across agents.</p>
+            so nothing collides. Keys are global across agents. Every placeholder must have a value: one the run cannot
+            resolve fails the run before it starts rather than being left as literal text, so unrelated runs never share
+            a key by accident.</p>
           <pre><code>lockStrategy:
   key: "deploy-{{ENVIRONMENT}}"
   onCollision: WAIT</code></pre>
@@ -1603,8 +1613,10 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
 
         <article class="f">
           <h3>Collision strategies <span class="where">agent.yaml</span></h3>
-          <p><code>WAIT</code> queues behind the holder, <code>SKIP_CURRENT</code> fails the new run (first wins),
-            <code>KILL_OLD_RUN_CURRENT</code> kills the holder (latest wins).</p>
+          <p>Every collision is decided at the lock, before the run holds a slot: <code>WAIT</code> queues behind the
+            holder, <code>SKIP_CURRENT</code> fails the new run (first wins), and <code>KILL_OLD_RUN_CURRENT</code>
+            kills the holder (latest wins) — but only once the new run holds a slot, so a new run refused one leaves
+            the old run alive and releases the lock again.</p>
           <pre><code>onCollision: KILL_OLD_RUN_CURRENT   # latest deploy wins</code></pre>
         </article>
 
@@ -1619,7 +1631,9 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
 
         <article class="f">
           <h3>Parallel-run cap <span class="where">agent.yaml</span></h3>
-          <p>Caps concurrent runs of one agent, then either queues or rejects the surplus. A rejected run still gets its
+          <p>Caps the runs of one agent that are executing at once, then either queues or rejects the surplus. A run
+            waiting for its lock holds no slot, so the cap counts running work, not queued work. A rejected run still
+            gets its
             <code>200 {processId}</code>; the run itself ends <code>FAILED</code>. The bundled
             <code>example/agents/limits/</code> agent is the worked example: one slow script under a cap, a bounded
             queue and a cooldown.</p>
@@ -1631,7 +1645,9 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
           <h3>Bounded queue <span class="where">agent.yaml</span></h3>
           <p>Under <code>WAIT</code> the queue is unbounded by default; <code>maxQueuedRuns</code> makes the surplus fail
             fast instead of pinning process rows forever — the call still returns its process id, and the run ends
-            <code>FAILED</code>.</p>
+            <code>FAILED</code>. It bounds the lock wait too: with it set, lock waiters and slot waiters share the one
+            cap, and without it (or under <code>REJECT</code>) an agent may have at most
+            <code>maxParallelRuns</code> runs waiting for a lock.</p>
           <pre><code>maxQueuedRuns: 50</code></pre>
         </article>
 
@@ -1639,7 +1655,7 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
           <h3>Cooldown between runs <span class="where">agent.yaml</span></h3>
           <p>The third bound, and the one about frequency rather than overlap. <code>minInterval</code> spaces out
             every start; <code>afterFailure</code> backs off only after a run that failed while executing a command —
-            a run refused before it started (a lock skip, a rejected parallel run, a full wait queue, a claim timeout, a full claim queue) never arms it — so a
+            a run refused before it started (a lock skip, a rejected parallel run, a full wait queue, a claim timeout, a full claim queue, an unresolved lock-key placeholder) never arms it — so a
             fast-failing watcher on a one-minute schedule stops repeating its side effect while a healthy one keeps
             its cadence. A refused start launches nothing: an HTTP run, retry, resume or debug start returns
             <code>429</code>, a cron tick and
@@ -2427,7 +2443,9 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
             the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
             hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
             the pod in a one-pod Job that waits out namespace quota and is removed by its TTL. A stalled API server fails
-            the run after a fixed 30 s instead of holding it, while the exec and workspace streams stay open.</p>
+            the run after a fixed 30 s instead of holding it, while the exec and workspace streams stay open. An exec
+            channel that closes while the pod still runs is reported as <code>ExecChannelLost</code> in the run's
+            <code>runner.termination</code>, and the leftover command is killed before the step fails.</p>
           <pre><code>runners:
   k8s: !&lt;kubernetes&gt;
     namespace: homer

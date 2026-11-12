@@ -2,9 +2,11 @@ package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.ClaimQueueFullException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.models.MAX_FAILURE_REASON_LENGTH
 import homer.app.models.RunnerFilter
 import io.kotest.property.Arb
@@ -58,6 +60,18 @@ class PreStartFailureReasonTest {
     }
 
     @Test
+    fun `a full lock-wait queue names the agent and its bound`() {
+        val failure = PreStartFailureReason.of(MaxLockWaitersExceededException("demo", 5))!!
+
+        assertTrue(failure.reason.contains("maxParallelRuns: 5"))
+        assertTrue(failure.reason.contains("'demo'"))
+        assertTrue(failure.reason.contains("waiting for a lock"))
+        // The lock key names the run's subject, read from its inputs: never in the text.
+        assertTrue(!failure.reason.contains("mr-"))
+        assertNull(failure.holderRunId)
+    }
+
+    @Test
     fun `a claim timeout names the wait and the filter without its alias`() {
         val failure = PreStartFailureReason.of(claimTimeout())!!
 
@@ -86,6 +100,49 @@ class PreStartFailureReasonTest {
     @Test
     fun `a failure that happened while the run was running stores no reason`() {
         assertNull(PreStartFailureReason.of(IllegalStateException("boom")))
+    }
+
+    @Test
+    fun `an unresolved lock key placeholder names the placeholder and no value`() {
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("TICKET_ID")))!!
+
+        assertEquals(
+            "Lock key placeholder {{TICKET_ID}} has no value (lockStrategy.key), so this run never started.",
+            failure.reason,
+        )
+        assertNull(failure.holderRunId)
+    }
+
+    @Test
+    fun `several unresolved placeholders are named in one sentence`() {
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("B", "A")))!!
+
+        assertEquals(
+            "Lock key placeholders {{A}}, {{B}} have no value (lockStrategy.key), so this run never started.",
+            failure.reason,
+        )
+    }
+
+    @Test
+    fun `a denial naming many placeholders stays one bounded line`() {
+        // The exception bounds the names it carries (five), so the sentence stays short whatever
+        // an agent's template holds — the stored column has a cap of its own (ADR-0098).
+        val failure =
+            PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException((1..50).map { "P%02d".format(it) }))!!
+
+        assertTrue(failure.reason.length <= MAX_FAILURE_REASON_LENGTH, "reason=${failure.reason}")
+        assertTrue(failure.reason.contains("{{P05}}"), "reason=${failure.reason}")
+        assertTrue(!failure.reason.contains("{{P06}}"), "reason=${failure.reason}")
+    }
+
+    @Test
+    fun `a denial naming one over-long placeholder stays bounded and still names it`() {
+        // The exception bounds each name, not only their count, so the sentence names the
+        // placeholder instead of being cut inside it (ADR-0098).
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("N".repeat(1000))))!!
+
+        assertTrue(failure.reason.length <= MAX_FAILURE_REASON_LENGTH, "reason=${failure.reason}")
+        assertTrue(failure.reason.contains("{{NNN"), "reason=${failure.reason}")
     }
 
     @Test
@@ -140,12 +197,16 @@ class PreStartFailureReasonTest {
                         AnotherProcessStillActive(1),
                         MaxParallelRunsExceededException(agentName, 2),
                         MaxQueuedRunsExceededException(agentName, 2),
+                        MaxLockWaitersExceededException(agentName, 2),
                         ClaimQueueFullException(2),
                         claimTimeout(
                             filter = RunnerFilter.Tags(setOf(tag)),
                             reason = agentName,
                             publicReason = agentName,
                         ),
+                        // A placeholder name is `\w+` in the template, but the denial must stay
+                        // bounded and one-line whatever the exception is handed.
+                        UnresolvedLockKeyPlaceholderException(listOf(agentName, tag)),
                     )
                 exceptions.forEach { e ->
                     val reason = PreStartFailureReason.of(e)!!.reason
