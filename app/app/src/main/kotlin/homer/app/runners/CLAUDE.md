@@ -54,6 +54,15 @@ ADR-0047 boundary enforcement; an `upload` override must honour them).
 (e.g. `pod.name`) is stamped onto command-execution spans. See
 ADR-0033.
 
+**A lost Kubernetes exec channel** is diagnosed in
+`KubernetesShellExecutor.exitCodeOf`, after `failIfPodStopped` has had its
+say: a pod Kubernetes stopped keeps its own `runner.termination` reason, and
+a channel lost while the pod still runs stops the leftover command through
+the same pod-wide `killInsidePod` the abort path uses (ADR-0041), then fails
+the step as `ExecChannelLost` with the cause on the run's
+`runner.termination`. There is no reattach: a command still running when its
+channel dies is killed, never waited for.
+
 Every run reaches a runner through the claim queue (ADR-0066):
 `RunnerRegistry.forAgent(agent)` returns a `QueuedRunner` whose
 `openSession` enqueues a `ClaimRequest` (filter = alias or tag set) into

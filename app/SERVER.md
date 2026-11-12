@@ -2778,6 +2778,19 @@ command (exit 137 or 143) Homer re-reads for up to 5 s, because Kubernetes
 records why the pod stopped a moment after the kill, so the failure still
 names the reason. Homer does not poll the pod while a command runs.
 
+**A lost exec channel.** The exec channel into the pod can close without a
+`v1.Status` — an API server or proxy restart, an idle timeout on the
+websocket — or the client can report its no-exit-status sentinel. When the
+pod itself is still running, the step fails with `ExecChannelLost` and the
+run's `runner.termination` carries the same reason, the underlying cause
+and the pod's last event, so the failure names the loss without the server
+log. The leftover command is killed pod-wide first: the channel died, not
+the command, so a command that was still running must not outlive the
+step. A pod Kubernetes actually stopped still wins — its own reason
+(`DeadlineExceeded`, eviction, an OOM kill, deletion) is reported instead.
+Homer does not reattach to a lost channel: a command that was still
+running is not waited for.
+
 **A stalled API server.** Every non-streaming call the runner makes to the
 API server — creating, reading, patching and deleting pods and Jobs, listing
 them for the sweep, and the diagnostics reads — gives up after 30 s, so the

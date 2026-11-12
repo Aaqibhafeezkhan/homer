@@ -4,8 +4,10 @@ import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.PodFailedDuringExecutionException
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
+import homer.app.infra.SecretRedactor
 import homer.app.infra.ShellExecutor
 import homer.app.models.CommandResult
+import homer.app.models.MIN_SCREENED_SECRET_LENGTH
 import homer.app.models.PodTermination
 import homer.app.runners.KillCause
 import homer.app.runners.exceedsOutputCap
@@ -88,7 +90,7 @@ class KubernetesShellExecutor(
 
             failIfOverCap(stdOut, stdErr)
 
-            CommandResult(exitCode = exitCodeOf(remote), stdOut = stdOut, stdErr = stdErr)
+            CommandResult(exitCode = exitCodeOf(remote, env), stdOut = stdOut, stdErr = stdErr)
         }
 
     /**
@@ -211,9 +213,13 @@ class KubernetesShellExecutor(
      * The exited command's code. After a non-zero exit or a failed exec channel the pod's status is read
      * once (a signal exit 137/143 re-reads it for up to [stopReasonBudgetMs], as Kubernetes records the
      * stop reason a moment after the kill): a pod Kubernetes stopped (deadline, eviction, OOM, deletion) is a
-     * [PodFailedDuringExecutionException] carrying the reason; otherwise a failed channel is one with the pod's diagnostics.
+     * [PodFailedDuringExecutionException] carrying the reason; a channel lost while the pod still runs stops the
+     * leftover command and fails as [EXEC_CHANNEL_LOST] with the cause.
      */
-    private suspend fun exitCodeOf(remote: Process): Int {
+    private suspend fun exitCodeOf(
+        remote: Process,
+        env: Map<String, String>,
+    ): Int {
         val exit = runCatching { remote.exitValue() }
         // client-java's ExecProcess can RETURN its no-exit-status sentinel instead of throwing when
         // the websocket closed without a v1.Status (e.g. a refused 101 upgrade): a channel failure.
@@ -221,8 +227,40 @@ class KubernetesShellExecutor(
         if (code == 0) return 0
         failIfPodStopped(patient = code in SIGNAL_EXITS)
         if (code != null) return code
-        val snap = PodDiagnostics.tryCollect(api, namespace, podName, "ExecChannelFailed")
-        throw PodFailedDuringExecutionException(snap.reason, snap.message, snap.events, exit.exceptionOrNull())
+        val snap = PodDiagnostics.tryCollect(api, namespace, podName, EXEC_CHANNEL_LOST)
+        killLeftoverAfterLostChannel(remote)
+        val msg = channelLostMessage(exit.exceptionOrNull(), env, snap)
+        onTermination(PodTermination(EXEC_CHANNEL_LOST, msg))
+        throw PodFailedDuringExecutionException(EXEC_CHANNEL_LOST, msg, snap.events, exit.exceptionOrNull(), channelLost = true)
+    }
+
+    /**
+     * The channel died, not the command, so the command may still be running in the pod: stop it pod-wide
+     * before the step fails (ADR-0041), under [NonCancellable] so a cancelled caller cannot skip it. A kill
+     * that itself fails is only logged — the step must still fail as a lost channel.
+     */
+    private suspend fun killLeftoverAfterLostChannel(remote: Process) =
+        withContext(NonCancellable) {
+            runCatching { killInsidePod() }
+                .onFailure { logger.warn("Failed to kill the leftover command in pod {} after a lost exec channel", podName, it) }
+            runCatching { remote.destroyForcibly() }
+        }
+
+    /**
+     * The step error's text for a channel lost on a live pod: what closed the channel and the pod's last event.
+     * The exec URL carries the argv, so every env value long enough to be a credential is masked (ADR-0047
+     * rule 7), and the text is bounded to one line of [TERMINATION_MESSAGE_MAX_CHARS].
+     */
+    private fun channelLostMessage(
+        cause: Throwable?,
+        env: Map<String, String>,
+        snap: PodDiagnostics.Snapshot,
+    ): String {
+        val closed = cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: "closed without an exit status"
+        val text =
+            "exec channel to pod $podName was lost while the pod was running: $closed. " +
+                (snap.events.lastOrNull() ?: snap.message)
+        return SecretRedactor.from(env, env.keys, minNeedleLength = MIN_SCREENED_SECRET_LENGTH).redact(text).toOneLine()
     }
 
     private suspend fun failIfPodStopped(patient: Boolean) {
