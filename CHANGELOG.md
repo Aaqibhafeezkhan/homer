@@ -4,6 +4,8 @@
 
 ### Homer
 
+- **Added: `retries` and `infra_retries` on `homer_fanout`** — A LangGraph fan-out node re-dispatches a sub that failed, up to a bounded number of attempts and with a separate budget for infrastructure outcomes, instead of resuming with the same failed payload forever.
+- **Fixed: recovering a LangGraph thread whose node raised** — A thread whose latest checkpoint still holds a failed task is re-entered instead of being reported finished with an empty final state.
 - **Fixed: a failed dispatch's reported error reason** — A failure carrying no message now reports the same `Dispatch failed` fallback the stored row keeps, instead of an empty error.
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.
 - **Added: a load-time warning for a Claude step that limits tools only with `allowedTools`** — A step that skips permissions and sets neither `tools` nor `disallowedTools` restricts nothing; Homer warns at agent load and `agentdebug validate` reports it on the command's line.

@@ -215,6 +215,17 @@ def _select_interrupt(interrupts: list[Any]) -> Any:
     return min(interrupts, key=lambda i: i.id)
 
 
+def _has_failed_task(snapshot: Any) -> bool:
+    """Whether the latest checkpoint still holds a task that raised.
+
+    A segment whose node raised after resolving an interrupt checkpoints no
+    ``next`` task, only the failed one, so ``not snapshot.next`` alone reads as
+    "completed" and would end a failed run as FINISHED. Recover must re-enter
+    such a thread: ``invoke(None)`` re-runs the failed task.
+    """
+    return any(task.error is not None for task in snapshot.tasks)
+
+
 def _write_artifact(thread_id: str, module: str, segment: str) -> None:
     """Record this run's LangGraph identity for Homer, crash-safe.
 
@@ -296,7 +307,7 @@ def run(module: str, input_env: str = ENV_INPUT) -> int:
                     file=sys.stderr,
                 )
                 return 1
-            if not snapshot.next:
+            if not snapshot.next and not _has_failed_task(snapshot):
                 # Thread already completed — idempotent recover: emit final state.
                 print(json.dumps(snapshot.values, default=str))
                 return 0

@@ -48,7 +48,7 @@ same node, or it would dispatch twice on resume.
 | `HMR_LG_THREAD` | resume | LangGraph thread id to resume. |
 | `HMR_LG_RESUME` | resume | Resume value: an answer string (human gate) or a JSON `{status, processId, result}` (fan-out). For a **join** resume it is a JSON map `{interrupt_id: per_sub_payload}`, where each `per_sub_payload` is the same single-fanout JSON string. |
 | `HMR_LG_INTERRUPT` | resume (multi) | Stable id of the interrupt(s) this resume targets. One id → a single targeted interrupt; a **comma-joined** list of ids → a join resume (resolve the whole group at once). Present only when the parking segment chose a unit among several pending interrupts. Homer defines it too (`EnvConstants.LG_INTERRUPT`, reserved) and reads it from continuation params to attribute sub-agent runs to their node — do not rename it on one side only. |
-| `HMR_LG_RECOVER` | recover | "1" re-enters the thread from its latest checkpoint (graph input None). Ignored when `HMR_LG_RESUME` is present. |
+| `HMR_LG_RECOVER` | recover | "1" re-enters the thread from its latest checkpoint (graph input None). Ignored when `HMR_LG_RESUME` is present. Only a genuinely completed thread short-circuits to its stored final state; one whose latest checkpoint still holds a failed task is re-entered, so a segment that raised after resolving an interrupt is not reported finished. |
 
 A run is a **resume** when `HMR_LG_THREAD` is non-empty *and* `HMR_LG_RESUME`
 is present. It is a **recover** when `HMR_LG_THREAD` is non-empty, `HMR_LG_RECOVER`
@@ -152,7 +152,55 @@ distinct per-branch slot, not an accumulating channel.
 targets *distinct parallel* interrupts. Multiple `interrupt()` calls inside a
 single node still terminate, but LangGraph replays them by scratchpad index
 rather than by the single targeted id, so they are not individually addressed.
-Supported scope is distinct parallel interrupts.
+Supported scope is distinct parallel interrupts — plus the one supported
+same-node loop, `homer_fanout(..., retries=N)` below, which parks one fan-out at
+a time and relies on exactly that in-order replay.
+
+## Retrying failed fan-outs
+
+A failed sub-run reaches the graph as a **value**, not an exception:
+`homer_fanout` returns `{"status": "FAILED", "processId": …, "result": null}`, and
+Homer stores that value as the resume payload of the segment that received it.
+Resuming that segment replays the same payload, so the sub is never dispatched
+again. `homer_fanout(..., retries=N)` closes that loop in the graph, with no retry
+code of your own:
+
+```python
+result = homer_fanout("research_worker", params={"topic": topic}, retries=2)
+if result["status"] != "FINISHED":
+    ...  # the last attempt's failure, exactly as it arrives today
+```
+
+- **One re-dispatch per attempt.** While a `FAILED` payload comes back and
+  attempts remain, the node parks again with a fresh fan-out interrupt, so the
+  runtime dispatches that sub once more from the original call's args — never
+  from the failed result. Only the failed sub is re-dispatched: the other members
+  of a grouped fan-out keep their results, and a group that ends up with one
+  pending member resolves it through the sequential path. After the last attempt,
+  that attempt's payload reaches the graph unchanged.
+- **Two budgets, each capped at `MAX_FANOUT_RETRIES` (5).** `retries` counts
+  `FAILED` outcomes; `infra_retries` counts infrastructure ones — `UNKNOWN`, a
+  missing or unrecognized status, a runner or continuation lost, or an
+  undecodable resume payload. They are spent separately, so a broken runner
+  cannot eat the failure budget. A payload that is still undecodable once
+  `infra_retries` is spent raises, exactly as it does with no retries at all. A
+  budget that is not an `int`, or lies outside `0 … MAX_FANOUT_RETRIES`, raises
+  `ValueError` before anything is parked.
+- **The attempt count is the node's own replay.** LangGraph re-runs the node from
+  its start and replays the thread's recorded resume values in order, so the
+  counters rebuild on every segment from the checkpoint itself: no state key to
+  maintain, no side file, and no value a graph (or an agent) can write to raise
+  the count. Each attempt logs one line to stderr —
+  `homer_fanout: retrying <agent> attempt k/N after <status>` — carrying the
+  agent, the attempt and the status only, never params, results or a `resultRef`
+  token. Since a later segment replays the earlier attempts, it re-logs them.
+- **Idempotency is yours.** The node body re-runs from its start on every
+  attempt, so write each fan-out result to its own slot; an additive reducer over
+  it double-applies.
+- **`FINISHED` and `KILLED` end the fan-out** — a killed sub is a decision, not a
+  failure to re-dispatch. Retries cover fan-out subs only: an operator's answer at
+  a `homer_interrupt` gate is not a failure, and no server-side flag is involved
+  (Homer's resume path is unchanged).
 
 ## Module spec
 
