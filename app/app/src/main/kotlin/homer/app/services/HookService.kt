@@ -66,9 +66,9 @@ internal class HookService(
      * never inside it: a fire starts a run, and that run's own row write must not nest inside
      * the triggering transition's transaction (app/CLAUDE.md SQLite rule 3).
      *
-     * A lookup failure is logged and swallowed — the status transition has already committed
-     * and a hook must never be able to fail it; the rows stay PENDING, so the boot replay or
-     * the retry sweep picks them up. See ADR-0023.
+     * A lookup or a fire failure is logged and swallowed — the status transition has already
+     * committed and a hook must never be able to fail it; a row a failed fire left unclaimed
+     * stays PENDING, so the boot replay or the retry sweep picks it up. See ADR-0023.
      */
     suspend fun onRowsRecorded(ids: List<Int>) {
         if (ids.isEmpty()) return
@@ -82,7 +82,23 @@ internal class HookService(
                     logger.error("Hook lookup for row {} failed: {}", id, e.message, e)
                     null
                 }
-            if (hook != null) fires.fire(hook)
+            if (hook != null) fireSafely(hook)
+        }
+    }
+
+    /**
+     * Fires [hook] with every non-cancellation failure contained: the caller is a status write
+     * that has already committed (or a sweep that still has rows behind this one), so nothing a
+     * fire does may reach it. The row keeps the state the failed fire left it in and the retry
+     * sweep or the next boot's replay picks it up. See ADR-0023, ADR-0105.
+     */
+    private suspend fun fireSafely(hook: PendingHook) {
+        try {
+            fires.fire(hook)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logger.error("Hook {} fire failed: {}", hook.id, e.message, e)
         }
     }
 
@@ -106,7 +122,7 @@ internal class HookService(
                 logger.error("Hook retry lookup failed: {}", e.message, e)
                 return
             }
-        for (hook in due) fires.fire(hook)
+        for (hook in due) fireSafely(hook)
     }
 
     /** Fails hooks left DISPATCHING by a restart (avoids a duplicate fire). Boot only. */
@@ -128,7 +144,7 @@ internal class HookService(
         if (pending.isNotEmpty()) {
             logger.info("Re-firing {} hook(s) left pending by a previous run", pending.size)
         }
-        for (hook in pending) fires.fire(hook)
+        for (hook in pending) fireSafely(hook)
     }
 
     /** Deletes settled hooks older than `settledRetentionSec`. See ADR-0105. */

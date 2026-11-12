@@ -75,16 +75,22 @@ internal fun transitionRowTx(processId: Int): ResultRow? =
 // caller's transaction, like the write it trails. See ADR-0105.
 internal fun settledTransitionTx(
     processId: Int,
-    agentName: String,
-    owner: String?,
+    row: ResultRow,
     status: ProcessStatus,
     hookRecording: HookRecording?,
     nowSec: Long,
 ): ProcessRepository.TransitionResult =
     ProcessRepository.TransitionResult(
         updated = true,
-        agentName = agentName,
-        hookIds = hookRecording.record(processId, agentName, status, owner, nowSec),
+        agentName = row[Processes.agentName],
+        // A write that leaves the status where it was is not a second reach of it: a run's own
+        // start re-asserts CREATED right after the INSERT (ProcessExecutor's kill guard), and
+        // recording that again would fire the CREATED hooks twice for one run. See ADR-0105.
+        hookIds =
+            hookRecording
+                .takeIf { row[Processes.status] != status.name }
+                ?.record(processId, row[Processes.agentName], status, row[Processes.owner], nowSec)
+                .orEmpty(),
     )
 
 // Tags of one run, in tag order — guaranteed by this ORDER BY, served by the

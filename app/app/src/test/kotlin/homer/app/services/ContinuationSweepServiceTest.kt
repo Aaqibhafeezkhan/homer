@@ -13,7 +13,7 @@ class ContinuationSweepServiceTest {
     private val resultTokenService = mockk<ResultTokenService>(relaxed = true)
 
     @Test
-    fun `each tick expires, retries, prunes settled continuations, then reaps tokens`() =
+    fun `each tick expires, retries and prunes continuations, retries and prunes hooks, then reaps tokens`() =
         runTest {
             ContinuationSweepService(
                 continuationService,
@@ -29,6 +29,8 @@ class ContinuationSweepServiceTest {
                 continuationService.sweepExpired()
                 continuationService.sweepRetries()
                 continuationService.pruneSettled()
+                hookService.sweepRetries()
+                hookService.pruneSettled()
                 resultTokenService.sweepExpired()
             }
         }

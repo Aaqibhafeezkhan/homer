@@ -2,20 +2,24 @@ package homer.app.services
 
 import homer.app.executors.RunMessageExpiry
 import homer.app.fixtures.AgentFixtures
+import homer.app.fixtures.HookChainFixture
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.ProcessJobRegistry
 import homer.app.models.Agent
+import homer.app.models.AgentHook
 import homer.app.models.ProcessStatus
 import homer.app.models.Retain
 import homer.app.models.RunMessagesConfig
 import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DatabaseService
 import homer.app.services.persistence.InterruptedResult
+import homer.app.services.persistence.NewPendingHook
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.Processes
 import homer.app.services.persistence.QuestionsRepository
 import homer.app.services.persistence.RunMessagesRepository
+import homer.app.services.persistence.insertPendingHooksTx
 import homer.app.services.persistence.setPurgeAt
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -257,4 +261,110 @@ class StartupReconciliationTest {
                 continuationService.refirePendingTerminal()
             }
         }
+
+    @Test
+    fun `reconcile fails orphaned hook fires, fires the rows UNKNOWN recorded, then replays the pending`() =
+        runTest {
+            val hookService = TestFixtures.mockHookService()
+            val processRepository = mockk<ProcessRepository>(relaxed = true)
+            coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
+                InterruptedResult(listOf(7), listOf(11, 12))
+            StartupReconciliation(
+                processRepository,
+                mockk(relaxed = true),
+                mockk<RunMessageExpiry>(relaxed = true),
+                mockk(relaxed = true),
+                mockk(relaxed = true),
+                hookService,
+                mockk(relaxed = true),
+                TestFixtures.mockLogger(),
+            ) { 1L }.reconcile()
+
+            coVerifyOrder {
+                hookService.failOrphanedDispatching()
+                hookService.onRowsRecorded(listOf(11, 12))
+                hookService.refirePending()
+            }
+        }
+
+    @Test
+    fun `a run interrupted by the restart fires its UNKNOWN hook once, and a second boot fires nothing`() =
+        runTest {
+            val f = chain(ProcessStatus.UNKNOWN to "notifier")
+            val working = f.processManager.obtainProcessId("declarer", owner = "alice")
+            f.processManager.setProcessStatus(working, ProcessStatus.WORKING)
+            assertEquals(emptyList(), f.started)
+
+            reconciliationOver(f).reconcile()
+
+            assertEquals(ProcessStatus.UNKNOWN, f.processManager.getProcessStatus(working))
+            assertEquals(listOf("notifier"), f.started)
+
+            // The row is settled DISPATCHED, so the next boot replays nothing.
+            reconciliationOver(f).reconcile()
+
+            assertEquals(listOf("notifier"), f.started)
+        }
+
+    @Test
+    fun `a hook row left PENDING by the previous run fires once at boot, and a second boot fires nothing`() =
+        runTest {
+            // The server stopped between the status write's commit and its fire: the row is
+            // durable and PENDING, and the boot replay is the only thing that can fire it. The
+            // run never reached FINISHED here, so the row is seeded as that write left it.
+            val f = chain(ProcessStatus.FINISHED to "notifier")
+            val run = f.processManager.obtainProcessId("declarer", owner = "alice")
+            f.db.query {
+                insertPendingHooksTx(
+                    listOf(
+                        NewPendingHook(
+                            processId = run,
+                            declaringAgent = "declarer",
+                            triggeringStatus = ProcessStatus.FINISHED,
+                            targetAgentName = "notifier",
+                            owner = "alice",
+                            createdAt = HookChainFixture.NOW_SEC,
+                        ),
+                    ),
+                    maxPending = 10,
+                )
+            }
+
+            reconciliationOver(f).reconcile()
+            assertEquals(listOf("notifier"), f.started)
+
+            reconciliationOver(f).reconcile()
+            assertEquals(listOf("notifier"), f.started)
+        }
+
+    /** A declaring agent with [hooks], plus every agent they name, all loaded. */
+    private fun chain(vararg hooks: Pair<ProcessStatus, String>): HookChainFixture =
+        HookChainFixture(
+            agents =
+                buildMap {
+                    put(
+                        "declarer",
+                        AgentFixtures
+                            .simpleAgent(name = "declarer")
+                            .copy(hooks = hooks.map { AgentHook(it.first, it.second) }),
+                    )
+                    hooks.map { it.second }.distinct().forEach {
+                        put(it, AgentFixtures.simpleAgent(name = it))
+                    }
+                },
+        )
+
+    /** A reconciliation over [f]'s own database and hook service, so the boot steps run the real chain. */
+    private fun reconciliationOver(f: HookChainFixture) =
+        StartupReconciliation(
+            processRepository = f.repository,
+            questionsService = mockk(relaxed = true),
+            runMessagesService = mockk<RunMessageExpiry>(relaxed = true),
+            dispatchService = mockk(relaxed = true),
+            continuationService = mockk(relaxed = true),
+            hookService = f.hookService,
+            agentsService = f.agentsService,
+            logger = TestFixtures.mockLogger(),
+            clock = { HookChainFixture.NOW_SEC },
+        )
 }

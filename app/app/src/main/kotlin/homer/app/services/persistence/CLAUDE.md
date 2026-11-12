@@ -306,7 +306,9 @@ Editor-facing constraints the row's ADR does not state:
   status transition matched, INSERTed **inside that transition's own transaction** (the
   `CREATED` INSERT, `transitionStatus`, `killTransition`, `markInterruptedAsUnknown`) and
   fired after it commits, so a restart between the status and the fire loses nothing. A
-  guard-rejected CAS records none. The rows share `FiredRecords`' claim CAS, PENDING cap and
+  guard-rejected CAS records none, and neither does a write that leaves the status where it was
+  (a run's own start re-asserts `CREATED` as its kill guard): the status was reached once, so its
+  hooks fire once. The rows share `FiredRecords`' claim CAS, PENDING cap and
   settled prune with `dispatches` and `continuations`. The rows carry no chain depth: a fire
   derives it from the triggering run's own stored `HMR_HOOK_DEPTH` in `process_inputs` plus
   one, so the bound is durable without the transition reading or writing anything extra, and

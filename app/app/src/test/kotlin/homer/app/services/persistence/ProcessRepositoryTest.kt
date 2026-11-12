@@ -2536,6 +2536,35 @@ class ProcessRepositoryTest {
         }
 
     @Test
+    fun `a write that does not move the status records no hook`() =
+        runTest {
+            // ProcessExecutor re-asserts CREATED right after the INSERT (the kill guard): that is
+            // one reach of CREATED, so one hook row, not two. See ADR-0105.
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val created =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            val reasserted =
+                repo.transitionStatus(
+                    created.processId,
+                    ProcessStatus.CREATED,
+                    1000,
+                    setOf(ProcessStatus.CREATED),
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            assertTrue(reasserted.updated)
+            assertEquals(emptyList(), reasserted.hookIds)
+            assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
     fun `killTransition records the KILLED hooks and returns the killed agent`() =
         runTest {
             val db = PersistenceTestSupport.tempDatabase()

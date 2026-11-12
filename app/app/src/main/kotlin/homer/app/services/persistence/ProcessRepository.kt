@@ -199,7 +199,7 @@ class ProcessRepository(
                 return@query TransitionResult(updated = false, agentName = if (reportAgentOnReject) row[Processes.agentName] else null)
             }
             writeStatusTx(processId, row, newStatus, nowSec, clearCommand)
-            settledTransitionTx(processId, row[Processes.agentName], row[Processes.owner], newStatus, hookRecording, nowSec)
+            settledTransitionTx(processId, row, newStatus, hookRecording, nowSec)
         }
 
     /** Appends [newStatus] to history and writes status (`endedAt` when terminal) in the caller's transaction. */

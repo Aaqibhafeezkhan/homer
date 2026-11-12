@@ -25,7 +25,9 @@ internal const val MAX_HOOK_TAGS_CHARS = 1024
  * transition, the boot replay and the retry sweep fire it once, re-checks that the target
  * agent still exists and that the triggering run's owner may still start it, then starts the
  * target with the triggering run's `HMR_HOOK_*` metadata, and settles the row DISPATCHED,
- * deferred for a retry, or FAILED. Never throws into the caller. See ADR-0105, ADR-0023.
+ * deferred for a retry, or FAILED. The start's own failures are contained here; the row
+ * writes around it are not, so [HookService] isolates every call into this service from the
+ * status write that triggered it. See ADR-0105, ADR-0023.
  */
 internal class HookFireService(
     private val repository: HookRepository,

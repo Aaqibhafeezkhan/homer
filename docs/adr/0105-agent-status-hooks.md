@@ -126,11 +126,18 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   and `markInterruptedAsUnknown` — takes a hook lookup resolved from the current agent catalog
   at call time, and INSERTs one `pending_hooks` row per matching entry **inside its own
   transaction**, returning the row ids. A guard-rejected CAS (a kill that won the status race)
-  records nothing: the run never reached that status. The lookup reads no database, so it is
+  records nothing: the run never reached that status. Neither does a write that does not move
+  the status — a run's own start re-asserts `CREATED` right after the INSERT as its kill guard,
+  and that is the same one reach of `CREATED`, so recording it again would fire the `CREATED`
+  hooks twice for one run. The lookup reads no database, so it is
   safe inside the write lock, and resolving it per transition is what makes an agent reload
   take effect for runs already in flight.
 - **Delivery.** After the commit, the ids go to `HookService.onRowsRecorded`, which loads each
-  row and hands it to `HookFireService`. A fire claims the row (PENDING→DISPATCHING CAS), so a
+  row and hands it to `HookFireService`. Every call into that service is isolated per row: a
+  failure anywhere in a fire — the claim, the settle, the start — is caught and logged, never
+  propagated into the status write that triggered it or into the rows behind it in the sweep,
+  and the row it left unsettled is picked up by the retry sweep or the next boot (ADR-0023). A
+  fire claims the row (PENDING→DISPATCHING CAS), so a
   live transition, the boot replay and the retry sweep cannot double-fire one hook. It then
   re-checks the target agent and the owner's grant **at fire time**, because a durable row can
   be replayed long after it was written and either may have changed since; a target that is

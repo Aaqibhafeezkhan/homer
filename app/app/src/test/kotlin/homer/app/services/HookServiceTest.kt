@@ -105,6 +105,48 @@ class HookServiceTest {
         }
 
     @Test
+    fun `a fire that throws never reaches the status write and leaves the other rows to fire`() =
+        runTest {
+            // The row writes around a fire (the claim CAS, a settle) can throw; the transition
+            // this runs after has already committed, so nothing may reach it — and the rows
+            // behind the failing one must still be attempted. ADR-0023.
+            every { agents.agents } returns emptyMap()
+            coEvery { repo.get(any()) } answers { hook(firstArg()) }
+            coEvery { repo.claim(5) } throws IllegalStateException("database is gone")
+            coEvery { repo.claim(6) } returns true
+
+            service().onRowsRecorded(listOf(5, 6))
+
+            coVerify(exactly = 1) { repo.claim(6) }
+        }
+
+    @Test
+    fun `a fire that throws mid-sweep leaves the sweep's other rows to fire`() =
+        runTest {
+            every { agents.agents } returns emptyMap()
+            coEvery { repo.findDueRetries(1000L) } returns listOf(hook(5), hook(6))
+            coEvery { repo.claim(5) } throws IllegalStateException("database is gone")
+            coEvery { repo.claim(6) } returns true
+
+            service().sweepRetries()
+
+            coVerify(exactly = 1) { repo.claim(6) }
+        }
+
+    @Test
+    fun `a fire that throws during the boot replay leaves the replay's other rows to fire`() =
+        runTest {
+            every { agents.agents } returns emptyMap()
+            coEvery { repo.list(HookStatus.PENDING) } returns listOf(hook(5), hook(6))
+            coEvery { repo.claim(5) } throws IllegalStateException("database is gone")
+            coEvery { repo.claim(6) } returns true
+
+            service().refirePending()
+
+            coVerify(exactly = 1) { repo.claim(6) }
+        }
+
+    @Test
     fun `sweepRetries fires every due row`() =
         runTest {
             every { agents.agents } returns emptyMap()
