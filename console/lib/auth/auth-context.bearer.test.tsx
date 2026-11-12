@@ -39,8 +39,7 @@ vi.mock('@/lib/config/app-config', () => ({
   },
 }));
 
-import { useAuth } from './auth-context';
-import { renderWithProvider } from './auth-test-utils';
+import { LoginOutcomeProbe, renderWithProvider } from './auth-test-utils';
 import { resetInstancesStoreForTests } from '@/lib/instances/store';
 
 // Bearer tokens are namespaced per instance; the seeded default instance's key.
@@ -109,25 +108,14 @@ describe('AuthProvider (bearer mode)', () => {
     getHeartbeat.mockRejectedValue(new Error('401'));
 
     let loginResult: string | undefined;
-    function LoginResultProbe() {
-      const { status, login } = useAuth();
-      return (
-        <div>
-          <div data-testid="status">{status}</div>
-          <button
-            onClick={() =>
-              void login('alice', 'tok').then((r) => {
-                loginResult = r;
-              })
-            }
-          >
-            do-login
-          </button>
-        </div>
-      );
-    }
-
-    renderWithProvider(<LoginResultProbe />);
+    renderWithProvider(
+      <LoginOutcomeProbe
+        password="tok"
+        onResult={(r) => {
+          loginResult = r;
+        }}
+      />,
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId('status')).toHaveTextContent('anon'),
@@ -155,25 +143,14 @@ describe('AuthProvider (bearer mode)', () => {
     getHeartbeat.mockRejectedValue(failure());
 
     let loginResult: string | undefined;
-    function LoginResultProbe() {
-      const { status, login } = useAuth();
-      return (
-        <div>
-          <div data-testid="status">{status}</div>
-          <button
-            onClick={() =>
-              void login('alice', 'dummy-token').then((r) => {
-                loginResult = r;
-              })
-            }
-          >
-            do-login
-          </button>
-        </div>
-      );
-    }
-
-    renderWithProvider(<LoginResultProbe />);
+    renderWithProvider(
+      <LoginOutcomeProbe
+        password="dummy-token"
+        onResult={(r) => {
+          loginResult = r;
+        }}
+      />,
+    );
     await waitFor(() =>
       expect(screen.getByTestId('status')).toHaveTextContent('anon'),
     );

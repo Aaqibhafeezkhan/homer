@@ -59,6 +59,8 @@ vi.mock('@/lib/config/app-config', () => ({
 // pinned by re-importing the provider (and the instance store it reads) after
 // the config is set. This suite therefore cannot use auth-test-utils, whose
 // AuthProvider is bound at load time.
+let loginResult: string | undefined;
+
 async function renderWithCurrentConfig() {
   vi.resetModules();
   const [{ AuthProvider, useAuth }, { resetInstancesStoreForTests }] = await Promise.all([
@@ -73,7 +75,15 @@ async function renderWithCurrentConfig() {
       <div>
         <div data-testid="status">{status}</div>
         <div data-testid="username">{user?.username ?? ''}</div>
-        <button onClick={() => void doLogin('alice', 'pw')}>do-login</button>
+        <button
+          onClick={() =>
+            void doLogin('alice', 'pw').then((r) => {
+              loginResult = r;
+            })
+          }
+        >
+          do-login
+        </button>
         <button onClick={() => void doLogout()}>do-logout</button>
       </div>
     );
@@ -95,6 +105,7 @@ beforeEach(() => {
   logout.mockReset();
   getHeartbeat.mockReset();
   localStorage.clear();
+  loginResult = undefined;
 });
 
 describe.each([
@@ -129,6 +140,25 @@ describe.each([
 
     expect(screen.getByTestId('status')).toHaveTextContent('authed');
     expect(logout).not.toHaveBeenCalled();
+  });
+
+  it('resolves login to ok, stays authed, and probes nothing', async () => {
+    // The short-circuit must hold on the login path too: 'ok' is what the
+    // login form treats as success, so any other value would push a return
+    // path with no session behind it — and the pinned authed state must not
+    // waver or reach the backend to get there.
+    await renderWithCurrentConfig();
+    expect(screen.getByTestId('status')).toHaveTextContent('authed');
+
+    await act(async () => {
+      screen.getByText('do-login').click();
+    });
+
+    expect(loginResult).toBe('ok');
+    expect(screen.getByTestId('status')).toHaveTextContent('authed');
+    expect(getAuthMe).not.toHaveBeenCalled();
+    expect(login).not.toHaveBeenCalled();
+    expect(getHeartbeat).not.toHaveBeenCalled();
   });
 });
 

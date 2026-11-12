@@ -38,7 +38,7 @@ vi.mock('@/lib/config/app-config', () => ({
 
 import { useAuth } from './auth-context';
 import { notifyAuthExpired } from './auth-expired-bus';
-import { StatusProbe, renderWithProvider } from './auth-test-utils';
+import { LoginOutcomeProbe, StatusProbe, renderWithProvider } from './auth-test-utils';
 import { resetInstancesStoreForTests } from '@/lib/instances/store';
 
 describe('AuthProvider (cookie mode)', () => {
@@ -53,27 +53,16 @@ describe('AuthProvider (cookie mode)', () => {
   // A button whose login() outcome the test reads back, for the classification cases.
   function loginCapture() {
     let outcome: string | undefined;
-    function OutcomeProbe() {
-      const { status, login: doLogin } = useAuth();
-      return (
-        <div>
-          <div data-testid="status">{status}</div>
-          <button
-            onClick={() =>
-              void doLogin('alice', 'pw').then((r) => {
-                outcome = r;
-              })
-            }
-          >
-            do-login-capture
-          </button>
-        </div>
-      );
-    }
-    renderWithProvider(<OutcomeProbe />);
+    renderWithProvider(
+      <LoginOutcomeProbe
+        onResult={(r) => {
+          outcome = r;
+        }}
+      />,
+    );
     return async () => {
       await act(async () => {
-        screen.getByText('do-login-capture').click();
+        screen.getByText('do-login').click();
       });
       return outcome;
     };
@@ -281,18 +270,15 @@ describe('AuthProvider (cookie mode)', () => {
     login.mockRejectedValue(new HomerApiError('Too Many Requests', 429));
 
     let outcome: string | undefined;
-    function OutcomeProbe() {
-      const { login: doLogin } = useAuth();
-      return (
-        <button onClick={() => void doLogin('alice', 'pw').then((r) => { outcome = r; })}>
-          do-login-capture
-        </button>
-      );
-    }
-
-    renderWithProvider(<OutcomeProbe />);
+    renderWithProvider(
+      <LoginOutcomeProbe
+        onResult={(r) => {
+          outcome = r;
+        }}
+      />,
+    );
     await act(async () => {
-      screen.getByText('do-login-capture').click();
+      screen.getByText('do-login').click();
     });
     await waitFor(() => expect(outcome).toBe('rate-limited'));
   });

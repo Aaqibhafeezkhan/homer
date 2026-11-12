@@ -432,7 +432,7 @@ describe('LoginPage', () => {
 
   it('ignores an unrecognized ?mode value when bearer is disabled', () => {
     // Only the two known values are ever honoured, and bearer needs the
-    // operator's opt-in on top (2026-07-12 review H3).
+    // operator's opt-in on top (see ADR-0036).
     searchParamsMock.mockReturnValue(new URLSearchParams('mode=Bearer'));
     renderPage();
     expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
