@@ -342,8 +342,9 @@ button at all: such a schedule is refused when the agent is loaded, so
 the agent has no cron to list. A fire refused by the cost cap or the
 cooldown starts no run and is only logged, never surfaced — the dialog
 closes with no error. A lock collision (`SKIP_CURRENT`), a `REJECT`
-parallel-run cap or a full `maxQueuedRuns` queue does start a run, which
-ends `FAILED`; the row's Last run cell links to it. A confirmation dialog guards the
+parallel-run cap or a full wait queue (runs waiting for a slot or for a
+lock) does start a run, which ends `FAILED`; the row's Last run cell
+links to it. A confirmation dialog guards the
 click, since the run starts with no parameter dialog. Once the run is
 the agent's most recent, the row's **Last run** cell links to its
 process id.

@@ -20,9 +20,6 @@ fun interface LockWaitGate {
     fun enter(): LockWaitTicket
 }
 
-/** The gate for a lock taken without the slot limiter, as [LockManager.waitForLockOrThrow] takes it. */
-val UnboundedLockWait: LockWaitGate = LockWaitGate { LockWaitTicket {} }
-
 interface ParallelRunsManager {
     suspend fun acquireSlot(
         agentName: String,

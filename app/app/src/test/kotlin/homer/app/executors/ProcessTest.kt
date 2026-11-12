@@ -4,6 +4,7 @@ import homer.app.config.ExecutionConfig
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
+import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
@@ -56,6 +57,20 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Takes a lock the way `Process.admit` does — acquire, then kill the holder the collision
+ * displaced — under a no-op gate: these tests wire the real lock manager's waiters through
+ * `Process`, and the agent's lock-wait bound is `ParallelRunsManager`'s to bound.
+ */
+private suspend fun LockManager.acquireThenDisplace(
+    lockName: String,
+    onKeyCollisionStrategy: OnKeyCollisionStrategy,
+    processID: Int,
+) {
+    val gate = LockWaitGate { LockWaitTicket {} }
+    killDisplaced(acquireLock(lockName, onKeyCollisionStrategy, processID, gate), processID)
+}
 
 /**
  * Unit tests for Process class
@@ -1144,7 +1159,7 @@ class ProcessTest {
             // Run 2 gave the lock back, so run 1's own release frees the key for the next run.
             release.complete(Unit)
             run1.join()
-            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+            lockManager.acquireThenDisplace("shared", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
         }
 
     @Test
@@ -1154,7 +1169,7 @@ class ProcessTest {
             val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
             val agent = testAgent.copy(lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.SKIP_CURRENT))
             stubSharedLockKey()
-            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+            lockManager.acquireThenDisplace("shared", OnKeyCollisionStrategy.WAIT, 1)
 
             val ex =
                 assertFailsWith<AnotherProcessStillActive> {
@@ -1173,7 +1188,7 @@ class ProcessTest {
             val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
             val agent = testAgent.copy(lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.WAIT))
             stubSharedLockKey()
-            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+            lockManager.acquireThenDisplace("shared", OnKeyCollisionStrategy.WAIT, 1)
 
             val run2 = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
             runCurrent()
@@ -1196,7 +1211,7 @@ class ProcessTest {
                     lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.WAIT),
                 )
             stubSharedLockKey()
-            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+            lockManager.acquireThenDisplace("shared", OnKeyCollisionStrategy.WAIT, 1)
 
             val first = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
             runCurrent()
@@ -1209,6 +1224,40 @@ class ProcessTest {
             lockManager.releaseLock("shared", 1)
             first.join()
             coVerify { mockProcessManager.compareAndSetStatus(2, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
+        }
+
+    @Test
+    fun `a surplus lock waiter is refused by the shared maxQueuedRuns cap`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 1,
+                    maxQueuedRuns = 2,
+                    onMaxParallelRuns = OnMaxParallelRunsStrategy.WAIT,
+                    lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.WAIT),
+                )
+            stubSharedLockKey()
+            lockManager.acquireThenDisplace("shared", OnKeyCollisionStrategy.WAIT, 1)
+
+            val first = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
+            runCurrent()
+            val second = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(3, mockSpan) }
+            runCurrent()
+
+            // The wait queue is full (maxQueuedRuns: 2, shared with the slot queue): the surplus
+            // is refused with the queue's own exception, not the fallback lock-waiter one.
+            assertFailsWith<MaxQueuedRunsExceededException> {
+                processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(4, mockSpan)
+            }
+
+            // The released lock passes to the first waiter and the queue still drains.
+            lockManager.releaseLock("shared", 1)
+            first.join()
+            second.join()
+            coVerify { mockProcessManager.compareAndSetStatus(2, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
+            coVerify { mockProcessManager.compareAndSetStatus(3, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
         }
 
     // ========== Default workspace wiring Tests ==========

@@ -167,7 +167,7 @@ marked `Constraint:`.
   `LockGrant` carrying the run a `KILL_OLD_RUN_CURRENT` collision displaced, and
   `killDisplaced` kills it once the new run holds a slot. A `WAIT` run takes its lock-wait
   ticket (`ParallelRunsManager.enterLockWait`) inside the mutex, before it enqueues, and
-  frees it however the wait ends. `waitForLockOrThrow` stays acquire-plus-immediate-kill.
+  frees it however the wait ends — the two calls are the interface's whole admission path.
   - **Constraint:** `releaseLock` warns on unknown-lock and non-holder
     releases — don't silence that warning, it masks real bugs.
 - **`ParallelRunsManager`** — per-agent slot limiter (`maxParallelRuns`,

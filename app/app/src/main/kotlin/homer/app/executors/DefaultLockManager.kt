@@ -95,14 +95,6 @@ class DefaultLockManager(
         processManager.killProcess(victim, "The new process $processID takes precedence")
     }
 
-    override suspend fun waitForLockOrThrow(
-        lockName: String,
-        onKeyCollisionStrategy: OnKeyCollisionStrategy,
-        processID: Int,
-    ) {
-        killDisplaced(acquireLock(lockName, onKeyCollisionStrategy, processID), processID)
-    }
-
     override suspend fun releaseLock(
         lockName: String,
         processID: Int,

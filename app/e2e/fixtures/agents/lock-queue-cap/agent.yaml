@@ -1,0 +1,18 @@
+name: lock-queue-cap
+description: Lock-wait bound of zero; a run colliding on a held subject lock is refused
+maxParallelRuns: 2
+onMaxParallelRuns: WAIT
+maxQueuedRuns: 0
+inputs:
+  - paramName: subject
+    envName: SUBJECT
+    src: query
+    type: string
+    required: true
+lockStrategy:
+  key: "e2e-lock-queue-cap-{{SUBJECT}}"
+  onCollision: WAIT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 3

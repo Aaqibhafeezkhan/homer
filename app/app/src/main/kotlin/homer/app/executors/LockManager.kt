@@ -22,19 +22,12 @@ interface LockManager {
         lockName: String,
         onKeyCollisionStrategy: OnKeyCollisionStrategy,
         processID: Int,
-        waitGate: LockWaitGate = UnboundedLockWait,
+        waitGate: LockWaitGate,
     ): LockGrant
 
     /** Kills the holder [grant] displaced, if any, naming [processID] as the run taking precedence. */
     suspend fun killDisplaced(
         grant: LockGrant,
-        processID: Int,
-    )
-
-    /** [acquireLock] followed by the immediate kill, for callers with no slot admission of their own. */
-    suspend fun waitForLockOrThrow(
-        lockName: String,
-        onKeyCollisionStrategy: OnKeyCollisionStrategy,
         processID: Int,
     )
 

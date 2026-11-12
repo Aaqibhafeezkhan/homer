@@ -48,6 +48,8 @@ class AgentCatalogTest : E2eTestBase() {
                     "lock-kill",
                     "cooldown-lock-skip",
                     "parallel-reject",
+                    "lock-subject",
+                    "lock-queue-cap",
                     "inputs",
                     "schema-guard",
                     "artifact-writer",

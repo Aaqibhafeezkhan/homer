@@ -83,6 +83,16 @@ How runs waiting for a lock are bounded:
   already bounded by the run's own TTLs and the lock's own strategies; a timeout would fail
   runs that were about to be admitted.
 
+How the shared cap's surplus refusal is named:
+
+- **A. One typed cause for the shared cap** (chosen) — when `maxQueuedRuns` is the bound, a
+  surplus waiter is refused with `MaxQueuedRunsExceededException` whether it was waiting for a
+  slot or for a lock: the operator declared one cap, so the refusal vocabulary has one entry
+  for it (ADR-0098).
+- **B. A distinct typed cause for the lock-wait arm of the shared cap** — an operator reading a
+  `FAILED` run could tell which queue overflowed, at the price of a second reason sentence and
+  a second exception to map for a cap that was declared once.
+
 ## Decision Outcome
 
 Chosen: **A** (lock first), **A** (kill after the slot), **A** (the derived bound).
@@ -98,8 +108,9 @@ Chosen: **A** (lock first), **A** (kill after the slot), **A** (the derived boun
   displaced run's id in the `LockGrant` it hands back — and `killDisplaced` performs the kill.
   `Process` calls `killDisplaced` only after `acquireSlot` has returned, so a refused slot
   attempt leaves the victim running and the lock is given back by `tearDown`. A lock that was
-  free grants no victim, and `killDisplaced` is then a no-op. `waitForLockOrThrow` stays as
-  acquire-plus-immediate-kill for its existing callers.
+  free grants no victim, and `killDisplaced` is then a no-op. The interface carries no other
+  admission entry point: the old `waitForLockOrThrow` (acquire plus the immediate kill) is
+  gone, since its only remaining callers were tests.
 - **`WAIT` holds no slot while it waits.** The run parks in `LockManager`'s per-key queue,
   which blocks only the runs that want that same subject. Its own bound is taken through the
   new `ParallelRunsManager.enterLockWait`: a non-suspending ticket taken **inside** the lock
@@ -146,6 +157,10 @@ Chosen: **A** (lock first), **A** (kill after the slot), **A** (the derived boun
   that never collide.
 - **A time bound** (C) is the wrong shape: the wait it would cut short is the one an operator
   asked for with `WAIT`.
+- **A distinct typed cause for the lock-wait arm** (B under the shared cap) doubles the refusal
+  vocabulary for one operator-declared cap: the two arms still share one counter, so tuning
+  starts from the combined number either way, and the surplus is refused as `FAILED` under the
+  same sentence whichever queue pushed it over.
 
 ### Confirmation
 
