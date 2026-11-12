@@ -20,7 +20,7 @@ interface ShellExecutor {
      *   to [stdOut]; null writes every byte. See ADR-0063.
      * @param interruptGrace When set, a command stopped by its own [timeout] is first
      *   interrupted (SIGINT) and given up to this long to exit before the SIGKILL path
-     *   runs. Null = today's immediate SIGKILL. See ADR-0105.
+     *   runs. Null = today's immediate SIGKILL. See ADR-0106.
      * @return Command result with exit code
      */
     suspend fun cmd(

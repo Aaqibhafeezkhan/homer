@@ -24,7 +24,7 @@ internal class PodProcessControl(
      * The pod-side file this command's group leader records its pid (its pgid) in, or null when
      * [interruptGrace] is null or the pod has no `setsid` — either way today's launch is used
      * unchanged. The file lives under the workspace dir from the exec env (`HMR_WORK_DIR`) when
-     * present, else a `.homer` path relative to the exec's cwd. See ADR-0105.
+     * present, else a `.homer` path relative to the exec's cwd. See ADR-0106.
      */
     fun pgidFileFor(
         env: Map<String, String>,
@@ -51,7 +51,7 @@ internal class PodProcessControl(
      * pgid, its process group is SIGINTed and — after the grace — SIGKILLed; any failure of that
      * path (no file, a rejected value, an exec error) falls back to today's pod-wide
      * `kill -KILL -1`. A cancellation or cap trip keeps the immediate pod-wide kill: only the
-     * command's own timeout means it ran long enough for a graceful stop to make sense. See ADR-0105.
+     * command's own timeout means it ran long enough for a graceful stop to make sense. See ADR-0106.
      */
     fun killPod(
         interruptGrace: Duration?,
@@ -116,7 +116,7 @@ internal class PodProcessControl(
      * integer greater than 1 ([PGID_GUARD] — the file is agent-writable, so its content is
      * attacker-controlled, §12 rule 2), SIGINT the group, wait out the grace, SIGKILL it. Any
      * refused value or failed kill exits non-zero, so [killPod] falls back to the pod-wide kill
-     * rather than trusting a signal that may not have reached a group. See ADR-0105.
+     * rather than trusting a signal that may not have reached a group. See ADR-0106.
      */
     private fun interruptScript(grace: Duration): String =
         "p=\$(cat \"\$1\" 2>/dev/null); ${KubernetesShellExecutor.PGID_GUARD}; " +

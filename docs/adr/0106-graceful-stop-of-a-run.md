@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0020, ADR-0041, ADR-0047, ADR-0066, ADR-0089, ADR-0100
 ---
 
-# ADR-0105: A run can be stopped gracefully — opt-in, SIGINT before SIGKILL, and `FAILED` plus a `stop` record
+# ADR-0106: A run can be stopped gracefully — opt-in, SIGINT before SIGKILL, and `FAILED` plus a `stop` record
 
 ## Context and Problem Statement
 

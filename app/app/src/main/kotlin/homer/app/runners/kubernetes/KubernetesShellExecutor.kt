@@ -39,7 +39,7 @@ import kotlin.time.Duration
  * channel per call. Preserves today's argv-list semantics: Cmd runs
  * unshelled via `env KEY=VAL ... argv`; only Script requests a shell,
  * and that is already encoded in the argv it passes us. With an
- * `interruptGrace` (ADR-0105) the command is additionally wrapped in
+ * `interruptGrace` (ADR-0106) the command is additionally wrapped in
  * `setsid`, so its process group can be interrupted before the kill.
  */
 class KubernetesShellExecutor(

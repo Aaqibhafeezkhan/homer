@@ -1360,7 +1360,7 @@ class ProcessRepositoryTest {
             assertNull(execs[1].stoppedBy)
             assertEquals(true, execs[1].onStop)
 
-            // Simulate a pre-release row: raw JSON without either field (ADR-0105).
+            // Simulate a pre-release row: raw JSON without either field (ADR-0106).
             db.query {
                 Processes.update({ Processes.id eq id }) {
                     it[executions] = """[{"label":"l","start":1,"end":2,"resultCode":0,"stdOut":null,"stdErr":null,"errMsg":null}]"""

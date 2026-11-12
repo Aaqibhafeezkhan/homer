@@ -93,7 +93,7 @@ class SshShellExecutor(
                                 // process group; kill that whole group over a control channel FIRST so a
                                 // backgrounded/detached child (which close(true) alone would leave to
                                 // orphan on the target host) dies too. See ADR-0041. A timeout with a
-                                // configured grace interrupts the group before the kill (ADR-0105); an
+                                // configured grace interrupts the group before the kill (ADR-0106); an
                                 // output-cap kill or a caller cancellation keeps the immediate SIGKILL.
                                 reapOnStop(pgidFile, kill, interruptGrace)
                                 runCatching { channel.close(true) }
@@ -134,7 +134,7 @@ class SshShellExecutor(
 
     /**
      * Interrupts then kills the remote group the command self-reported, when it has one and reaping
-     * is on: only a timeout stop carries [interruptGrace] (ADR-0105); a cap kill or a caller
+     * is on: only a timeout stop carries [interruptGrace] (ADR-0106); a cap kill or a caller
      * cancellation keeps the immediate SIGKILL.
      */
     private fun reapOnStop(

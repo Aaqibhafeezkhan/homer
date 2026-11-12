@@ -220,7 +220,7 @@ class ExternalRunnerSession(
     /**
      * Asks the instance to stop the running `cmd` [opId] gracefully (SIGINT, then SIGKILL after
      * the grace the op carried). Best-effort: the instance answers it on a separate poll, so a
-     * lost one leaves the command to its own timeout and the normal kill path. See ADR-0105.
+     * lost one leaves the command to its own timeout and the normal kill path. See ADR-0106.
      */
     fun interruptCmd(opId: String) = mailbox.post(RunnerOp.Interrupt(opId))
 

@@ -77,7 +77,7 @@ data class ProcessInfoResponse(
     val failureReason: String? = null,
     // Why and where this run was stopped gracefully — the cause, the step it interrupted and
     // how its `onStop:` steps ended. Null for a run no graceful stop ended; the run's status
-    // is still `FAILED`. See ADR-0105.
+    // is still `FAILED`. See ADR-0106.
     val stop: RunStop? = null,
 )
 
@@ -210,7 +210,7 @@ data class ExecutionInfoResponse(
     val llmAccounting: LlmAccounting? = null,
     val kind: String = "",
     // Why a graceful stop interrupted this step (`step_timeout`, `run_deadline`); null when
-    // it was not interrupted. See ADR-0105.
+    // it was not interrupted. See ADR-0106.
     val stoppedBy: String? = null,
     // Whether this entry is one of the agent's `onStop:` steps.
     val onStop: Boolean = false,

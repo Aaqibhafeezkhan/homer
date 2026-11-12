@@ -334,7 +334,7 @@ private fun migrateToV30(
 
 /**
  * v30→v31 adds what a graceful stop did to the run: its cause, the interrupted step and the
- * stop steps' outcome, as one JSON blob (ADR-0105). No backfill: a run that ended before this
+ * stop steps' outcome, as one JSON blob (ADR-0106). No backfill: a run that ended before this
  * version was never stopped gracefully, and a guessed cause is worse than none.
  */
 private fun migrateToV31(

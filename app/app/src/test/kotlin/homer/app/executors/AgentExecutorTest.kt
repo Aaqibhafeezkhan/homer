@@ -3234,7 +3234,7 @@ class AgentExecutorTest {
             coVerify(exactly = 0) { mockProcessManager.setRunnerState(any(), any()) }
         }
 
-    // ========== Graceful stop (ADR-0105) ==========
+    // ========== Graceful stop (ADR-0106) ==========
 
     /** An executor over this class's mocked workspace, session and step records. */
     private fun stopExecutor(agent: Agent) =

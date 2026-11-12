@@ -28,7 +28,7 @@ export type StopReason = 'step_timeout' | 'run_deadline';
 export type StopStepsOutcome = 'finished' | 'failed' | 'none';
 
 // What a graceful stop did to a run. Present only on a run a graceful stop ended; the
-// run's status is FAILED. See ADR-0105.
+// run's status is FAILED. See ADR-0106.
 export interface RunStop {
   reason: StopReason;
   // Index and label of the step the stop interrupted.
@@ -52,7 +52,7 @@ export interface ProcessExecution {
   llmAccounting?: LlmAccounting | null;
   // Command tag (`cmd`, `script`, `claude`, `codex`, `opencode`, `agent`, `langgraph`, `runnerCmd`); "" for older rows.
   kind?: string;
-  // Why a graceful stop interrupted this step; null when it did not. See ADR-0105.
+  // Why a graceful stop interrupted this step; null when it did not. See ADR-0106.
   stoppedBy?: StopReason | null;
   // Whether this entry is one of the agent's `onStop:` steps.
   onStop?: boolean;
@@ -148,7 +148,7 @@ export interface ProcessInfo {
   // see it. See ADR-0058.
   failureReason?: string | null;
   // Why and where this run was stopped gracefully; null for a run no graceful stop
-  // ended. See ADR-0105.
+  // ended. See ADR-0106.
   stop?: RunStop | null;
 }
 

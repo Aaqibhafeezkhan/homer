@@ -152,7 +152,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
-| 31 | `processes.stop` (what a graceful stop did) | [0105](../../../../../../../../../docs/adr/0105-graceful-stop-of-a-run.md) |
+| 31 | `processes.stop` (what a graceful stop did) | [0106](../../../../../../../../../docs/adr/0106-graceful-stop-of-a-run.md) |
 
 ### Schema constraints
 
@@ -310,7 +310,7 @@ run, so NULL reads as "not stopped gracefully", never as "stopped for an unknown
 reason". The run's status stays `FAILED`; the column is what distinguishes a
 graceful stop from an ordinary failure, and no backfill is possible. It is read
 only where `ProcessInfo` is served, through the same `getOrNull` guard the other
-blob columns use. See ADR-0105.
+blob columns use. See ADR-0106.
 
 Schema: `id`/`status`/`agent_name` are real columns (filtered/sorted on);
 `history`/`executions`/`runner_state` and question `options`

@@ -49,10 +49,10 @@ data class ExecutionContext(
             envProvider = { workspace.config.env },
         ),
     // Caps this step's own `timeout` (the run's soft deadline, and every stop step's hard
-    // deadline minus its safety margin). Null = the command's own `timeout`. See ADR-0105.
+    // deadline minus its safety margin). Null = the command's own `timeout`. See ADR-0106.
     val timeoutOverrideSeconds: Long? = null,
     // When set, a command stopped by its timeout is SIGINTed and given this long to exit
-    // before the SIGKILL path runs. Null = today's immediate SIGKILL. See ADR-0105.
+    // before the SIGKILL path runs. Null = today's immediate SIGKILL. See ADR-0106.
     val interruptGrace: Duration? = null,
     // Whether this row is one of the agent's `onStop:` steps.
     val onStop: Boolean = false,
@@ -63,7 +63,7 @@ data class ExecutionContext(
 /**
  * What an executor learned about a step that the agent loop needs afterwards — the CLI session
  * id an LLM step exposed, and the accounting of an attempt the graceful stop interrupted, so the
- * step still carries its cost. Per step, written by the executor that ran it. See ADR-0105.
+ * step still carries its cost. Per step, written by the executor that ran it. See ADR-0106.
  */
 class StepFacts {
     var cliSessionId: String? = null

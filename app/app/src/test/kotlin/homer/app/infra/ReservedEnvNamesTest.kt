@@ -120,7 +120,7 @@ class ReservedEnvNamesTest {
     fun `the stop-context names cannot be declared as inputs or as payload params`() {
         // The stop context is Homer's own, appended to the stop steps' env: an input or a
         // dispatch/continuation param bound to one of these would let a caller decide what the
-        // stop steps believe about the stop. See ADR-0105.
+        // stop steps believe about the stop. See ADR-0106.
         listOf(
             EnvConstants.STOP_REASON,
             EnvConstants.STOP_STEP_INDEX,

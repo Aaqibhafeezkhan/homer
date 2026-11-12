@@ -178,7 +178,7 @@ internal suspend fun completeCommand(
             outputTruncated = (outcome as? CommandOutcome.Failure)?.outputTruncated ?: false,
             // A step interrupted by a graceful stop throws, so it never returns a result to
             // read the accounting off; its executor leaves the charge it made here instead,
-            // so the step still carries the cost the CLI really spent. See ADR-0105.
+            // so the step still carries the cost the CLI really spent. See ADR-0106.
             llmAccounting = executedResult?.llmAccounting ?: run.executionContext.facts.interruptedAccounting,
             kind = command.kind,
             stoppedBy = stoppedBy?.wire,

@@ -18,7 +18,7 @@ val StopReason.wire: String
  * Every value here is attacker-influenced: the label is author- and template-written, the
  * session id is parsed out of the CLI's own stdout. So the map is built once, validated and
  * bounded, and handed to the stop steps as plain env values — never interpolated into a shell
- * string (ADR-0047 rule 2, ADR-0105).
+ * string (ADR-0047 rule 2, ADR-0106).
  */
 object StopContext {
     /** The cap on the exported step label; past it the label is cut, never the whole variable. */

@@ -64,7 +64,7 @@ class SessionWorker(
 
     // The grace each running cmd was started with, so an Interrupt — which carries only the cmd's
     // id — can stop it gracefully. Absent = the cmd carried no grace; a null-grace interrupt then
-    // ends in the normal kill path, which is all a best-effort interrupt promises (ADR-0105).
+    // ends in the normal kill path, which is all a best-effort interrupt promises (ADR-0106).
     private val interruptGraces = ConcurrentHashMap<String, Duration>()
 
     // opIds cancelled before `runCmd` had a chance to register the process in

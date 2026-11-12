@@ -154,7 +154,7 @@ suspend fun ProcessRepository.getRunnerState(processId: Int): RunnerState? =
 
 /**
  * Records what a graceful stop did to the run: its cause, the step it interrupted and the stop
- * steps' outcome (ADR-0105). Written once, by the run's own stop phase, on a row that is still
+ * steps' outcome (ADR-0106). Written once, by the run's own stop phase, on a row that is still
  * there — a stop racing an eviction records nothing, which is fine because the record is gone too.
  */
 suspend fun ProcessRepository.setStop(

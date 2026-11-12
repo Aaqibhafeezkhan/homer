@@ -16,13 +16,13 @@ private const val DEADLINE_MARGIN_SECONDS = 10L
 /** The floor on a step's effective timeout: the shells count whole seconds, and zero would never wait at all. */
 private const val MIN_STEP_SECONDS = 1L
 
-/** The cap on one `onStop:` step when the backend imposes no run deadline of its own. See ADR-0105. */
+/** The cap on one `onStop:` step when the backend imposes no run deadline of its own. See ADR-0106. */
 private const val MAX_STOP_STEP_SECONDS = 300L
 
 /**
  * One step's plan: where its artifacts go, the timeout and interrupt grace it runs under, the run
  * deadline that applies to it, the facts its executor reports back, and — for an `onStop:` step —
- * the stop context it runs with. See ADR-0105.
+ * the stop context it runs with. See ADR-0106.
  */
 internal class StepPlan(
     val artifactIndex: Int,
@@ -82,7 +82,7 @@ internal fun stopStepPlan(
  * [command]'s own timeout, cut at the deadlines that apply to it and floored at [MIN_STEP_SECONDS]:
  * a regular step at the soft deadline — the deadline is what stops it — and at the hard one less
  * [DEADLINE_MARGIN_SECONDS]; a stop step only at the hard one, and at [MAX_STOP_STEP_SECONDS] when
- * the backend imposes no deadline at all. See ADR-0105.
+ * the backend imposes no deadline at all. See ADR-0106.
  */
 private fun cappedTimeout(
     command: Command,
@@ -103,7 +103,7 @@ private fun cappedTimeout(
 /**
  * The interrupt grace [command] runs under: none for a plain step of a run that never stops
  * gracefully — today's immediate SIGKILL — and [Command.interruptGraceSeconds] once the step opted
- * in with `onTimeout: stop` or the run has a soft deadline of its own. See ADR-0105.
+ * in with `onTimeout: stop` or the run has a soft deadline of its own. See ADR-0106.
  */
 private fun interruptGraceFor(
     command: Command,
@@ -118,7 +118,7 @@ internal fun stopDeadlinePassed(deadline: RunDeadline?): Boolean =
 /**
  * Why [cause] ends the run's steps as a graceful stop, or null when it is an ordinary failure. The
  * soft deadline stops the run whether or not the step opted in — it is what cut the step's own
- * timeout short; otherwise only a step declaring `onTimeout: stop` does. See ADR-0105.
+ * timeout short; otherwise only a step declaring `onTimeout: stop` does. See ADR-0106.
  */
 internal fun stopReasonFor(
     cause: Throwable,

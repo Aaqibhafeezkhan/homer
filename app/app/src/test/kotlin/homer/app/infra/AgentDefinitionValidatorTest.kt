@@ -71,7 +71,7 @@ class AgentDefinitionValidatorTest {
         verify { logger.warn(match<String> { it.contains("allowedTools") }, "a", "claude") }
     }
 
-    // ========== Graceful-stop policy (ADR-0105) ==========
+    // ========== Graceful-stop policy (ADR-0106) ==========
 
     /** A one-step agent whose step is `onTimeout: stop`, plus the given `onStop:` steps. */
     private fun stoppableAgent(
