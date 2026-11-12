@@ -2741,7 +2741,6 @@ cron:
   expression: "* * * * *"
 cooldown:
   afterFailure: 15m     # a healthy watcher still runs every minute
-  key: "mr-{{MR}}"      # …and each merge request is backed off on its own
 commands:
   - !<script>
     content: check-for-mentions.sh
@@ -2754,7 +2753,7 @@ commands:
 {
   "name": "mr-watcher",
   "cron": { "expression": "* * * * *" },
-  "cooldown": { "afterFailure": "15m", "key": "mr-{{MR}}" },
+  "cooldown": { "afterFailure": "15m" },
   "commands": [
     { "type": "script", "content": "check-for-mentions.sh" }
   ]
@@ -2796,8 +2795,34 @@ inputs:
     required: true
 cooldown:
   minInterval: 10m
-  key: "mr-{{MR}}"
+  key: "mr-{{MR}}"      # …of this merge request, not of the agent
+commands:
+  - !<script>
+    content: review-mr.sh
 ```
+
+<details>
+<summary>JSON format</summary>
+
+```json
+{
+  "name": "mr-reviewer",
+  "inputs": [
+    { "paramName": "mr", "envName": "MR", "required": true }
+  ],
+  "cooldown": { "minInterval": "10m", "key": "mr-{{MR}}" },
+  "commands": [
+    { "type": "script", "content": "review-mr.sh" }
+  ]
+}
+```
+</details>
+
+A placeholder resolves from those two sources and nothing else. A cron fire
+carries no caller inputs, so a keyed template on a scheduled agent has to
+resolve from `env` — or from an input's declared default — and a template over
+an input only works for the start paths that pass it (an HTTP run, a dispatch,
+a continuation, a `!<agent>` hop).
 
 A run for `mr=41` and a run for `mr=42` never see each other's windows. The key
 is rendered once, when the run starts, and stored with the run — so a later edit
