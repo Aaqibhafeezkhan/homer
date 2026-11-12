@@ -332,12 +332,28 @@ private fun migrateToV30(
     }
 }
 
-/** Schema steps v30→v31 of [DatabaseService.migrate]; each step is guarded on the version it upgrades from. */
+/**
+ * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need, plus the
+ * indexes of the `pending_hooks` table — one step for both, because the two features landed
+ * together and a database stamped `user_version = 31` skips the whole span. Each missing table
+ * is created by `SchemaUtils.create` above.
+ *
+ * No backfill for `cooldown_key`: a run that ended before this version was counted per agent,
+ * and a guessed subject is worse than none — null simply means "no key", so a keyed cooldown
+ * ignores the row and a keyless one still counts it. Names match `Tables.kt`; `SchemaUtils.create`
+ * only indexes a table it creates, so the migration creates both by hand.
+ */
 private fun migrateToV31(
     st: Statement,
     current: Int,
 ) {
     if (current in 1 until 31) {
+        addColumnIfMissing(st, "processes", "cooldown_key", "TEXT")
+        st.execute("CREATE INDEX IF NOT EXISTS processes_agent_cooldown_key ON processes (agent_name, cooldown_key)")
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS processes_agent_cooldown_status_ended " +
+                "ON processes (agent_name, cooldown_key, status, ended_at)",
+        )
         // v30→v31 adds the pending_hooks table (ADR-0107). SchemaUtils.create above already
         // created it on a database that did not have it; the indexes are created here by hand
         // because SchemaUtils.create only indexes a table it creates. Names and definitions

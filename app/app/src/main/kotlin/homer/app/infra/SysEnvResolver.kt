@@ -16,6 +16,18 @@ class SysEnvResolver(
     fun resolveMapValues(map: Map<String, String>): Map<String, String> = map.mapValues { (_, v) -> resolve(v) }
 
     /**
+     * The map keys whose *raw* value referenced `@SYSENV:` — the keys half of
+     * [secretNamesFor], without the referenced host variable names. Call on the *raw*
+     * map, before [resolveMapValues] — afterwards the placeholders are gone.
+     *
+     * Checks that decide whether a template may *name* one of these entries read this
+     * half, not the composite: a name that is only a referenced host variable can also be
+     * a plain env entry or an input envName, and a placeholder naming that renders a
+     * non-host value.
+     */
+    fun secretEnvKeysFor(map: Map<String, String>): Set<String> = map.filterValues { pattern.containsMatchIn(it) }.keys
+
+    /**
      * Names to redact for [map], for callers marking host-sourced values secret.
      * Call this on the *raw* map, before [resolveMapValues] — afterwards the
      * placeholders are gone.
@@ -31,6 +43,5 @@ class SysEnvResolver(
      * resolve them.
      */
     fun secretNamesFor(map: Map<String, String>): Set<String> =
-        map.filterValues { pattern.containsMatchIn(it) }.keys +
-            map.values.flatMap { value -> pattern.findAll(value).map { it.groupValues[1] } }
+        secretEnvKeysFor(map) + map.values.flatMap { value -> pattern.findAll(value).map { it.groupValues[1] } }
 }

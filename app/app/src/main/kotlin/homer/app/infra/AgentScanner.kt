@@ -102,6 +102,10 @@ internal class AgentScanner(
             // directory), injected last so it wins over any author-set value.
             // The HMR_ prefix is reserved, so caller inputs cannot override it.
             val sysEnvBackedEnvNames = sysEnvResolver.secretNamesFor(agent.env)
+            // The keys half alone feeds the cooldown.key load check (Agent's init): the
+            // composite's host-variable half would refuse a placeholder that renders a
+            // non-host value. See `SysEnvResolver.secretEnvKeysFor`.
+            val sysEnvBackedEnvKeys = sysEnvResolver.secretEnvKeysFor(agent.env)
             val resolvedEnv =
                 sysEnvResolver.resolveMapValues(agent.env) +
                     (EnvConstants.AGENT_DIR to dir.toAbsolutePath().normalize().toString())
@@ -117,6 +121,7 @@ internal class AgentScanner(
                     cron = agent.cron.takeUnless { cronDisabled },
                     writable = Files.isWritable(dir),
                     sysEnvBackedEnvNames = sysEnvBackedEnvNames,
+                    sysEnvBackedEnvKeys = sysEnvBackedEnvKeys,
                 )
             sourceDirs[validatedName] = rel
             logger.info("Loaded agent: {} from {}", validatedName, rel)

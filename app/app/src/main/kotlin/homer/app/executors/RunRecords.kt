@@ -18,6 +18,7 @@ interface RunRecords : GuardedStatusWrite {
         inputParams: Map<String, String> = emptyMap(),
         owner: String? = null,
         cooldown: Cooldown? = null,
+        cooldownKey: String? = null,
         secretInputKeys: Set<String>? = null,
         parentProcessId: Int? = null,
         rootProcessId: Int? = null,

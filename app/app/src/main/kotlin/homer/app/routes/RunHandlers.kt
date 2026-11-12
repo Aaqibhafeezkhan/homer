@@ -22,6 +22,7 @@ import homer.app.services.CostMeter
 import homer.app.services.MaintenanceModeService
 import homer.app.services.ProcessManager
 import homer.app.services.gated
+import homer.app.services.renderCooldownKey
 import homer.app.services.visibleOriginRootProcessId
 import homer.app.services.visibleRootProcessId
 import homer.app.services.withoutFailureBackoff
@@ -159,24 +160,21 @@ internal suspend fun handleAgentDebug(
     }
     respondStartedUnderRootSpan(call, telemetryService, agent, "agent_debug_request", maintenanceGate) { context, span ->
         // Manual recovery is not gated by `afterFailure`; `minInterval` still holds. See ADR-0051.
-        val debugAgent = agent.copy(env = agent.env + req.env).withoutFailureBackoff()
-        val queryParamsBuilder = ParametersBuilder()
-        req.queryParams.forEach { (k, v) -> queryParamsBuilder.append(k, v) }
-        val resolvedQueryParams =
-            agentInputResolver.resolveDebug(
-                queryParams = queryParamsBuilder.build(),
-                bodyJson = req.body,
-                headers = req.headers,
-                agent = debugAgent,
-                enforceRequired = false,
-            )
-        // Before `execute`, so the command steps and generations the run emits inherit both
-        // attributes as they start. Debug params come from this request, not from storage, so
-        // there is no historical value that could have been secret under an older definition.
+        val mergedEnvAgent = agent.copy(env = agent.env + req.env)
+        val debugAgent = mergedEnvAgent.withoutFailureBackoff()
+        val resolvedQueryParams = resolveDebugParams(agentInputResolver, debugAgent, req)
+        // Stamped before `execute`, so the run's own steps and generations inherit both.
         span.stampLangfuseTrace(
             agent,
             listOf("debug") + langfuseTraceTags(agent, resolvedQueryParams, agent.secretEnvNames),
         )
+        // Rendered from the merged-env agent with its cooldown still present — the same
+        // reduction retry and resume render from. `withoutFailureBackoff` above drops a keyed
+        // `afterFailure`-only cooldown entirely, which would render null here where the other
+        // paths store the subject, and a window read after the operator later adds
+        // `minInterval` would count this row for no subject. Fails the request before any row
+        // exists. See ADR-0106.
+        val cooldownKey = mergedEnvAgent.renderCooldownKey(resolvedQueryParams)
         val result =
             processExecutor.execute(
                 processFactory.create(
@@ -185,6 +183,7 @@ internal suspend fun handleAgentDebug(
                     context,
                     commandIndices = listOf(req.commandIndex),
                     owner = call.principalName(),
+                    cooldownKey = cooldownKey,
                 ),
                 context,
             )
@@ -198,6 +197,28 @@ internal suspend fun handleAgentDebug(
                 .put("request.source", "debug")
                 .build()
     }
+}
+
+/**
+ * The debug request's inputs, resolved through the same extraction and validation a live run
+ * uses — from this request's `queryParams`, `body` and `headers` rather than from storage, so
+ * there is no historical value that could have been secret under an older definition. See
+ * ADR-0052.
+ */
+private fun resolveDebugParams(
+    agentInputResolver: AgentInputResolver,
+    agent: Agent,
+    req: DebugAgentRequest,
+): Map<String, String> {
+    val builder = ParametersBuilder()
+    req.queryParams.forEach { (k, v) -> builder.append(k, v) }
+    return agentInputResolver.resolveDebug(
+        queryParams = builder.build(),
+        bodyJson = req.body,
+        headers = req.headers,
+        agent = agent,
+        enforceRequired = false,
+    )
 }
 
 internal suspend fun handleRetry(
@@ -235,6 +256,11 @@ internal suspend fun handleRetry(
         // run's flags, and an input flipped to `secret: false` since would otherwise be tagged in
         // the clear. Stamped before `execute` so the run's own spans inherit it. See ADR-0052.
         span.stampLangfuseTrace(agent, listOf("retry") + langfuseTraceTags(agent, retryParams, retrySecretEnvNames))
+        // A replay carries the source run's subject, so a keyed `minInterval` still paces it
+        // against that subject's other starts — and the stored-secret snapshot, so a key
+        // naming an input that was secret when the source run stored its inputs is refused
+        // instead of rendering the value into the row. See ADR-0106.
+        val retryCooldownKey = agent.renderCooldownKey(retryParams, retrySecretEnvNames)
 
         val result =
             processExecutor.execute(
@@ -248,6 +274,7 @@ internal suspend fun handleRetry(
                     // A replay is still part of the flow that caused the source run.
                     parentProcessId = sourceProcess.parentProcessId,
                     rootProcessId = retryRootProcessId,
+                    cooldownKey = retryCooldownKey,
                 ),
                 context,
             )
@@ -305,6 +332,10 @@ internal suspend fun handleResume(
         // Same as retry: the stored inputs carry the source run's secrecy, and the stamp has to
         // land before `execute` for the run's own spans to inherit it.
         span.stampLangfuseTrace(agent, listOf("resume") + langfuseTraceTags(agent, resumeParams, resumeSecretEnvNames))
+        // Same as retry: the resumed segment keeps the source run's subject, and the
+        // stored-secret snapshot refuses a key naming an input that was secret when the
+        // source run stored its inputs. See ADR-0106.
+        val resumeCooldownKey = agent.renderCooldownKey(resumeParams, resumeSecretEnvNames)
 
         val result =
             processExecutor.execute(
@@ -317,6 +348,7 @@ internal suspend fun handleResume(
                     extraSecretInputKeys = resumeSecretEnvNames,
                     parentProcessId = sourceProcess.parentProcessId,
                     rootProcessId = resumeRootProcessId,
+                    cooldownKey = resumeCooldownKey,
                 ),
                 context,
             )

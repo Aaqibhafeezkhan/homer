@@ -1512,7 +1512,8 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <div class="kicker">07 — Concurrency</div>
         <h2>Locks, slots and recursion guards</h2>
         <p>Two independent limiters — a named lock that serializes runs sharing a key, and a per-agent slot count that
-          bounds parallelism — plus a cooldown that bounds how often an agent may start at all.</p>
+          bounds parallelism — plus a cooldown that bounds how often an agent may start at all, per agent or per
+          subject it names with <code>cooldown.key</code>.</p>
       </div>
 
       <figure class="diagram">
@@ -1664,10 +1665,14 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
             the dispatch <code>FAILED</code> — the operator's answer is consumed, with no retry. The window is measured from
             the process table, so it survives a restart. Every start path is covered. Retry, resume and debug still honour
             <code>minInterval</code>, but ignore <code>afterFailure</code> — unblocking a failed run is the way out of that
-            backoff, not the automated repeat it exists to stop.</p>
+            backoff, not the automated repeat it exists to stop. <code>key</code> counts both windows per rendered
+            subject instead of per agent, so a reviewer started once per merge request is not held back by another
+            request's run; a key that cannot be rendered — an unresolved placeholder, an empty or over-long value —
+            fails the start with <code>400</code> rather than sharing one window across every subject.</p>
           <pre><code>cooldown:
   minInterval: 5m       # since the previous run started
-  afterFailure: 15m     # since the previous FAILED run ended</code></pre>
+  afterFailure: 15m     # since the previous FAILED run ended
+  key: "mr-{{MR}}"      # …of this merge request, not of the agent</code></pre>
         </article>
 
         <article class="f">

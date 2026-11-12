@@ -10,7 +10,6 @@ import homer.app.models.ProcessStatus
 import homer.app.services.CooldownDecision
 import org.jetbrains.exposed.v1.core.LongColumnType
 import org.jetbrains.exposed.v1.core.ResultRow
-import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -103,6 +102,7 @@ class ProcessRepository(
         maxProcesses: Int,
         owner: String? = null,
         cooldown: Cooldown? = null,
+        cooldownKey: String? = null,
         secretInputKeys: Set<String>? = null,
         parentProcessId: Int? = null,
         rootProcessId: Int? = null,
@@ -111,7 +111,7 @@ class ProcessRepository(
         nowSec: Long = System.currentTimeMillis() / 1000,
     ): ObtainResult =
         db.query {
-            cooldown?.let { enforceCooldownTx(agentName, it, nowSec) }
+            cooldown?.let { enforceCooldownTx(agentName, it, nowSec, cooldownKey) }
             val evicted = evictForCapacityTx(maxProcesses)
             val newId =
                 Processes.insert {
@@ -126,6 +126,11 @@ class ProcessRepository(
                     // reads, and `history` does not get its first entry until the launched
                     // coroutine writes one. See ADR-0051.
                     it[createdAt] = nowSec
+                    // Rendered by the caller before this transaction opened, and written here
+                    // so it is valid the instant the row is — the cooldown reads below and
+                    // every later read of this row see the same subject. Never re-derived:
+                    // the agent definition (and `HMR_PROCESS_ID`) may differ by then. ADR-0106.
+                    it[Processes.cooldownKey] = cooldownKey
                     // Captured now, not looked up later: the agent's `secret` flags can
                     // change while this record is retained. Null when the caller did not
                     // capture a snapshot, which reads back as "ask the current definition"
@@ -156,20 +161,23 @@ class ProcessRepository(
     /**
      * Throws the [CooldownDecision] refusal when [cooldown] bars a start of [agentName] at
      * [nowSec], evaluated against rows read in the caller's transaction. Each window's lookup
-     * runs only when that window is configured. See ADR-0051.
+     * runs only when that window is configured. [cooldownKey] scopes both lookups to the
+     * subject of the start being inserted; null counts the agent's rows whatever key they
+     * carry. See ADR-0051, ADR-0106.
      */
     private fun enforceCooldownTx(
         agentName: String,
         cooldown: Cooldown,
         nowSec: Long,
+        cooldownKey: String?,
     ) {
         CooldownDecision
             .evaluate(
                 agentName = agentName,
                 cooldown = cooldown,
                 nowSec = nowSec,
-                latestRunStartedAt = cooldown.minIntervalSeconds?.let { latestRunStartedAtTx(agentName) },
-                latestFailureEndedAt = cooldown.afterFailureSeconds?.let { latestFailureEndedAtTx(agentName) },
+                latestRunStartedAt = cooldown.minIntervalSeconds?.let { latestRunStartedAtTx(agentName, cooldownKey) },
+                latestFailureEndedAt = cooldown.afterFailureSeconds?.let { latestFailureEndedAtTx(agentName, cooldownKey) },
             )?.let { throw it }
     }
 
@@ -266,15 +274,27 @@ class ProcessRepository(
      * return null and skip the whole `minInterval` check. `created_at` is written in
      * the INSERT's own transaction and has no such window. See ADR-0051.
      * Null for rows migrated in from before v13, which predate the cooldown feature.
+     *
+     * [cooldownKey] selects the subject the read is scoped to; null counts every row of
+     * the agent. See ADR-0106.
      */
-    suspend fun latestRunStartedAt(agentName: String): Long? = db.read { latestRunStartedAtTx(agentName) }
+    suspend fun latestRunStartedAt(
+        agentName: String,
+        cooldownKey: String? = null,
+    ): Long? = db.read { latestRunStartedAtTx(agentName, cooldownKey) }
 
     /**
      * Terminal time (last history entry) of the most recent FAILED run of [agentName] that
      * actually ran, or null. A run refused before it started carries a `failure_reason` and
      * is not a failure of the agent's work, so it does not arm the window. See ADR-0098.
+     *
+     * [cooldownKey] narrows the read to one subject, exactly as [latestRunStartedAt] does.
+     * See ADR-0106.
      */
-    suspend fun latestFailureEndedAt(agentName: String): Long? = db.read { latestFailureEndedAtTx(agentName) }
+    suspend fun latestFailureEndedAt(
+        agentName: String,
+        cooldownKey: String? = null,
+    ): Long? = db.read { latestFailureEndedAtTx(agentName, cooldownKey) }
 
     /**
      * Nulls a row's `ended_at`, reproducing a row migrated in from before v14.
@@ -283,43 +303,6 @@ class ProcessRepository(
     internal suspend fun clearEndedAtForTest(processId: Int) {
         db.query { Processes.update({ Processes.id eq processId }) { it[endedAt] = null } }
     }
-
-    // Transaction-local forms of the two reads above, so the authoritative cooldown
-    // check in obtainProcessId can run inside the INSERT's transaction. `db.query`
-    // opens its own, and nesting one inside another would deadlock the writer.
-    private fun latestRunStartedAtTx(agentName: String): Long? =
-        Processes
-            .select(Processes.createdAt)
-            .where { Processes.agentName eq agentName }
-            .orderBy(Processes.id, SortOrder.DESC)
-            .limit(1)
-            .singleOrNull()
-            ?.get(Processes.createdAt)
-
-    // MAX over ended_at, not the newest row's history: `id` is INSERT order, and
-    // same-agent runs overlap by default (the default lockStrategy.key is per
-    // process and maxParallelRuns is 10), so an older run can fail AFTER a newer
-    // one. Ordering by id then picked the newer row's EARLIER failure and let a
-    // start through inside the afterFailure window. Rows from before v14 have a
-    // null ended_at and are skipped by MAX. See ADR-0051.
-    //
-    // Only a run that failed while executing a command arms the window: a run refused
-    // before it started never ran and carries a `failure_reason`, written only in that
-    // case (ADR-0098 — PreStartFailureReason holds the five causes).
-    private fun latestFailureEndedAtTx(agentName: String): Long? =
-        Processes
-            .select(Processes.endedAt)
-            .where {
-                (Processes.agentName eq agentName) and
-                    (Processes.status eq ProcessStatus.FAILED.name) and
-                    Processes.failureReason.isNull()
-            }
-            // Ordered by ended_at, not id. SQLite sorts NULLs last under DESC, so a
-            // pre-v14 row without a recorded terminal time never masks a real one.
-            .orderBy(Processes.endedAt, SortOrder.DESC)
-            .limit(1)
-            .singleOrNull()
-            ?.get(Processes.endedAt)
 
     suspend fun getHistory(processId: Int): List<Pair<Long, ProcessStatus>> =
         db.read {
