@@ -1,0 +1,17 @@
+name: lock-subject
+description: Waits per subject while two subjects run in parallel (WAIT, two slots)
+maxParallelRuns: 2
+onMaxParallelRuns: WAIT
+inputs:
+  - paramName: subject
+    envName: SUBJECT
+    src: query
+    type: string
+    required: true
+lockStrategy:
+  key: "e2e-lock-subject-{{SUBJECT}}"
+  onCollision: WAIT
+commands:
+  - !<script>
+    label: hold-lock
+    content: sleep 5

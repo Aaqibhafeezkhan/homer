@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Fixed: a lost Kubernetes exec channel names itself** — A step whose exec channel into a still-running pod closes without a status now fails with the cause in its error, the run's `runner.termination` names the loss, and the leftover command is killed before the step fails. See [ADR-0103](docs/adr/0103-a-lost-exec-channel-kills-and-fails-without-reattach.md).
 - **Fixed: a failed dispatch's reported error reason** — A failure carrying no message now reports the same `Dispatch failed` fallback the stored row keeps, instead of an empty error.
 - **Fixed: a run refused before it started no longer arms `cooldown.afterFailure`** — A `SKIP_CURRENT` lock skip, a `REJECT` or a full queue ends `FAILED` without running, so it no longer backs the agent off for the whole window.
 - **Added: a load-time warning for a Claude step that limits tools only with `allowedTools`** — A step that skips permissions and sets neither `tools` nor `disallowedTools` restricts nothing; Homer warns at agent load and `agentdebug validate` reports it on the command's line.
@@ -14,6 +15,8 @@
 - **Fixed: a `!<claude>` result flagged `is_error` fails the step** — Runs that reported `subtype: "success"` while the CLI flagged an error (a refusal, an unavailable deferred tool, an API error) now fail instead of finishing green, so their `retry` and `escalate` tiers run and their `afterFailure` cooldowns arm.
 - **Fixed: shutdown drain waits for runs started during the drain** — A shutdown now also finishes the `!<agent>` hops, dispatches and continuations its in-flight runs start, and runs already waiting for a runner claim, instead of killing them and leaving them `UNKNOWN`; a new top-level start during the drain is refused with `503`. See [ADR-0102](docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
 - **Added: `cooldown.key` on the agent definition** — Counts an agent's `minInterval` and `afterFailure` windows per rendered subject, so a reviewer paced per merge request is no longer held back by another request's run; a key that cannot be rendered fails the start with `400`. See [ADR-0105](docs/adr/0105-cooldown-key-scopes-windows-per-subject.md).
+- **Changed: a run waiting for a lock no longer holds a `maxParallelRuns` slot** — A run takes its lock before its slot, so one busy subject no longer starves the agent's other subjects; `SKIP_CURRENT` now refuses before any slot wait, `KILL_OLD_RUN_CURRENT` kills the old run only once the new one holds a slot, and runs waiting for a lock are bounded by `maxQueuedRuns`, else by `maxParallelRuns`. See [ADR-0104](docs/adr/0104-lock-before-slot-admission-order.md).
+- **BREAKING: a `lockStrategy.key` placeholder with no value fails the run before it starts** — It used to stay literal, so every run of that agent rendered the same key and unrelated runs were skipped, queued behind or killed by each other; the run now ends `FAILED` with a `failureReason` naming the placeholder, taking no lock, slot or workspace. See [ADR-0098](docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md).
 
 ## [1.41.0] - 2026-11-06
 

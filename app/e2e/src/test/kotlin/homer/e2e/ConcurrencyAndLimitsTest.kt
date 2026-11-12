@@ -19,6 +19,7 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ConcurrencyAndLimitsTest : E2eTestBase() {
@@ -109,6 +110,93 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             )
 
             assertEquals("FINISHED", Awaits.awaitTerminal(firstId).status)
+        }
+
+    @Test
+    fun `a run on a free subject starts while another subject's run waits for the lock`() =
+        runBlocking {
+            val holderId = HomerApi.startRun("lock-subject", query = mapOf("subject" to "1"))
+            Awaits.awaitStatus(holderId, setOf("WORKING"))
+
+            // The second run of subject 1 waits for its lock. It must do so without
+            // holding a parallel-run slot, or subject 2's run could not start behind it.
+            val waiterId = HomerApi.startRun("lock-subject", query = mapOf("subject" to "1"))
+            val freeId = HomerApi.startRun("lock-subject", query = mapOf("subject" to "2"))
+
+            Awaits.awaitStatus(freeId, setOf("WORKING"))
+            assertEquals("WORKING", HomerApi.status(holderId).status, "the holder must still be running")
+            assertEquals(
+                "CREATED",
+                HomerApi.status(waiterId).status,
+                "the waiter must be parked on its subject's lock, not holding a slot of its own",
+            )
+
+            // The waiter is not lost: the holder's lock passes to it and it runs to the end.
+            val holder = Awaits.awaitTerminal(holderId)
+            assertEquals("FINISHED", holder.status)
+            val waiter = Awaits.awaitTerminal(waiterId, timeoutMs = 40_000)
+            assertEquals("FINISHED", waiter.status)
+            assertEquals("FINISHED", Awaits.awaitTerminal(freeId).status)
+
+            // And the waiter's command ran only once the holder's had ended, proving the
+            // per-subject lock held the whole time.
+            assertTrue(
+                waiter.executions[0].start >= holder.executions[0].end,
+                "waiter started at ${waiter.executions[0].start}, holder ended at ${holder.executions[0].end}",
+            )
+        }
+
+    @Test
+    fun `a surplus lock waiter is refused with a stored reason while the start still answers 200`() =
+        runBlocking {
+            val holderId = HomerApi.startRun("lock-queue-cap", query = mapOf("subject" to "1"))
+            Awaits.awaitStatus(holderId, setOf("WORKING"))
+
+            // `maxQueuedRuns: 0` — the shared wait queue has no places, so the run colliding
+            // on the held subject lock is refused at the gate. The start itself was 200
+            // (startRun asserts it); the run ends FAILED without executing a command.
+            // A zero bound keeps this deterministic: the surplus waiter is the first waiter,
+            // so the test needs no queue saturation race.
+            val refusedId = HomerApi.startRun("lock-queue-cap", query = mapOf("subject" to "1"))
+
+            val refused = Awaits.awaitTerminal(refusedId)
+            assertEquals("FAILED", refused.status)
+            assertTrue(refused.executions.isEmpty(), "refused run must not execute commands: ${refused.executions}")
+            val reason =
+                Awaits.awaitNotNull("the refused run's failure reason") {
+                    Awaits.awaitTerminal(refusedId).failureReason
+                }
+            assertTrue(reason.contains("wait queue full"), "refused run must say why: $reason")
+            assertTrue(reason.contains("lock-queue-cap"), "the reason must name the agent: $reason")
+            assertFalse(reason.contains("e2e-lock-queue-cap"), "the reason must not name the lock key: $reason")
+
+            // The refusal disturbed nothing: the holder finishes, and a later run of the
+            // same subject takes the freed lock and runs.
+            assertEquals("FINISHED", Awaits.awaitTerminal(holderId).status)
+            val afterId = HomerApi.startRun("lock-queue-cap", query = mapOf("subject" to "1"))
+            assertEquals("FINISHED", Awaits.awaitTerminal(afterId, timeoutMs = 40_000).status)
+        }
+
+    @Test
+    fun `an unresolved lock key placeholder fails the run before it starts`() =
+        runBlocking {
+            // The placeholder denial happens inside the async execution, like the other
+            // pre-start causes: HTTP was 200, the run ends FAILED without ever running
+            // its command and without touching the lock.
+            val id = HomerApi.startRun("lock-unresolved-placeholder")
+
+            val terminal = Awaits.awaitTerminal(id)
+            assertEquals("FAILED", terminal.status)
+            assertTrue(terminal.executions.isEmpty(), "denied run must not execute commands: ${terminal.executions}")
+            // Awaited, not read off the terminal poll: the reason write trails the FAILED status.
+            val reason =
+                Awaits.awaitNotNull("the denied run's failure reason") {
+                    Awaits.awaitTerminal(id).failureReason
+                }
+            assertTrue(
+                reason.contains("{{UNRESOLVED_VAR}}"),
+                "denied run must name the placeholder: $reason",
+            )
         }
 
     @Test

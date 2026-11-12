@@ -21,6 +21,7 @@ import homer.app.exceptions.InvocationDepthExceededException
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.exceptions.MalformedLlmOutputException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.PayloadSchemaValidationException
@@ -43,6 +44,7 @@ import homer.app.exceptions.TooManyRunnerInstancesException
 import homer.app.exceptions.TooManyRunnerPollsException
 import homer.app.exceptions.TooManyRunnerTransfersException
 import homer.app.exceptions.TooManySessionPollsException
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.exceptions.ValidationException
 import homer.app.exceptions.WorkspaceException
 import homer.app.models.RunnerFilter
@@ -119,6 +121,7 @@ class StatusPagesTest {
                 AnotherProcessStillActive(1) to HttpStatusCode.Conflict,
                 MaxParallelRunsExceededException("a", 1) to HttpStatusCode.TooManyRequests,
                 MaxQueuedRunsExceededException("a", 1) to HttpStatusCode.TooManyRequests,
+                MaxLockWaitersExceededException("a", 1) to HttpStatusCode.TooManyRequests,
                 ProcessManagerAtCapacityException(1) to HttpStatusCode.ServiceUnavailable,
                 InvocationDepthExceededException("a", 1, listOf("a")) to HttpStatusCode.UnprocessableEntity,
                 InvocationCycleDetectedException("a", listOf("a")) to HttpStatusCode.UnprocessableEntity,
@@ -156,6 +159,7 @@ class StatusPagesTest {
                 CommandExecutionException("bad", 1, "cmd") to HttpStatusCode.InternalServerError,
                 AgentException("bad", "a") to HttpStatusCode.InternalServerError,
                 WorkspaceException("bad") to HttpStatusCode.InternalServerError,
+                UnresolvedLockKeyPlaceholderException(listOf("TICKET_ID")) to HttpStatusCode.InternalServerError,
             )
         for ((exception, expected) in cases) {
             assertEquals(expected, homerExceptionStatus(exception), exception::class.simpleName)

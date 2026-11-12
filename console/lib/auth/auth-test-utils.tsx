@@ -21,6 +21,28 @@ export function StatusProbe() {
   );
 }
 
+/**
+ * A probe whose login() outcome the test reads back, for the login-outcome
+ * classification cases shared by the cookie- and bearer-mode suites.
+ */
+export function LoginOutcomeProbe({
+  onResult,
+  password = 'pw',
+}: {
+  onResult: (outcome: string) => void;
+  password?: string;
+}) {
+  const { status, login } = useAuth();
+  return (
+    <div>
+      <div data-testid="status">{status}</div>
+      <button onClick={() => void login('alice', password).then(onResult)}>
+        do-login
+      </button>
+    </div>
+  );
+}
+
 export function renderWithProvider(probe: React.ReactElement = <StatusProbe />) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },

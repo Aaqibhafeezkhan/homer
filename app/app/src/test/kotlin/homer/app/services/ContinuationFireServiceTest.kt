@@ -1,6 +1,7 @@
 package homer.app.services
 
 import homer.app.exceptions.CostCapExceededException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.ServerDrainingException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
@@ -254,6 +255,22 @@ class ContinuationFireServiceTest {
             fires.fire(pending(), ProcessStatus.FINISHED)
 
             coVerify { repo.releaseForRetry(5, any(), 1, 1060L) }
+        }
+
+    @Test
+    fun `a target whose lock-wait queue is full is released for a retry`() =
+        runTest {
+            // A full lock-wait queue reflects the target's momentary state, like the slot queue: the
+            // resume must not be consumed by it. See ADR-0104, ADR-0023.
+            every { agents.agents } returns mapOf("h" to agent)
+            coEvery { repo.claim(5) } returns true
+            coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws
+                MaxLockWaitersExceededException("h", 5)
+
+            fires.fire(pending(), ProcessStatus.FINISHED)
+
+            coVerify { repo.releaseForRetry(5, any(), 1, 1060L) }
+            coVerify(exactly = 0) { repo.markFailed(5, any(), any()) }
         }
 
     @Test

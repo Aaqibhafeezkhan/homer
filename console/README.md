@@ -204,7 +204,8 @@ active tag appears as a removable badge in the filter row, cleared
 individually or via **Clear**.
 
 A run that **failed before it started** — a claim timeout, a `SKIP_CURRENT` lock
-collision, a parallel-run cap or a full queue — shows a short reason beside its
+collision, a parallel-run cap, a full queue or an unresolved `lockStrategy.key`
+placeholder — shows a short reason beside its
 failed status icon, so the list says why without opening the run. The row truncates
 it; hover for the full sentence, which the run's own page shows in full.
 
@@ -228,7 +229,8 @@ it; hover for the full sentence, which the run's own page shows in full.
 - **Failed before it started**: A run that ended `FAILED` without running a
   single command shows a **Failed before it started** box under the header with
   the stored reason — a claim timeout, a `SKIP_CURRENT` lock collision, a
-  parallel-run cap or a full queue. The box appears only when the server stored
+  parallel-run cap, a full queue or an unresolved `lockStrategy.key` placeholder.
+  The box appears only when the server stored
   a reason, so a run that failed while it was running shows none
 - The run's cost carries a source label — `proxy` when priced by the
   server's `llmPrice.sessionSpend` endpoint, `CLI estimate` when it is
@@ -342,8 +344,9 @@ button at all: such a schedule is refused when the agent is loaded, so
 the agent has no cron to list. A fire refused by the cost cap or the
 cooldown starts no run and is only logged, never surfaced — the dialog
 closes with no error. A lock collision (`SKIP_CURRENT`), a `REJECT`
-parallel-run cap or a full `maxQueuedRuns` queue does start a run, which
-ends `FAILED`; the row's Last run cell links to it. A confirmation dialog guards the
+parallel-run cap or a full wait queue (runs waiting for a slot or for a
+lock) does start a run, which ends `FAILED`; the row's Last run cell
+links to it. A confirmation dialog guards the
 click, since the run starts with no parameter dialog. Once the run is
 the agent's most recent, the row's **Last run** cell links to its
 process id.

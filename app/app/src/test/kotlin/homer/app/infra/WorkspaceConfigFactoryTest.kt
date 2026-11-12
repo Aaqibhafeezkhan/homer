@@ -1,6 +1,7 @@
 package homer.app.infra
 
 import homer.app.EnvConstants
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.exceptions.WorkspaceException
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -311,6 +312,118 @@ class WorkspaceConfigFactoryTest {
                 workspaceAgentConfig = WorkspaceAgentConfig(),
             )
         assertEquals("lock-7", config.lockKey)
+    }
+
+    // ---- Lock keys: an unresolved placeholder is denied, not rendered literal ----
+
+    @Test
+    fun `a lock key placeholder the run cannot resolve is denied, naming the placeholder`() {
+        // Without the denial every run of this agent computes the literal "ticket-{{TICKET_ID}}"
+        // and unrelated subjects collide on one lock (ADR-0047).
+        val ex =
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> {
+                factory.createWorkspaceConfig(
+                    processId = 7,
+                    agentEnv = emptyMap(),
+                    lockKeyTemplate = "ticket-{{TICKET_ID}}",
+                    queryParams = emptyMap(),
+                    workspaceAgentConfig = WorkspaceAgentConfig(),
+                )
+            }
+
+        assertEquals(listOf("TICKET_ID"), ex.placeholders)
+        assertTrue(ex.message!!.contains("{{TICKET_ID}}"), "message=${ex.message}")
+    }
+
+    @Test
+    fun `a lock key whose placeholders all resolve renders as before`() {
+        val config =
+            factory.createWorkspaceConfig(
+                processId = 7,
+                agentEnv = mapOf("ENVIRONMENT" to "prod"),
+                lockKeyTemplate = "deploy-{{ENVIRONMENT}}-{{HMR_PROCESS_ID}}",
+                queryParams = emptyMap(),
+                workspaceAgentConfig = WorkspaceAgentConfig(),
+            )
+        assertEquals("deploy-prod-7", config.lockKey)
+    }
+
+    @Test
+    fun `an input value holding placeholder syntax is data, not a placeholder`() {
+        // The check reads the template's names, never the rendered text: the caller's value is
+        // neither expanded nor treated as an unresolved name (it is the resolved one).
+        val config =
+            factory.createWorkspaceConfig(
+                processId = 7,
+                agentEnv = emptyMap(),
+                lockKeyTemplate = "ticket-{{SUBJECT}}",
+                queryParams = mapOf("SUBJECT" to "{{TICKET_ID}}"),
+                workspaceAgentConfig = WorkspaceAgentConfig(),
+            )
+        assertEquals("ticket-{{TICKET_ID}}", config.lockKey)
+    }
+
+    @Test
+    fun `an unresolved placeholder never puts a resolved value in the denial`() {
+        // The key mixes a secret input with a name that has no value: the denial must name the
+        // placeholder only, never the partially rendered key (ADR-0098, §12 rule 7).
+        val ex =
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> {
+                factory.createWorkspaceConfig(
+                    processId = 7,
+                    agentEnv = emptyMap(),
+                    lockKeyTemplate = "{{SECRET_TOKEN}}-{{TICKET_ID}}",
+                    queryParams = mapOf("SECRET_TOKEN" to "s3cr3t-value"),
+                    workspaceAgentConfig = WorkspaceAgentConfig(),
+                )
+            }
+
+        assertTrue(!ex.message!!.contains("s3cr3t-value"), "message=${ex.message}")
+        assertEquals(listOf("TICKET_ID"), ex.placeholders)
+    }
+
+    @Test
+    fun `every unresolved placeholder is named once, in a stable order`() {
+        val ex =
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> {
+                renderTemplatedKey("{{B}}-{{A}}-{{B}}-{{C}}", emptyMap(), textCompiler)
+            }
+        assertEquals(listOf("A", "B", "C"), ex.placeholders)
+    }
+
+    @Test
+    fun `a denial names at most five placeholders`() {
+        // A pathological template must not grow the stored sentence: the denial is bounded, the
+        // run is denied either way.
+        val ex =
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> {
+                renderTemplatedKey((1..9).joinToString("-") { "{{P$it}}" }, emptyMap(), textCompiler)
+            }
+        assertEquals(listOf("P1", "P2", "P3", "P4", "P5"), ex.placeholders)
+    }
+
+    @Test
+    fun `a key templated on HMR_AGENT_NAME is denied, not left literal`() {
+        // HMR_AGENT_NAME is appended at run-start (layer 7), after this factory resolves the key,
+        // so it is not in the env a key renders over: AGENT.md says the variable is unusable in a
+        // key template, and the denial is what that means in practice.
+        val ex =
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> {
+                factory.createWorkspaceConfig(
+                    processId = 7,
+                    agentEnv = emptyMap(),
+                    lockKeyTemplate = "{{HMR_AGENT_NAME}}-lock",
+                    queryParams = emptyMap(),
+                    workspaceAgentConfig = WorkspaceAgentConfig(),
+                )
+            }
+
+        assertEquals(listOf("HMR_AGENT_NAME"), ex.placeholders)
+    }
+
+    @Test
+    fun `renderTemplatedKey renders a fully resolvable key`() {
+        assertEquals("k-1", renderTemplatedKey("k-{{HMR_PROCESS_ID}}", mapOf("HMR_PROCESS_ID" to "1"), textCompiler))
     }
 
     @Test

@@ -7,6 +7,7 @@ import homer.app.EnvConstants.PARENT_PROCESS_ID
 import homer.app.EnvConstants.PROCESS_ID
 import homer.app.EnvConstants.ROOT_PROCESS_ID
 import homer.app.EnvConstants.WORK_DIR
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.exceptions.WorkspaceException
 import java.nio.file.Path
 import kotlin.io.path.Path
@@ -89,7 +90,7 @@ class WorkspaceConfigFactory(
                         put(WORK_DIR, workdir.toString())
                     },
             clearAfterFinish = workspaceAgentConfig.cleanAfterFinish,
-            lockKey = textCompiler.replaceArguments(lockKeyTemplate, env),
+            lockKey = renderTemplatedKey(lockKeyTemplate, env, textCompiler),
             ancestorLockKeys = ancestorLockKeys,
             maxOutputBytes = maxOutputBytes,
             parentEnvLayerNames = if (includeParentEnv) parentEnvLayerNames(hostEnv, env) else emptySet(),
@@ -205,6 +206,22 @@ class WorkspaceConfigFactory(
         hostEnv: Map<String, String>,
         env: Map<String, String>,
     ): Set<String> = parentEnvAllowlist.filterTo(mutableSetOf()) { key -> hostEnv[key] != null && env[key] == hostEnv[key] }
+}
+
+/**
+ * Renders a templated key over [env], refusing one whose `{{NAME}}` placeholders the env cannot
+ * resolve — every run of the agent would otherwise compute the same literal key (ADR-0098). The
+ * check reads the template's placeholder names, never the rendered text: a param value that
+ * itself holds `{{X}}` is data, not a placeholder.
+ */
+internal fun renderTemplatedKey(
+    template: String,
+    env: Map<String, String>,
+    compiler: TextCompiler,
+): String {
+    val unresolved = placeholderNames(template).filterNot { it in env }
+    if (unresolved.isNotEmpty()) throw UnresolvedLockKeyPlaceholderException(unresolved)
+    return compiler.replaceArguments(template, env)
 }
 
 data class WorkspaceConfig(
