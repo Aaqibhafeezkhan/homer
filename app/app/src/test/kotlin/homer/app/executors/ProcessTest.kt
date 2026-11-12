@@ -1,6 +1,9 @@
 package homer.app.executors
 
 import homer.app.config.ExecutionConfig
+import homer.app.exceptions.AnotherProcessStillActive
+import homer.app.exceptions.MaxLockWaitersExceededException
+import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
@@ -12,6 +15,8 @@ import homer.app.infra.WorkspaceConfigFactory
 import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.LockStrategy
+import homer.app.models.OnKeyCollisionStrategy
+import homer.app.models.OnMaxParallelRunsStrategy
 import homer.app.models.Param
 import homer.app.models.ProcessStatus
 import homer.app.models.PurgeAfterParser
@@ -32,6 +37,7 @@ import io.mockk.verify
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.context.Context
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -41,6 +47,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.writeText
@@ -837,7 +844,7 @@ class ProcessTest {
 
             processWith(agent, ancestorLockKeys = listOf("shared")).execute(1, mockSpan)
 
-            coVerify(exactly = 0) { mockLockManager.waitForLockOrThrow(any(), any(), any()) }
+            coVerify(exactly = 0) { mockLockManager.acquireLock(any(), any(), any(), any()) }
             coVerify(exactly = 0) { mockLockManager.releaseLock(any(), any()) }
         }
 
@@ -893,7 +900,7 @@ class ProcessTest {
 
             processWith(agent, ancestorLockKeys = listOf("a-different-key")).execute(7, mockSpan)
 
-            coVerify { mockLockManager.waitForLockOrThrow("shared", any(), 7) }
+            coVerify { mockLockManager.acquireLock("shared", any(), 7, any()) }
             coVerify { mockLockManager.releaseLock("shared", 7) }
         }
 
@@ -921,8 +928,287 @@ class ProcessTest {
 
             processWith(agent, ancestorLockKeys = listOf("shared")).execute(9, mockSpan)
 
-            coVerify { mockLockManager.waitForLockOrThrow("shared", any(), 9) }
+            coVerify { mockLockManager.acquireLock("shared", any(), 9, any()) }
             coVerify { mockLockManager.releaseLock("shared", 9) }
+        }
+
+    // ========== Lock-before-slot admission order (ADR-0103) Tests ==========
+
+    /** A Process over the given (real) gates; its lock key is rendered from the `MR` input. */
+    private fun processFor(
+        agent: Agent,
+        queryParams: Map<String, String>,
+        lockManager: homer.app.executors.LockManager,
+        parallelRunsManager: ParallelRunsManager,
+    ): Process =
+        Process(
+            workspaceConfigFactory = mockWorkspaceConfigFactory,
+            executorFactory = mockExecutorFactory,
+            telemetryService = mockTelemetryService,
+            config = testConfig,
+            lockManager = lockManager,
+            parallelRunsManager = parallelRunsManager,
+            processManager = mockProcessManager,
+            runnerRegistry = mockRunnerRegistry,
+            activeSessions = ActiveSessionsRegistry(),
+            questionsService = mockQuestionsService,
+            questionsWorkspaceSetup = mockQuestionsWorkspaceSetup,
+            agent = agent,
+            queryParams = queryParams,
+            parentContext = testContext,
+            // A mocked workspace: these tests are about admission order, not filesystem work.
+            workspaceFactory = { config, _, _ -> TestFixtures.mockWorkspace(config) },
+        )
+
+    /** Renders `mr-<MR>` from the run's inputs, as the production factory would for that template. */
+    private fun stubLockKeyFromInput() {
+        every {
+            mockWorkspaceConfigFactory.createWorkspaceConfig(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+            )
+        } answers {
+            // `createWorkspaceConfig`'s 4th parameter is the run's inputs.
+            @Suppress("UNCHECKED_CAST")
+            val inputs = invocation.args[3] as Map<String, String>
+            TestFixtures.mockWorkspaceConfig(lockKey = "mr-" + inputs["MR"])
+        }
+    }
+
+    /** A fixed lock key for every run of the agent. */
+    private fun stubSharedLockKey() {
+        every {
+            mockWorkspaceConfigFactory.createWorkspaceConfig(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+            )
+        } returns TestFixtures.mockWorkspaceConfig(lockKey = "shared")
+    }
+
+    /** An executor whose first call suspends until [released]; later calls return a green result. */
+    private fun stubExecutorSuspendingOnce(released: CompletableDeferred<Unit>): CompletableDeferred<Unit> {
+        val entered = CompletableDeferred<Unit>()
+        var first = true
+        coEvery { mockExecutorFactory.getExecutor<Command>(any()).execute(any(), any(), any()) } coAnswers {
+            if (first) {
+                first = false
+                entered.complete(Unit)
+                released.await()
+            }
+            TestFixtures.mockCommandResult(exitCode = 0)
+        }
+        return entered
+    }
+
+    @Test
+    fun `a run of a free subject starts while another subject's run waits for the lock`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 2,
+                    lockStrategy = LockStrategy(key = "mr-{{MR}}", onCollision = OnKeyCollisionStrategy.WAIT),
+                )
+            stubLockKeyFromInput()
+            val release = CompletableDeferred<Unit>()
+            val run1Entered = stubExecutorSuspendingOnce(release)
+
+            val run1 = launch { processFor(agent, mapOf("MR" to "1"), lockManager, parallelRunsManager).execute(1, mockSpan) }
+            run1Entered.await()
+
+            // Run 2 collides on mr-1 and waits for that lock. It holds no slot while it waits.
+            val run2 = launch { processFor(agent, mapOf("MR" to "1"), lockManager, parallelRunsManager).execute(2, mockSpan) }
+            runCurrent()
+
+            // Run 3's subject is mr-2, which nothing else uses: it must run now, not behind run 2.
+            processFor(agent, mapOf("MR" to "2"), lockManager, parallelRunsManager).execute(3, mockSpan)
+
+            coVerify { mockProcessManager.compareAndSetStatus(3, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
+            coVerify(exactly = 0) {
+                mockProcessManager.compareAndSetStatus(2, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING)
+            }
+
+            // Run 1 finishes, the mr-1 lock passes to run 2, and run 2 runs.
+            release.complete(Unit)
+            run1.join()
+            run2.join()
+            coVerify { mockProcessManager.compareAndSetStatus(2, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
+        }
+
+    @Test
+    fun `runs waiting for slots never put more than maxParallelRuns in WORKING`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 2,
+                    lockStrategy = LockStrategy(key = "mr-{{MR}}", onCollision = OnKeyCollisionStrategy.WAIT),
+                )
+            stubLockKeyFromInput()
+            val working = AtomicInteger(0)
+            val peak = AtomicInteger(0)
+            coEvery { mockExecutorFactory.getExecutor<Command>(any()).execute(any(), any(), any()) } coAnswers {
+                val now = working.incrementAndGet()
+                peak.getAndUpdate { maxOf(it, now) }
+                yield()
+                working.decrementAndGet()
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            (1..6)
+                .map { mr ->
+                    launch {
+                        processFor(agent, mapOf("MR" to mr.toString()), lockManager, parallelRunsManager).execute(mr, mockSpan)
+                    }
+                }.forEach { it.join() }
+
+            assertTrue(peak.get() <= 2, "maxParallelRuns bounds WORKING runs, observed ${peak.get()}")
+        }
+
+    @Test
+    fun `KILL_OLD_RUN_CURRENT kills the victim only once the new run holds a slot`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 1,
+                    lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT),
+                )
+            stubSharedLockKey()
+            val release = CompletableDeferred<Unit>()
+            val run1Entered = stubExecutorSuspendingOnce(release)
+
+            val run1 = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(1, mockSpan) }
+            run1Entered.await()
+
+            // Run 2 displaces run 1 on the lock, but the only slot is held: no kill yet.
+            val run2 = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
+            runCurrent()
+            coVerify(exactly = 0) { mockProcessManager.killProcess(1, any()) }
+
+            release.complete(Unit)
+            run1.join()
+            run2.join()
+
+            coVerify(exactly = 1) { mockProcessManager.killProcess(1, "The new process 2 takes precedence") }
+        }
+
+    @Test
+    fun `a refused slot attempt leaves the displaced holder alive and the lock released`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 1,
+                    onMaxParallelRuns = OnMaxParallelRunsStrategy.REJECT,
+                    lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT),
+                )
+            stubSharedLockKey()
+            val release = CompletableDeferred<Unit>()
+            val run1Entered = stubExecutorSuspendingOnce(release)
+
+            val run1 = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(1, mockSpan) }
+            run1Entered.await()
+
+            assertFailsWith<MaxParallelRunsExceededException> {
+                processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan)
+            }
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+
+            // Run 2 gave the lock back, so run 1's own release frees the key for the next run.
+            release.complete(Unit)
+            run1.join()
+            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+        }
+
+    @Test
+    fun `SKIP_CURRENT fails on the lock before any slot is taken`() =
+        runTest {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
+            val agent = testAgent.copy(lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.SKIP_CURRENT))
+            stubSharedLockKey()
+            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+
+            val ex =
+                assertFailsWith<AnotherProcessStillActive> {
+                    processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan)
+                }
+
+            assertEquals(1, ex.activeProcessId)
+            coVerify(exactly = 0) { parallelRunsManager.acquireSlot(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { parallelRunsManager.releaseSlot(any()) }
+        }
+
+    @Test
+    fun `a WAIT collision takes the slot only after the lock is granted`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = mockk<ParallelRunsManager>(relaxed = true)
+            val agent = testAgent.copy(lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.WAIT))
+            stubSharedLockKey()
+            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+
+            val run2 = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
+            runCurrent()
+            coVerify(exactly = 0) { parallelRunsManager.acquireSlot(any(), any(), any(), any()) }
+
+            lockManager.releaseLock("shared", 1)
+            run2.join()
+
+            coVerify { parallelRunsManager.acquireSlot(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `a surplus lock waiter is refused instead of parked`() =
+        runTest(timeout = 10.seconds) {
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            val parallelRunsManager = DefaultParallelRunsManager()
+            val agent =
+                testAgent.copy(
+                    maxParallelRuns = 1,
+                    lockStrategy = LockStrategy(key = "shared", onCollision = OnKeyCollisionStrategy.WAIT),
+                )
+            stubSharedLockKey()
+            lockManager.waitForLockOrThrow("shared", OnKeyCollisionStrategy.WAIT, 1)
+
+            val first = launch { processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(2, mockSpan) }
+            runCurrent()
+
+            // The lock-wait bound is maxParallelRuns here (maxQueuedRuns is unset): the surplus fails.
+            assertFailsWith<MaxLockWaitersExceededException> {
+                processFor(agent, emptyMap(), lockManager, parallelRunsManager).execute(3, mockSpan)
+            }
+
+            lockManager.releaseLock("shared", 1)
+            first.join()
+            coVerify { mockProcessManager.compareAndSetStatus(2, setOf(ProcessStatus.CREATED), ProcessStatus.WORKING) }
         }
 
     // ========== Default workspace wiring Tests ==========

@@ -39,9 +39,12 @@ failure cause extends it, and every reader who can open the run sees it.
 Chosen option: **"Map each typed cause to a fixed-vocabulary sentence built
 from its typed fields, never the exception message."**
 
-Exactly five causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
-parallel-run cap, the full parallel-run wait queue, the claim timeout and the
-full claim queue. Any other exception — including one that failed a run
+Exactly six causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
+parallel-run cap, the full parallel-run wait queue, the full lock wait queue,
+the claim timeout and the full claim queue.
+*(Amended 2026-11-12: the full lock wait queue is the sixth — the bound a run
+waiting for a subject lock is refused by, added by
+[ADR-0103](0103-lock-before-slot-admission-order.md).)* Any other exception — including one that failed a run
 mid-flight — stores no reason: its message may carry anything, and the reader
 gains nothing from it that the run's own record does not say (ADR-0047 rule 7:
 secrets travel never in error text).

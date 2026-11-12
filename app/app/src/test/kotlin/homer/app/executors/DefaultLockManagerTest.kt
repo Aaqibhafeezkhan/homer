@@ -1,6 +1,7 @@
 package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.models.OnKeyCollisionStrategy
 import homer.app.services.ProcessManager
 import io.mockk.coEvery
@@ -20,9 +21,11 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.Logger
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -219,6 +222,51 @@ class DefaultLockManagerTest {
             lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
         }
 
+    // ========== Decision / kill split Tests ==========
+
+    @Test
+    fun `acquireLock returns the victim without killing it, and killDisplaced kills it once`() =
+        runTest {
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+
+            val grant = lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2)
+
+            assertEquals(1, grant.displacedProcessId)
+            // The decision is made under the mutex; the kill waits for the caller to admit the run.
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+
+            lockManager.killDisplaced(grant, 2)
+
+            coVerify(exactly = 1) { mockProcessManager.killProcess(1, "The new process 2 takes precedence") }
+        }
+
+    @Test
+    fun `acquireLock without a collision carries no victim to kill`() =
+        runTest {
+            val grant = lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+
+            assertNull(grant.displacedProcessId)
+            lockManager.killDisplaced(grant, 1)
+
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+        }
+
+    @Test
+    fun `a collision that never enters the gate consumes no lock-wait place`() =
+        runTest {
+            // KILL_OLD_RUN_CURRENT does not wait, so it must not reserve a place in the bound.
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+
+            lockManager.acquireLock(
+                "test-lock",
+                OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT,
+                2,
+                LockWaitGate { throw AssertionError("the gate must not be entered") },
+            )
+
+            assertTrue(true)
+        }
+
     // ========== WAIT Strategy Tests ==========
 
     @Test
@@ -318,6 +366,71 @@ class DefaultLockManagerTest {
 
             val elapsed = System.currentTimeMillis() - startTime
             assertTrue(elapsed < 100, "Lock acquisition should be immediate, took ${elapsed}ms")
+        }
+
+    // ========== Lock-wait gate Tests ==========
+
+    @Test
+    fun `a WAIT refused by the gate is not enqueued`() =
+        runTest {
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            assertFailsWith<MaxLockWaitersExceededException> {
+                lockManager.acquireLock(
+                    "test-lock",
+                    OnKeyCollisionStrategy.WAIT,
+                    2,
+                    LockWaitGate { throw MaxLockWaitersExceededException("agent", 1) },
+                )
+            }
+
+            // Had the refused run been enqueued, this release would have handed it the lock.
+            lockManager.releaseLock("test-lock", 1)
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+        }
+
+    @Test
+    fun `a granted WAIT frees its gate place`() =
+        runTest {
+            val open = AtomicInteger(0)
+            val gate =
+                LockWaitGate {
+                    open.incrementAndGet()
+                    LockWaitTicket { open.decrementAndGet() }
+                }
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            val waiter = launch { lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.WAIT, 2, gate) }
+            runCurrent()
+            assertEquals(1, open.get(), "the waiting run holds its place")
+
+            lockManager.releaseLock("test-lock", 1)
+            waiter.join()
+
+            assertEquals(0, open.get(), "the granted run frees its place")
+        }
+
+    @Test
+    fun `a cancelled WAIT frees its gate place and leaves no queue entry`() =
+        runTest {
+            val open = AtomicInteger(0)
+            val gate =
+                LockWaitGate {
+                    open.incrementAndGet()
+                    LockWaitTicket { open.decrementAndGet() }
+                }
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            val waiter = launch { lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.WAIT, 2, gate) }
+            runCurrent()
+            assertEquals(1, open.get())
+
+            waiter.cancelAndJoin()
+
+            assertEquals(0, open.get(), "the cancelled run frees its place")
+            // The dead waiter left the queue: the release hands the lock to nobody.
+            lockManager.releaseLock("test-lock", 1)
+            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
         }
 
     // ========== Lock Release Tests ==========

@@ -129,6 +129,13 @@ scheduled (`next_attempt_at`, doubling from 60 s up to 1 h), and
 `ContinuationSweepService` re-fires it on the existing sweep tick. Retries are
 bounded twice — by an 8-attempt budget and by the continuation's own TTL, which
 is checked first so a lapsed row expires rather than spending another attempt.
+*(Amended 2026-11-12: the lock-wait bound added by
+[ADR-0103](0103-lock-before-slot-admission-order.md) joins the list —
+`MaxLockWaitersExceededException` is classified transient like the run queue. It shares
+that arm's reachability, though: the lock wait is entered inside the already-launched
+target run, so the refusal ends that run `FAILED` with a stored reason and never reaches
+`fire()`. The arm keeps the classification exhaustive rather than opening a new retry
+path.)*
 
 Everything else stays permanent and still fails on the first attempt: target
 agent gone, no longer dispatch-enabled, hop unauthorized, input validation

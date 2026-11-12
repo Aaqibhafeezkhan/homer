@@ -13,6 +13,7 @@
 - **Added: `continuation.inheritInputs` on the agent definition** — A continuation or dispatch fired back to the same agent can carry the registering run's inputs, so a resumed segment keeps its lock key's subject and its `tags.fromInputs` tags. See [ADR-0101](docs/adr/0101-continuation-inherits-origin-run-inputs.md).
 - **Fixed: a `!<claude>` result flagged `is_error` fails the step** — Runs that reported `subtype: "success"` while the CLI flagged an error (a refusal, an unavailable deferred tool, an API error) now fail instead of finishing green, so their `retry` and `escalate` tiers run and their `afterFailure` cooldowns arm.
 - **Fixed: shutdown drain waits for runs started during the drain** — A shutdown now also finishes the `!<agent>` hops, dispatches and continuations its in-flight runs start, and runs already waiting for a runner claim, instead of killing them and leaving them `UNKNOWN`; a new top-level start during the drain is refused with `503`. See [ADR-0102](docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
+- **Changed: a run waiting for a lock no longer holds a `maxParallelRuns` slot** — A run takes its lock before its slot, so one busy subject no longer starves the agent's other subjects; `SKIP_CURRENT` now refuses before any slot wait, `KILL_OLD_RUN_CURRENT` kills the old run only once the new one holds a slot, and runs waiting for a lock are bounded by `maxQueuedRuns`, else by `maxParallelRuns`. See [ADR-0103](docs/adr/0103-lock-before-slot-admission-order.md).
 
 ## [1.41.0] - 2026-11-06
 

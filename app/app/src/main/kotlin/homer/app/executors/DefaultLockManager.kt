@@ -27,12 +27,14 @@ class DefaultLockManager(
     private val mutex = Mutex()
 
     @Suppress("SuspendFunSwallowedCancellation") // rethrown after a NonCancellable dequeue
-    override suspend fun waitForLockOrThrow(
+    override suspend fun acquireLock(
         lockName: String,
         onKeyCollisionStrategy: OnKeyCollisionStrategy,
         processID: Int,
-    ) {
+        waitGate: LockWaitGate,
+    ): LockGrant {
         val deferred = CompletableDeferred<Unit>()
+        var waitTicket: LockWaitTicket? = null
 
         val victim: Int? =
             mutex.withLock {
@@ -40,7 +42,7 @@ class DefaultLockManager(
 
                 if (entry == null || entry.holders.isEmpty()) {
                     locks.getOrPut(lockName) { LockEntry() }.holders.add(processID)
-                    return
+                    return LockGrant()
                 }
 
                 val activeProcessID = entry.holders.first()
@@ -50,21 +52,22 @@ class DefaultLockManager(
                     }
 
                     KILL_OLD_RUN_CURRENT -> {
+                        // The victim is registered against the key here and returned to be killed
+                        // later: the kill must not land before the new run holds a slot (ADR-0103).
                         entry.holders.add(processID)
                         activeProcessID
                     }
 
                     WAIT -> {
+                        // The place in the lock-wait bound is reserved before the run is enqueued,
+                        // so a refused surplus run leaves no queue entry behind (§12 rules 4-5).
+                        waitTicket = waitGate.enter()
                         entry.waitQueue.addLast(processID to deferred)
                         null
                     }
                 }
             }
-        // killProcess writes to the database, so it runs after the mutex is released.
-        if (victim != null) {
-            processManager.killProcess(victim, "The new process $processID takes precedence")
-            return
-        }
+        if (victim != null) return LockGrant(victim)
 
         try {
             deferred.await()
@@ -77,7 +80,27 @@ class DefaultLockManager(
                 }
             }
             throw e
+        } finally {
+            waitTicket?.close()
         }
+        return LockGrant()
+    }
+
+    override suspend fun killDisplaced(
+        grant: LockGrant,
+        processID: Int,
+    ) {
+        val victim = grant.displacedProcessId ?: return
+        // killProcess writes to the database, so it runs after the mutex is released.
+        processManager.killProcess(victim, "The new process $processID takes precedence")
+    }
+
+    override suspend fun waitForLockOrThrow(
+        lockName: String,
+        onKeyCollisionStrategy: OnKeyCollisionStrategy,
+        processID: Int,
+    ) {
+        killDisplaced(acquireLock(lockName, onKeyCollisionStrategy, processID), processID)
     }
 
     override suspend fun releaseLock(

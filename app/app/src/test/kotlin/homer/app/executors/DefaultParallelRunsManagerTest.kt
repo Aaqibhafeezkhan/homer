@@ -1,11 +1,13 @@
 package homer.app.executors
 
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.models.OnMaxParallelRunsStrategy
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -212,6 +214,91 @@ class DefaultParallelRunsManagerTest {
             assertFailsWith<MaxParallelRunsExceededException> {
                 manager.acquireSlot(agentName, maxRuns, OnMaxParallelRunsStrategy.REJECT)
             }
+        }
+
+    // ========== Lock-wait bound (enterLockWait) Tests ==========
+
+    @Test
+    fun `enterLockWait shares the slot queue's bound when maxQueuedRuns is set`() =
+        runTest {
+            val agent = "combined"
+            // One slot waiter fills half of a queue bounded at 2.
+            val held = manager.acquireSlot(agent, maxParallelRuns = 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = 2)
+            val slotWaiter =
+                launch {
+                    manager.acquireSlot(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = 2)
+                }
+            runCurrent()
+
+            // One lock waiter fits (1 slot waiter + 1 lock waiter = 2), and it is the same cap.
+            val ticket = manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = 2)
+            val ex =
+                assertFailsWith<MaxQueuedRunsExceededException> {
+                    manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = 2)
+                }
+            assertEquals("Agent '$agent' has reached the maximum of 2 queued runs", ex.message)
+
+            // Freeing the lock waiter frees the place, not the counter.
+            ticket.close()
+            manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = 2).close()
+
+            slotWaiter.cancelAndJoin()
+            manager.releaseSlot(held)
+        }
+
+    @Test
+    fun `enterLockWait falls back to maxParallelRuns when the slot queue is unbounded`() =
+        runTest {
+            val agent = "unbounded-slot-queue"
+            val ticket = manager.enterLockWait(agent, maxParallelRuns = 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+
+            val ex =
+                assertFailsWith<MaxLockWaitersExceededException> {
+                    manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+                }
+            assertEquals("Agent '$agent' has reached the maximum of 1 runs waiting for a lock", ex.message)
+
+            ticket.close()
+            manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null).close()
+        }
+
+    @Test
+    fun `enterLockWait falls back to maxParallelRuns under REJECT`() =
+        runTest {
+            val agent = "rejecting-slots"
+            // maxQueuedRuns is set but has no effect under REJECT, so it must not cap lock waiters.
+            val ticket = manager.enterLockWait(agent, maxParallelRuns = 1, OnMaxParallelRunsStrategy.REJECT, maxQueuedRuns = 5)
+
+            assertFailsWith<MaxLockWaitersExceededException> {
+                manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.REJECT, maxQueuedRuns = 5)
+            }
+
+            ticket.close()
+            manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.REJECT, maxQueuedRuns = 5).close()
+        }
+
+    @Test
+    fun `closing a lock-wait ticket twice frees one place, and a reload does not misdirect it`() =
+        runTest {
+            val agent = "idempotent-close"
+            val ticket = manager.enterLockWait(agent, maxParallelRuns = 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            ticket.close()
+            ticket.close()
+
+            // Exactly one place was freed: the cap of 1 is reachable again, no more.
+            manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null).close()
+
+            // A reload drops the agent's counters; a ticket captured before it must still free
+            // its own counter, not the fresh one a later waiter incremented.
+            val held = manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            manager.onAgentsReloaded(updated = setOf(agent), removed = emptySet())
+            held.close()
+
+            val waiter = manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            assertFailsWith<MaxLockWaitersExceededException> {
+                manager.enterLockWait(agent, 1, OnMaxParallelRunsStrategy.WAIT, maxQueuedRuns = null)
+            }
+            waiter.close()
         }
 
     // ========== Multiple Agents Tests ==========

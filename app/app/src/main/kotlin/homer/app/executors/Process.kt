@@ -126,21 +126,60 @@ class Process(
                 owner = owner,
                 rootProcessId = rootProcessId,
             )
-        var acquiredSlot: Semaphore? = null
+        val admission = Admission()
         try {
-            acquiredSlot =
-                parallelRunsManager.acquireSlot(agent.name, agent.maxParallelRuns, agent.onMaxParallelRuns, agent.maxQueuedRuns)
-            if (!inheritLock) {
-                lockManager.waitForLockOrThrow(workspaceConfig.lockKey, agent.lockStrategy.onCollision, processId)
-            }
+            admit(processId, workspaceConfig.lockKey, inheritLock, admission)
             startWorking(processId, processSpan, workspace)
             agentExecutor.execute()
         } finally {
             // NonCancellable: a killed run still cleans its workspace, whose sibling probe suspends.
             withContext(NonCancellable) {
-                tearDown(processId, processSpan, workspace, workspaceConfig.lockKey.takeUnless { inheritLock }, acquiredSlot)
+                tearDown(processId, processSpan, workspace, admission.lockKey, admission.slot)
             }
         }
+    }
+
+    /** What a run's admission took, so `tearDown` releases exactly that and nothing else. */
+    private class Admission {
+        var lockKey: String? = null
+        var slot: Semaphore? = null
+    }
+
+    /**
+     * Takes the run's gates in order — its subject lock, then a parallel-run slot, then the kill a
+     * `KILL_OLD_RUN_CURRENT` collision deferred — recording each in [admission] as it is taken.
+     * The lock comes first (ADR-0103): a run waiting on another run's subject lock must not hold
+     * an agent-wide slot, or one busy subject starves every other subject of this agent. The slot
+     * attempt can still be refused, and the victim is killed only once it is not: a refused slot
+     * leaves the displaced run alive and this run's `tearDown` releases the lock again.
+     */
+    private suspend fun admit(
+        processId: Int,
+        lockKey: String,
+        inheritLock: Boolean,
+        admission: Admission,
+    ) {
+        var grant: LockGrant? = null
+        if (!inheritLock) {
+            grant =
+                lockManager.acquireLock(
+                    lockKey,
+                    agent.lockStrategy.onCollision,
+                    processId,
+                    LockWaitGate {
+                        parallelRunsManager.enterLockWait(
+                            agent.name,
+                            agent.maxParallelRuns,
+                            agent.onMaxParallelRuns,
+                            agent.maxQueuedRuns,
+                        )
+                    },
+                )
+            admission.lockKey = lockKey
+        }
+        admission.slot =
+            parallelRunsManager.acquireSlot(agent.name, agent.maxParallelRuns, agent.onMaxParallelRuns, agent.maxQueuedRuns)
+        grant?.let { lockManager.killDisplaced(it, processId) }
     }
 
     /** This run's workspace config, over the env layer and secret names its runner contributes. */
