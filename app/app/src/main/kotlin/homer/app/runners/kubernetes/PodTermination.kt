@@ -11,6 +11,13 @@ import java.util.Objects
 
 internal const val DEADLINE_EXCEEDED = "DeadlineExceeded"
 
+/**
+ * The reason Homer sets itself when the exec channel into a pod that is still running was lost — not a
+ * Kubernetes stop, so [readPodTermination] never returns it; the executor sets it on the run's
+ * `runner.termination` and on the step error.
+ */
+internal const val EXEC_CHANNEL_LOST = "ExecChannelLost"
+
 /** The longest termination reason or message kept. */
 internal const val TERMINATION_MESSAGE_MAX_CHARS = 512
 
