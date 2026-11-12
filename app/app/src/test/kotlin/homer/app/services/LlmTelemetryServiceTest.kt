@@ -215,7 +215,7 @@ class LlmTelemetryServiceTest {
             )
 
             verify { mockTracer.spanBuilder("Result") }
-            verify { resultSpan.setAttribute("prompt", "my-prompt") }
+            verify { resultSpan.setAttribute("langfuse.observation.input", "my-prompt") }
             verify { resultSpan.setAttribute("usage_details.input_tokens", 100L) }
             verify { resultSpan.setAttribute("usage_details.output_tokens", 50L) }
             verify { resultSpan.setAttribute("usage_details.cache_read_input_tokens", 20L) }
@@ -338,9 +338,19 @@ class LlmTelemetryServiceTest {
                 redactor,
             )
 
-            verify { resultSpan.setAttribute("prompt", "prompt with ***") }
-            verify { resultSpan.setAttribute("output", match<String> { it.contains("***") && !it.contains("s3cr3t-value") }) }
-            verify(exactly = 0) { resultSpan.setAttribute("prompt", match<String> { it.contains("s3cr3t-value") }) }
+            verify { resultSpan.setAttribute("langfuse.observation.input", "prompt with ***") }
+            verify {
+                resultSpan.setAttribute(
+                    "langfuse.observation.output",
+                    match<String> { it.contains("***") && !it.contains("s3cr3t-value") },
+                )
+            }
+            verify(exactly = 0) {
+                resultSpan.setAttribute("langfuse.observation.input", match<String> { it.contains("s3cr3t-value") })
+            }
+            verify(exactly = 0) {
+                resultSpan.setAttribute("langfuse.observation.output", match<String> { it.contains("s3cr3t-value") })
+            }
         }
 
     @Test
@@ -370,7 +380,12 @@ class LlmTelemetryServiceTest {
             )
 
             verify { resultSpan.setAttribute("metadata", match<String> { it.contains("***") && !it.contains("line2") }) }
-            verify { resultSpan.setAttribute("output", match<String> { it.contains("***") && !it.contains("line2") }) }
+            verify {
+                resultSpan.setAttribute(
+                    "langfuse.observation.output",
+                    match<String> { it.contains("***") && !it.contains("line2") },
+                )
+            }
         }
 
     @Test
@@ -569,7 +584,12 @@ class LlmTelemetryServiceTest {
 
             verify { mockTracer.spanBuilder("implement") }
             verify { resultSpan.setAttribute("name", "implement") }
-            verify { resultSpan.setAttribute("output", match<String> { it.contains("\"name\":\"implement\"") }) }
+            verify {
+                resultSpan.setAttribute(
+                    "langfuse.observation.output",
+                    match<String> { it.contains("\"name\":\"implement\"") },
+                )
+            }
             verify(exactly = 0) { mockTracer.spanBuilder("Result") }
         }
 

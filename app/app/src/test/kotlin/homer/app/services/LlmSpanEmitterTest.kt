@@ -56,7 +56,14 @@ class LlmSpanEmitterTest {
         )
         verify { span.setAttribute("langfuse.observation.type", "generation") }
         verify { span.setAttribute("langfuse.observation.cost_details", """{"total":0.5}""") }
-        verify { span.setAttribute("prompt", "prompt with ***") }
+        verify { span.setAttribute("langfuse.observation.input", "prompt with ***") }
+        verify { span.setAttribute("langfuse.observation.output", "\"out ***\"") }
+        // [information_disclosure / CWE-532] neither key may carry the raw secret...
+        verify(exactly = 0) { span.setAttribute("langfuse.observation.input", match<String> { it.contains("s3cret") }) }
+        verify(exactly = 0) { span.setAttribute("langfuse.observation.output", match<String> { it.contains("s3cret") }) }
+        // ...and the pre-fallback pair Langfuse mis-matches is no longer set at all.
+        verify(exactly = 0) { span.setAttribute("prompt", any<String>()) }
+        verify(exactly = 0) { span.setAttribute("output", any<String>()) }
         verify { span.setStatus(StatusCode.ERROR, "failed on ***") }
     }
 
