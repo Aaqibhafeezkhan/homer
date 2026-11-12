@@ -1,10 +1,13 @@
 package homer.app.executors
 
+import homer.app.exceptions.OutputCapExceededException
 import homer.app.models.Command
 import homer.app.models.OnTimeout
 import homer.app.models.StopReason
 import homer.app.runners.RunDeadline
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -16,7 +19,7 @@ private const val DEADLINE_MARGIN_SECONDS = 10L
 /** The floor on a step's effective timeout: the shells count whole seconds, and zero would never wait at all. */
 private const val MIN_STEP_SECONDS = 1L
 
-/** The cap on one `onStop:` step when the backend imposes no run deadline of its own. See ADR-0107. */
+/** The cap on one `onStop:` step, with or without a run deadline of its own. See ADR-0107. */
 private const val MAX_STOP_STEP_SECONDS = 300L
 
 /**
@@ -81,8 +84,8 @@ internal fun stopStepPlan(
 /**
  * [command]'s own timeout, cut at the deadlines that apply to it and floored at [MIN_STEP_SECONDS]:
  * a regular step at the soft deadline — the deadline is what stops it — and at the hard one less
- * [DEADLINE_MARGIN_SECONDS]; a stop step only at the hard one, and at [MAX_STOP_STEP_SECONDS] when
- * the backend imposes no deadline at all. See ADR-0107.
+ * [DEADLINE_MARGIN_SECONDS]; a stop step at the hard one and at [MAX_STOP_STEP_SECONDS], whichever
+ * is shorter. See ADR-0107.
  */
 private fun cappedTimeout(
     command: Command,
@@ -118,15 +121,20 @@ internal fun stopDeadlinePassed(deadline: RunDeadline?): Boolean =
 /**
  * Why [cause] ends the run's steps as a graceful stop, or null when it is an ordinary failure. The
  * soft deadline stops the run whether or not the step opted in — it is what cut the step's own
- * timeout short; otherwise only a step declaring `onTimeout: stop` does. See ADR-0107.
+ * timeout short; otherwise only a step declaring `onTimeout: stop` does, and only a timeout of its
+ * own: an output-cap trip ([OutputCapExceededException], a `CancellationException` subclass) is an
+ * ordinary failure, and a cancelled job is the caller's kill — neither is a stop trigger. The same
+ * two distinctions the run's catch draws when it decides between a failure and a kill. See ADR-0107.
  */
-internal fun stopReasonFor(
+internal suspend fun stopReasonFor(
     cause: Throwable,
     command: Command,
     deadline: RunDeadline?,
 ): StopReason? =
     when {
         stopDeadlinePassed(deadline) -> StopReason.RUN_DEADLINE
+        cause is OutputCapExceededException -> null
+        cause is CancellationException && !currentCoroutineContext().isActive -> null
         cause is CancellationException && command.onTimeout == OnTimeout.STOP -> StopReason.STEP_TIMEOUT
         else -> null
     }

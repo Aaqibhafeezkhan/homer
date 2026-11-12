@@ -2,6 +2,7 @@ package homer.app.runners.kubernetes
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.PodFailedDuringExecutionException
+import homer.app.infra.KillCause
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.SecretRedactor
@@ -9,7 +10,6 @@ import homer.app.infra.ShellExecutor
 import homer.app.models.CommandResult
 import homer.app.models.MIN_SCREENED_SECRET_LENGTH
 import homer.app.models.PodTermination
-import homer.app.runners.KillCause
 import homer.app.runners.exceedsOutputCap
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import kotlinx.coroutines.CancellationException

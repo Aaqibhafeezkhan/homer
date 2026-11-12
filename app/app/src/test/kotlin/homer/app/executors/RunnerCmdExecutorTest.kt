@@ -49,6 +49,8 @@ private class FakeShell(
 ) : ShellExecutor {
     val invocations = mutableListOf<Pair<List<String>, String?>>()
     var lastEnv: Map<String, String> = emptyMap()
+    var lastTimeout: Duration? = null
+    var lastInterruptGrace: Duration? = null
 
     override suspend fun cmd(
         command: List<String>,
@@ -62,6 +64,8 @@ private class FakeShell(
     ): CommandResult {
         invocations += command to stdIn
         lastEnv = env
+        lastTimeout = timeout
+        lastInterruptGrace = interruptGrace
         onCmd()
         val code = if (exitCodes.isEmpty()) 0 else exitCodes.removeFirst()
         return CommandResult(exitCode = code, stdOut = stdOut, stdErr = stdErr)
@@ -165,6 +169,23 @@ class RunnerCmdExecutorTest {
             stdOut = workdir.parent.resolve("cmd_0.out"),
             stdErr = workdir.parent.resolve("cmd_0.err"),
         )
+    }
+
+    @Test
+    fun `the step's capped timeout and interrupt grace reach the target shell`(
+        @org.junit.jupiter.api.io.TempDir tmp: Path,
+    ) = runTest {
+        val shell = FakeShell(mutableListOf(0))
+        val session = FakeSession(shell)
+        val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
+        // A stop step runs under the run's hard deadline and always under a grace, so the
+        // step's own `timeout` must not win here. See ADR-0107.
+        val stopContext = context(workdir).copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
+
+        executor(session, backgroundScope).execute(command(), stopContext, TestFixtures.mockSpan())
+
+        assertEquals(5.seconds, shell.lastTimeout, "the capped override must reach the shell, not the declared timeout")
+        assertEquals(30.seconds, shell.lastInterruptGrace)
     }
 
     @Test

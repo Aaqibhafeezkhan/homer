@@ -16,7 +16,10 @@ mechanism primitives with no-op defaults — `createWorkspace()`
 (returns env overrides, e.g. `HMR_*` paths translated to the remote
 layout), `upload(local, remoteRelative, excludes = [])`,
 `download(remoteRelative, local, mode)`, `cleanWorkspace()`, `shell`,
-`close()`. An `upload` override must honour `excludes` — the agent-dir
+`close()` — plus the optional `runDeadline` (the backend's soft and hard run
+deadline, `softEpochSec`/`hardEpochSec`; the Kubernetes session reports it from
+the pod's start time when `gracefulStopSeconds` is set, every other runner keeps
+the null default, and callers must branch on null). An `upload` override must honour `excludes` — the agent-dir
 upload passes the nested-agent excludes (ADR-0068); the local runner's
 no-op default ignores them because it copies nothing. `download`'s
 `mode` is a `DownloadMode` (`OVERLAY`/`OVERWRITE`/`MIRROR`) — `MIRROR`
@@ -135,7 +138,11 @@ at all. A count ahead of what
 `OutputSink` received is waited on once, briefly, and then fails the step as
 *output incomplete* rather than passing truncated output off as a clean exit; a
 count the drain gave up on matches what `OutputSink` received, so the instance's
-warning is the only trace of the missing tail.
+warning is the only trace of the missing tail. A graceful stop rides two more ops
+(ADR-0107): `cmd` carries an optional `interruptGraceSeconds`, and `interrupt`
+stops the running command — SIGINT its process group, kill after the grace its
+`cmd` carried — with the `cmd` result reported as usual; the reference instance
+clamps the grace to its own bound, so a peer-supplied value cannot pin its reap.
 The routes are mounted outside `authenticate(...)` next to `callbackRoutes`: a
 domain token is a separate principal class (§12). The registry runs a
 heartbeat sweeper that drops silent instances and fails their runs.

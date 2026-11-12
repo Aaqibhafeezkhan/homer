@@ -2,12 +2,12 @@ package homer.app.runners.ssh
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.SshConnectionLostException
+import homer.app.infra.KillCause
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.ShellExecutor
+import homer.app.infra.appendKillNotices
 import homer.app.models.CommandResult
-import homer.app.runners.KillCause
-import homer.app.runners.appendKillNotices
 import homer.app.runners.exceedsOutputCap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

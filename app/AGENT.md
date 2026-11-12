@@ -1398,7 +1398,7 @@ A run is stopped gracefully in exactly two ways:
 1. **A step's own `timeout`,** when that step declares `onTimeout: stop`. Instead of failing the run
    at once, the step is interrupted and the stop phase runs.
 2. **The runner's soft run deadline.** A Kubernetes runner configured with
-   [`gracefulStopSeconds`](SERVER.md#kubernetes) stops the run that many seconds before
+   [`gracefulStopSeconds`](SERVER.md#kubernetesrunner-fields) stops the run that many seconds before
    `maxRunSeconds`, so the stop phase finishes inside the pod's hard limit.
 
 Either way the run ends **`FAILED`** — there is no separate status — carrying a `stop` record that
@@ -1406,6 +1406,10 @@ says why and what happened: `{reason, stepIndex, stepLabel, at, stopSteps}`, whe
 `step_timeout` or `run_deadline` and `stopSteps` is `finished`, `failed` or `none`. The interrupted
 step's `ExecutionInfo` carries `stoppedBy` with the same value, and each stop step's carries
 `onStop: true`.
+
+A step whose output exceeds the server's `maxOutputBytes` cap is **not** stopped gracefully, even
+when it declares `onTimeout: stop` — the cap is an ordinary failure, the run carries no `stop`
+record, and the truncation is flagged on the step like any other cap kill.
 
 **The stop phase.** `onStop:` lists the steps to run, once and in order. They are ordinary commands
 of any type, with three differences:

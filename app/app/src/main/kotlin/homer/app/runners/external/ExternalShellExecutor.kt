@@ -1,12 +1,12 @@
 package homer.app.runners.external
 
 import homer.app.exceptions.OutputCapExceededException
+import homer.app.infra.KillCause
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.ShellExecutor
+import homer.app.infra.appendKillNotices
 import homer.app.models.CommandResult
-import homer.app.runners.KillCause
-import homer.app.runners.appendKillNotices
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi

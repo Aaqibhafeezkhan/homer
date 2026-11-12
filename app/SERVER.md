@@ -3744,11 +3744,12 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd, interruptGraceSeconds?}` — how long the command may keep running after a SIGINT before it is killed; null or absent means the immediate kill | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
+| `interrupt` | `{opId}` of the running `cmd` | none; the instance stops it gracefully — SIGINT its process group, then kill after the grace the `cmd` carried — and reports the `cmd` result as usual. Best-effort: an interrupt for a command that has already exited, or that the instance cannot stop, still ends in the normal kill path. |
 
 Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
 result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance

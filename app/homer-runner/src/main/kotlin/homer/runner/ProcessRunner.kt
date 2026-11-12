@@ -74,7 +74,8 @@ object ProcessRunner {
          * Stops the command gracefully: SIGINT its process group, wait up to [grace] for it to
          * exit, then [kill] what is left. Best-effort — a command that exits inside the grace
          * leaves the kill a no-op, one that ignores SIGINT is killed after the grace, and a host
-         * without `setsid` (no known group) still gets the [kill]. Null kills at once. The pgid
+         * without `setsid` (no known group) still gets the [kill]. Null skips the wait, not the
+         * SIGINT — the group is signalled either way. The pgid
          * is the process's own group or nothing, the same guard [kill] uses, so it can never be
          * this runner's group. See ADR-0107.
          */

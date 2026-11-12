@@ -156,13 +156,16 @@ class LocalShellExecutor(
         // a broken pipe and returned; release its thread before propagating.
         stdInJob?.cancelAndJoin()
         outPump?.join(pumpJoinMs)
-        if (stopped == Wait.TIMED_OUT) {
-            val graceNote = if (grace != null) " after a $grace SIGINT grace" else ""
-            stdErr.toFile().appendText("\n[HOMER] Command killed due to TTL timeout ($timeout)$graceNote\n")
-        }
-        if (stopped == Wait.OUTPUT_CAP) {
-            stdErr.toFile().appendText("\n[HOMER] Output cap exceeded ($maxOutputBytes bytes)\n")
-        }
+        appendKillNotices(
+            stdErr,
+            KillCause().apply {
+                byTimeout = stopped == Wait.TIMED_OUT
+                byCap = stopped == Wait.OUTPUT_CAP
+            },
+            timeout,
+            maxOutputBytes,
+            graceNote = if (grace != null) " after a $grace SIGINT grace" else "",
+        )
     }
 
     /** Starts [command] in [workDir] with exactly [env]; stdout goes to [stdOut] unless a [stdOutFilter] pumps it. */

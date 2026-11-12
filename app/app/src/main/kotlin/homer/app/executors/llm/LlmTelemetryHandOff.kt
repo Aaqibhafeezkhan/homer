@@ -74,12 +74,10 @@ internal class LlmTelemetryHandOff<C>(
         try {
             // A non-zero exit's stream is read leniently: a killed CLI's trailing partial line
             // must not take the attempt's tool and message spans with it. Exit 0 stays strict.
-            val stream =
-                when (outcome) {
-                    is RetryOutcome.Success -> outcome.stream
-                    is RetryOutcome.CappedStop -> outcome.stream
-                    is RetryOutcome.OtherFailure -> output.readLeniently(outcome.result.stdOut, span)
-                }
+            // OtherFailure already carries the lenient read the terminal-stop inspection made —
+            // reuse it; only a null (nothing was read) falls back to reading the file here, so a
+            // huge stdout is never parsed a second time.
+            val stream = outcome.stream ?: output.readLeniently(outcome.result.stdOut, span)
             val step = LlmStepInfo(label = command.label, configuredModel = command.model)
             handOff(settlement, outcome.result.llmAccounting, stream, compiledPrompt, span, redactor, step)
         } catch (e: CancellationException) {

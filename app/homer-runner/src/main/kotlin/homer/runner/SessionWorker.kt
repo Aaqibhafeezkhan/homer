@@ -289,7 +289,11 @@ class SessionWorker(
                 return OpResult(op.opId, ok = false, error = "failed to start: ${e.message}")
             }
         running[op.opId] = handle
-        op.interruptGraceSeconds?.let { interruptGraces[op.opId] = it.seconds }
+        // Peer-supplied grace (RunnerProtocol.Cmd.interruptGraceSeconds): clamped to the same
+        // 0..600 bound Homer's agent validator applies. The wire peer is a separate trust
+        // boundary (§12 rule 4) — an unclamped value would pin the reap below for that long.
+        val grace = op.interruptGraceSeconds?.coerceIn(0, MAX_INTERRUPT_GRACE_SECONDS)?.seconds
+        grace?.let { interruptGraces[op.opId] = it }
         // A Cancel dispatched before this coroutine got to run (dispatchLoop's `launch`
         // for `cmd` doesn't wait for the process to start) lands in cancelledOps instead
         // of finding a handle in `running`; check it immediately after registering so
@@ -297,7 +301,7 @@ class SessionWorker(
         if (op.opId in cancelledOps) handle.kill()
         try {
             val exit =
-                handle.await(op.timeoutMs.milliseconds, op.interruptGraceSeconds?.seconds) { stream, seq, bytes ->
+                handle.await(op.timeoutMs.milliseconds, grace) { stream, seq, bytes ->
                     postChunk(op.opId, stream, seq, bytes)
                 }
             return cmdResult(claim.sessionId, op.opId, exit)
@@ -356,6 +360,9 @@ class SessionWorker(
         private const val MAX_RETRIES = 5
         private const val OPS_CAPACITY = 16
         private val RETRY_DELAY = 1.seconds
+
+        /** Upper bound on a peer-supplied `Cmd.interruptGraceSeconds`, the runner-side half of Homer's `0..600` validation. */
+        private const val MAX_INTERRUPT_GRACE_SECONDS = 600L
         private val FAST_POLL_THRESHOLD = 1.seconds
         private val FAST_POLL_DELAY = 250.milliseconds
     }

@@ -1,7 +1,7 @@
 package homer.app.runners.kubernetes
 
 import homer.app.EnvConstants
-import homer.app.runners.KillCause
+import homer.app.infra.KillCause
 import org.slf4j.LoggerFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong

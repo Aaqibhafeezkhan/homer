@@ -1,0 +1,15 @@
+name: graceful-stop
+description: A 2 s step timeout with onTimeout stop stops the run gracefully and runs the onStop steps
+commands:
+  - !<script>
+    label: overslept
+    timeout: 2
+    onTimeout: stop
+    content: sleep 10
+  - !<script>
+    label: never-runs
+    content: echo "must not run"
+onStop:
+  - !<script>
+    label: record-stop
+    content: 'printf "reason=%s step=%s label=%s" "$HMR_STOP_REASON" "$HMR_STOP_STEP_INDEX" "$HMR_STOP_STEP_LABEL" > "$HMR_ARTIFACTS_DIR/stop-env.txt"'

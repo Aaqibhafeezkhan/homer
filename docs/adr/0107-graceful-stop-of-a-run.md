@@ -94,8 +94,9 @@ no new decision: `stop` already says *why*, and says it in more detail than a st
 - Good: the interrupted step and every stop step are visible in the status API with the reason, so
   a caller can tell "timed out with no stop work" from "timed out and its stop steps ran".
 - Good: the stop phase is bounded twice — the count of stop steps (10) and each step's timeout
-  (the remaining deadline minus a 10 s margin, capped at 300 s when the runner published no
-  deadline) — so it cannot extend a run indefinitely.
+  (the remaining deadline minus a 10 s margin, and capped at 300 s) — so it cannot extend a run
+  indefinitely. A stop detected between steps names the last *started* step in the record — it
+  completed, and nothing was in flight.
 - Bad: a stopped run's spend and its stop steps' spend are on the same run record, and the run is
   `FAILED` either way, so a caller who wants to know whether the stop steps did anything must read
   `stop.stopSteps`.

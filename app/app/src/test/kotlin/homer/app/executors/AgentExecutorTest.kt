@@ -3510,6 +3510,82 @@ class AgentExecutorTest {
         }
 
     @Test
+    fun `a regular step's timeout is capped at the soft run deadline and still granted the interrupt grace`() =
+        runTest {
+            val now = System.currentTimeMillis() / 1000
+            val soft = now + 30
+            val hard = soft + 7200
+            every { mockSession.runDeadline } returns RunDeadline(softEpochSec = soft, hardEpochSec = hard)
+            // No onTimeout: stop — only the published deadline puts a grace on a plain step.
+            val agent = Agent(name = "stoppable", commands = listOf(Command.Cmd(cmd = listOf("run"), label = "Run tests", timeout = 60)))
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            val contexts = mutableListOf<ExecutionContext>()
+            coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            val before = System.currentTimeMillis() / 1000
+            stopExecutor(agent).execute()
+            val after = System.currentTimeMillis() / 1000
+
+            val capped = contexts.single().timeoutOverrideSeconds!!
+            assertTrue(
+                capped in (soft - after)..(soft - before),
+                "regular step timeout $capped is not the soft deadline minus now ($soft)",
+            )
+            assertTrue(capped < 60, "the declared timeout was not cut: $capped")
+            assertEquals(
+                30.seconds,
+                contexts.single().interruptGrace,
+                "a step under a published deadline runs under a grace without opting in",
+            )
+        }
+
+    @Test
+    fun `a regular step's timeout is capped ten seconds under the hard deadline`() =
+        runTest {
+            val now = System.currentTimeMillis() / 1000
+            val hard = now + 40
+            every { mockSession.runDeadline } returns RunDeadline(softEpochSec = now + 3600, hardEpochSec = hard)
+            val agent = Agent(name = "stoppable", commands = listOf(Command.Cmd(cmd = listOf("run"), label = "Run tests", timeout = 60)))
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            val contexts = mutableListOf<ExecutionContext>()
+            coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            val before = System.currentTimeMillis() / 1000
+            stopExecutor(agent).execute()
+            val after = System.currentTimeMillis() / 1000
+
+            val capped = contexts.single().timeoutOverrideSeconds!!
+            assertTrue(
+                capped in (hard - 10 - after)..(hard - 10 - before),
+                "regular step timeout $capped is not hard - 10s - now ($hard)",
+            )
+            assertTrue(capped < 60, "the declared timeout was not cut: $capped")
+        }
+
+    @Test
+    fun `a deadline remainder under a second is floored at one second`() =
+        runTest {
+            val now = System.currentTimeMillis() / 1000
+            // hard - 10 lands 0..1 s after the plan reads the clock, so the raw cap is 1 or 0.
+            every { mockSession.runDeadline } returns RunDeadline(softEpochSec = now + 3600, hardEpochSec = now + 11)
+            val agent = Agent(name = "stoppable", commands = listOf(Command.Cmd(cmd = listOf("run"), label = "Run tests", timeout = 60)))
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            val contexts = mutableListOf<ExecutionContext>()
+            coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            stopExecutor(agent).execute()
+
+            val capped = contexts.single().timeoutOverrideSeconds!!
+            assertEquals(1L, capped, "a sub-second remainder must be floored at one second, not pass a zero timeout")
+        }
+
+    @Test
     fun `a stop step that times out ends the stop without a second stop sequence`() =
         runTest {
             val agent =

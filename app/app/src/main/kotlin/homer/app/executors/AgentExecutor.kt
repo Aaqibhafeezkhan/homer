@@ -339,7 +339,10 @@ class AgentExecutor(
      * before the teardown, when [cause] is a stop trigger — a step that timed out with
      * `onTimeout: stop`, or the backend's soft run deadline. Records what happened on the run and
      * returns; the caller rethrows, so the run ends `FAILED` with its stop recorded. The remaining
-     * `commands` steps are never started, because the step loop was left by the throw. See ADR-0107.
+     * `commands` steps are never started, because the step loop was left by the throw. A stop
+     * detected between steps — the soft deadline passing before the next one starts — names the
+     * last *started* step in the record and the `HMR_STOP_STEP_*` env: that step completed, and
+     * nothing was in flight to interrupt. See ADR-0107.
      */
     @OptIn(ExperimentalTime::class)
     private suspend fun runStopPhase(
@@ -349,6 +352,9 @@ class AgentExecutor(
         cause: Throwable,
     ) {
         val reason = stopReasonFor(cause, interrupted.command, deadline) ?: return
+        // When the stop was detected, not when the stop phase finished — the stop steps run
+        // after it, and the record's timeline must not place them before the stop itself.
+        val stoppedAt = Clock.System.now().epochSeconds
         val stopEnv =
             StopContext.env(
                 reason = reason,
@@ -369,7 +375,7 @@ class AgentExecutor(
                 reason = reason,
                 stepIndex = interrupted.index,
                 stepLabel = interrupted.command.label,
-                at = Clock.System.now().epochSeconds,
+                at = stoppedAt,
                 stopSteps = outcome,
             ),
         )

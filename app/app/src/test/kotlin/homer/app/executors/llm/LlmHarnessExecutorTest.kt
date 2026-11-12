@@ -185,6 +185,32 @@ class LlmHarnessExecutorTest {
         return exec.execute(claude(), context.copy(processId = processId, agentName = agentName), span)
     }
 
+    @Test
+    fun `the step's capped timeout and interrupt grace reach the shell`() =
+        runTest {
+            // A stop step runs under the run's hard deadline and always under a grace, so the
+            // step's own `timeout` must not win here. See ADR-0107.
+            val stopContext = context.copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
+            coEvery {
+                context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
+            } returns TestFixtures.mockCommandResult(exitCode = 0, stdOut = stdOut, stdErr = stdErr)
+
+            executor.execute(claude(), stopContext, span)
+
+            coVerify {
+                context.shell.cmd(
+                    command = any(),
+                    stdOut = any(),
+                    stdErr = any(),
+                    stdIn = any(),
+                    env = any(),
+                    timeout = 5.seconds,
+                    stdOutFilter = any(),
+                    interruptGrace = 30.seconds,
+                )
+            }
+        }
+
     // ========== retry ==========
 
     @Test
