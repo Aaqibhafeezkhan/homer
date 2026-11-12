@@ -212,6 +212,10 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
     @Test
     fun `an unrenderable cooldown key is refused with 400 and creates no run`() =
         runBlocking {
+            // Counted before and after rather than asserted absolutely: the class shares one
+            // live server, and the keyed case above already has rows of this agent.
+            val before = rowsOf("cooldown-key")
+
             // `mr` is optional, so the request resolves; `{{MR}}` then has nothing to
             // render from and the start must fail closed rather than run under a key
             // every subject would share.
@@ -224,9 +228,11 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
             val error = E2e.json.decodeFromString<ErrorBody>(response.bodyAsText())
             assertTrue(error.msg.contains("MR"), "the refusal should name the placeholder: ${error.msg}")
 
-            val list: ProcessList = HomerApi.decode(HomerApi.statusAll(mapOf("agentName" to "cooldown-key")))
-            assertEquals(0, list.total, "a refused key must not create a run")
+            assertEquals(before, rowsOf("cooldown-key"), "a refused key must not create a run")
         }
+
+    /** How many process rows [agent] has right now; the suite shares one live server. */
+    private suspend fun rowsOf(agent: String): Int = HomerApi.decode<ProcessList>(HomerApi.statusAll(mapOf("agentName" to agent))).total
 
     private suspend fun debugResponse(agent: String): HttpResponse =
         E2e.client.post("/api/v1/agents/$agent/debug") {
