@@ -13,6 +13,7 @@
 - **Added: `continuation.inheritInputs` on the agent definition** — A continuation or dispatch fired back to the same agent can carry the registering run's inputs, so a resumed segment keeps its lock key's subject and its `tags.fromInputs` tags. See [ADR-0101](docs/adr/0101-continuation-inherits-origin-run-inputs.md).
 - **Fixed: a `!<claude>` result flagged `is_error` fails the step** — Runs that reported `subtype: "success"` while the CLI flagged an error (a refusal, an unavailable deferred tool, an API error) now fail instead of finishing green, so their `retry` and `escalate` tiers run and their `afterFailure` cooldowns arm.
 - **Fixed: shutdown drain waits for runs started during the drain** — A shutdown now also finishes the `!<agent>` hops, dispatches and continuations its in-flight runs start, and runs already waiting for a runner claim, instead of killing them and leaving them `UNKNOWN`; a new top-level start during the drain is refused with `503`. See [ADR-0102](docs/adr/0102-shutdown-drain-waits-for-descendant-runs.md).
+- **BREAKING: a `lockStrategy.key` placeholder with no value fails the run before it starts** — It used to stay literal, so every run of that agent rendered the same key and unrelated runs were skipped, queued behind or killed by each other; the run now ends `FAILED` with a `failureReason` naming the placeholder, taking no lock, slot or workspace. See [ADR-0098](docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md).
 
 ## [1.41.0] - 2026-11-06
 

@@ -1,9 +1,11 @@
 package homer.app.executors
 
 import homer.app.config.ExecutionConfig
+import homer.app.exceptions.UnresolvedLockKeyPlaceholderException
 import homer.app.fixtures.AgentFixtures
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
+import homer.app.infra.DefaultTextCompiler
 import homer.app.infra.QuestionsWorkspaceSetup
 import homer.app.infra.TelemetryService
 import homer.app.infra.Workspace
@@ -12,6 +14,7 @@ import homer.app.infra.WorkspaceConfigFactory
 import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.LockStrategy
+import homer.app.models.OnKeyCollisionStrategy
 import homer.app.models.Param
 import homer.app.models.ProcessStatus
 import homer.app.models.PurgeAfterParser
@@ -36,6 +39,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -47,7 +51,9 @@ import kotlin.io.path.writeText
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -923,6 +929,180 @@ class ProcessTest {
 
             coVerify { mockLockManager.waitForLockOrThrow("shared", any(), 9) }
             coVerify { mockLockManager.releaseLock("shared", 9) }
+        }
+
+    // ========== Unresolved lock key placeholder (fail closed, before any gate) ==========
+
+    /**
+     * A Process over the **real** [WorkspaceConfigFactory], so the key render and its denial are
+     * the production ones. The workspace factory throws if it is ever reached; the lock and slot
+     * managers default to the real ones, where a denial after a gate would leave that gate held
+     * and hang the test, and a mock pair lets a test assert the gates were never called at all.
+     */
+    private fun processOverRealFactory(
+        agent: Agent,
+        queryParams: Map<String, String>,
+        lockManager: LockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger()),
+        parallelRunsManager: ParallelRunsManager = DefaultParallelRunsManager(),
+    ): Process =
+        Process(
+            workspaceConfigFactory =
+                WorkspaceConfigFactory(
+                    workspaceRoot = "/tmp/homer",
+                    globalEnv = emptyMap(),
+                    textCompiler = DefaultTextCompiler(),
+                ),
+            executorFactory = mockExecutorFactory,
+            telemetryService = mockTelemetryService,
+            config = testConfig,
+            lockManager = lockManager,
+            parallelRunsManager = parallelRunsManager,
+            processManager = mockProcessManager,
+            runnerRegistry = mockRunnerRegistry,
+            activeSessions = ActiveSessionsRegistry(),
+            questionsService = mockQuestionsService,
+            questionsWorkspaceSetup = mockQuestionsWorkspaceSetup,
+            agent = agent,
+            queryParams = queryParams,
+            parentContext = testContext,
+            workspaceFactory = { _, _, _ -> throw AssertionError("a denied run must not create a workspace") },
+        )
+
+    /**
+     * Runs the denial twice against one agent under [strategy]: both fail the same way, so
+     * nothing was queued behind, skipped by or killed for the first denial, and the second run
+     * never waits on a slot or lock the first one left held. See ADR-0047.
+     */
+    private suspend fun assertDeniedTwice(strategy: OnKeyCollisionStrategy) {
+        val agent = testAgent.copy(lockStrategy = LockStrategy(key = "ticket-{{TICKET_ID}}", onCollision = strategy))
+        val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+        val process = processOverRealFactory(agent, queryParams = emptyMap(), lockManager = lockManager)
+
+        val denied = assertFailsWith<UnresolvedLockKeyPlaceholderException> { process.execute(1, mockSpan) }
+        assertEquals(listOf("TICKET_ID"), denied.placeholders)
+        val alsoDenied = assertFailsWith<UnresolvedLockKeyPlaceholderException> { process.execute(2, mockSpan) }
+        assertEquals(listOf("TICKET_ID"), alsoDenied.placeholders)
+
+        // No other run is skipped or killed on account of the denial.
+        coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+        coVerify(exactly = 0) { mockProcessManager.compareAndSetStatus(any(), any(), ProcessStatus.WORKING) }
+        // And neither denial left a lock behind: the literal key they would have shared is free,
+        // so this probe acquires it at once instead of queueing behind a denial that took it.
+        lockManager.waitForLockOrThrow("ticket-{{TICKET_ID}}", OnKeyCollisionStrategy.WAIT, 99)
+        lockManager.releaseLock("ticket-{{TICKET_ID}}", 99)
+    }
+
+    @Test
+    fun `a denied run calls neither gate`() =
+        runTest(timeout = 10.seconds) {
+            // The gates are mocked here, so "never reached" is asserted directly rather than
+            // inferred: no slot, no lock, and no release of a lock the run never took.
+            val agent = testAgent.copy(lockStrategy = LockStrategy(key = "ticket-{{TICKET_ID}}", onCollision = OnKeyCollisionStrategy.WAIT))
+            val process =
+                processOverRealFactory(
+                    agent,
+                    queryParams = emptyMap(),
+                    lockManager = mockLockManager,
+                    parallelRunsManager = mockParallelRunsManager,
+                )
+
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> { process.execute(1, mockSpan) }
+
+            coVerify(exactly = 0) { mockParallelRunsManager.acquireSlot(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { mockLockManager.waitForLockOrThrow(any(), any(), any()) }
+            coVerify(exactly = 0) { mockLockManager.releaseLock(any(), any()) }
+        }
+
+    @Test
+    fun `WAIT with an unresolved lock key placeholder is denied before it queues`() =
+        runTest(timeout = 10.seconds) {
+            assertDeniedTwice(OnKeyCollisionStrategy.WAIT)
+        }
+
+    @Test
+    fun `SKIP_CURRENT with an unresolved lock key placeholder is denied, not skipped`() =
+        runTest(timeout = 10.seconds) {
+            assertDeniedTwice(OnKeyCollisionStrategy.SKIP_CURRENT)
+        }
+
+    @Test
+    fun `KILL_OLD_RUN_CURRENT with an unresolved lock key placeholder kills no run`() =
+        runTest(timeout = 10.seconds) {
+            assertDeniedTwice(OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT)
+        }
+
+    @Test
+    fun `a key whose placeholders resolve still acquires and releases the lock`() =
+        runTest {
+            // The denial must not leak into the ordinary path: the same real factory, with the
+            // subject supplied, renders the key and takes the lock as before.
+            val agent = testAgent.copy(lockStrategy = LockStrategy(key = "ticket-{{TICKET_ID}}", onCollision = OnKeyCollisionStrategy.WAIT))
+            val lockManager = mockLockManager
+            val process =
+                Process(
+                    workspaceConfigFactory =
+                        WorkspaceConfigFactory(
+                            workspaceRoot = "/tmp/homer",
+                            globalEnv = emptyMap(),
+                            textCompiler = DefaultTextCompiler(),
+                        ),
+                    executorFactory = mockExecutorFactory,
+                    telemetryService = mockTelemetryService,
+                    config = testConfig,
+                    lockManager = lockManager,
+                    parallelRunsManager = mockParallelRunsManager,
+                    processManager = mockProcessManager,
+                    runnerRegistry = mockRunnerRegistry,
+                    activeSessions = ActiveSessionsRegistry(),
+                    questionsService = mockQuestionsService,
+                    questionsWorkspaceSetup = mockQuestionsWorkspaceSetup,
+                    agent = agent,
+                    queryParams = mapOf("TICKET_ID" to "T-1"),
+                    parentContext = testContext,
+                    workspaceFactory = { _, _, _ -> TestFixtures.mockWorkspace(TestFixtures.mockWorkspaceConfig(lockKey = "ticket-T-1")) },
+                )
+
+            process.execute(1, mockSpan)
+
+            coVerify { mockLockManager.waitForLockOrThrow("ticket-T-1", OnKeyCollisionStrategy.WAIT, 1) }
+            coVerify { mockLockManager.releaseLock("ticket-T-1", 1) }
+        }
+
+    @Test
+    fun `a denial leaves a run holding another key alone`() =
+        runTest(timeout = 10.seconds) {
+            // Availability, not just correctness: another subject's run holds its own key while a
+            // run of this agent is denied. KILL_OLD_RUN_CURRENT on the denied run must kill nothing,
+            // so the holder still holds the lock afterwards (ADR-0047).
+            val lockManager = DefaultLockManager(mockProcessManager, TestFixtures.mockLogger())
+            lockManager.waitForLockOrThrow("other-subject", OnKeyCollisionStrategy.WAIT, 1)
+
+            val agent =
+                testAgent.copy(
+                    lockStrategy = LockStrategy(key = "ticket-{{TICKET_ID}}", onCollision = OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT),
+                )
+            val process = processOverRealFactory(agent, queryParams = emptyMap(), lockManager = lockManager)
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> { process.execute(2, mockSpan) }
+
+            assertNull(
+                withTimeoutOrNull(50.milliseconds) {
+                    lockManager.waitForLockOrThrow("other-subject", OnKeyCollisionStrategy.WAIT, 3)
+                },
+                "the unrelated holder must still hold its lock",
+            )
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+            lockManager.releaseLock("other-subject", 1)
+        }
+
+    @Test
+    fun `acceptParentLock does not excuse an unresolved key`() =
+        runTest(timeout = 10.seconds) {
+            // The pass-through skips the lock, not the render: a key the run cannot resolve is
+            // denied here too, so it can never take the flow's shared lock as a literal string.
+            val agent = testAgent.copy(lockStrategy = LockStrategy(key = "ticket-{{TICKET_ID}}", acceptParentLock = true))
+            val process = processOverRealFactory(agent, queryParams = emptyMap())
+
+            assertFailsWith<UnresolvedLockKeyPlaceholderException> { process.execute(1, mockSpan) }
         }
 
     // ========== Default workspace wiring Tests ==========

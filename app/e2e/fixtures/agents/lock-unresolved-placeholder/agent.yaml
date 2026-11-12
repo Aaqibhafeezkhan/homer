@@ -1,0 +1,9 @@
+name: lock-unresolved-placeholder
+description: Lock key names a placeholder the run's env never resolves, so the run is denied before it starts
+lockStrategy:
+  key: "ticket-{{UNRESOLVED_VAR}}"
+  onCollision: SKIP_CURRENT
+commands:
+  - !<script>
+    label: never-runs
+    content: sleep 3
