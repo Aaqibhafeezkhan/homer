@@ -34,13 +34,9 @@ internal val processModule =
                 // ProcessManager → HookService → AgentRunStarter → ProcessExecutor →
                 // ProcessManager. See ADR-0107.
                 hookRecording = { get<HookService>().recording() },
-                // Launched on the application scope, never awaited on the committing caller's
-                // coroutine: one fire runs row reads, a grant check and a complete nested
-                // start, and a start or kill response must not wait on the chain its run fans
-                // out to — under the maintenance gate a CREATED hook's start would park the
-                // response for the whole queue wait, then settle FAILED. The rows are durable
-                // and claim-gated, so a fire this launch never reaches (a shutdown) is
-                // replayed at boot. See ADR-0107.
+                // Fired on the application scope, never awaited on the committing caller's
+                // coroutine — a start or kill response must not wait on the hook chain.
+                // See ADR-0107.
                 onHooksRecorded = { recorded ->
                     get<CoroutineScope>(named("applicationScope")).launch {
                         get<HookService>().onRowsRecorded(recorded)

@@ -21,6 +21,7 @@ import homer.app.services.persistence.ProcessRepository
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.job
@@ -53,7 +54,10 @@ class ProcessWiringTest {
         )
 
     /** The two modules under test over the mocks the boot's own graph supplies from the app module. */
-    private fun koin(hookFireScope: CoroutineScope): Koin {
+    private fun koin(
+        hookFireScope: CoroutineScope,
+        runStartGate: CompletableDeferred<Unit>,
+    ): Koin {
         val db = PersistenceTestSupport.tempDatabase()
         val registry = ProcessJobRegistry()
         val runStarter = mockk<AgentRunStarter>()
@@ -65,6 +69,9 @@ class ProcessWiringTest {
             runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } coAnswers
             {
+                // Park before recording, so `started` is also the marker that a fire reached and
+                // survived its start: while the gate is shut, nothing is recorded yet.
+                runStartGate.await()
                 started += firstArg<Agent>().name
                 99
             }
@@ -103,16 +110,25 @@ class ProcessWiringTest {
     }
 
     @Test
-    fun `a status write through the wired graph fires the hook its declaring agent declared`() =
+    fun `a status write through the wired graph fires the hook its declaring agent declared without waiting on it`() =
         runTest {
             // The wiring launches the fire on the application scope, so the test owns that scope
-            // and joins what the status write launched before asserting.
+            // and holds the fire parked inside start on a gate: if the status write ever awaited
+            // the fire inline again, compareAndSetStatus could not return while the gate is shut
+            // and runTest would time out before the first assertion.
+            val runStartGate = CompletableDeferred<Unit>()
             val hookFireScope = CoroutineScope(Job())
-            val manager = koin(hookFireScope).get<ProcessManager>()
+            val manager = koin(hookFireScope, runStartGate).get<ProcessManager>()
 
             val id = manager.obtainProcessId("declarer", owner = "alice")
             manager.setProcessStatus(id, ProcessStatus.WORKING)
             manager.compareAndSetStatus(id, setOf(ProcessStatus.WORKING), ProcessStatus.FINISHED)
+
+            // The write returned while its fire is still parked mid-start, so the response did
+            // not wait on the hook chain the run fans out to. ADR-0107.
+            assertEquals(emptyList<String>(), started)
+
+            runStartGate.complete(Unit)
             hookFireScope.coroutineContext.job.children
                 .toList()
                 .joinAll()

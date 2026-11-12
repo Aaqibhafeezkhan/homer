@@ -78,10 +78,16 @@ class HookRepositoryTest {
     @Test
     fun `one row is recorded per entry, in declaration order`() =
         runTest {
-            val ids = record(hook(target = "first"), hook(target = "second"), hook(target = "third"))
+            val recorded = recordResult(hook(target = "first"), hook(target = "second"), hook(target = "third"))
 
-            assertEquals(3, ids.size)
-            assertEquals(listOf("first", "second", "third"), repo.list(HookStatus.PENDING).map { it.targetAgentName })
+            assertEquals(listOf("first", "second", "third"), recorded.rows.map { it.targetAgentName })
+            // The fire after the commit settles by the delivered row's id and starts its data, so
+            // each returned row must be the persisted one, keyed in submission order: a generated
+            // id that came back out of order would settle one hook without firing it and leave
+            // another PENDING to refire at boot. §12 rule 8, for the pairing this insert assumes.
+            for (row in recorded.rows) {
+                assertEquals(assertNotNull(repo.get(row.id)), row)
+            }
         }
 
     @Test
@@ -98,7 +104,10 @@ class HookRepositoryTest {
             // caller logs after the commit. §12 rule 4.
             val recorded = recordResult(hook(target = "a"), hook(target = "b"), hook(target = "c"), maxPending = 2)
 
-            assertEquals(2, recorded.rows.map { it.id }.size)
+            assertEquals(listOf("a", "b"), recorded.rows.map { it.targetAgentName })
+            for (row in recorded.rows) {
+                assertEquals(assertNotNull(repo.get(row.id)), row)
+            }
             assertEquals(listOf("a", "b"), repo.list(HookStatus.PENDING).map { it.targetAgentName })
             assertEquals(
                 listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.FINISHED)),

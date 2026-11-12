@@ -132,11 +132,13 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   hooks twice for one run. The lookup reads no database, so it is
   safe inside the write lock, and resolving it per transition is what makes an agent reload
   take effect for runs already in flight.
-- **Delivery.** After the commit, the recorded ids are handed to
-  `HookService.onRowsRecorded` **on the application scope, not on the committing caller's
-  coroutine** — one fire runs row reads, a grant check and a complete nested start, and a
-  start or kill response must not wait on the chain its run fans out to. The service loads
-  each row and hands it to `HookFireService`. Every call into that service is isolated per
+- **Delivery.** After the commit, the rows are handed to
+  `HookService.onRowsRecorded` exactly as the insert built them — the delivery path never
+  re-reads what it just wrote (SQLite rule 4) — **on the application scope, not on the
+  committing caller's coroutine**: one fire runs row reads, a grant check and a complete
+  nested start, and a start or kill response must not wait on the chain its run fans out to.
+  The service hands each row straight to `HookFireService`, with no per-row load. Every call
+  into that service is isolated per
   row: a
   failure anywhere in a fire — the claim, the settle, the start — is caught and logged, never
   propagated into the status write that triggered it or into the rows behind it in the sweep,
@@ -148,8 +150,10 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   gone, or a `canDispatchHop(owner, declaring, target)` denial, settles the row `FAILED` and
   starts nothing. The start carries the triggering run's owner, the triggering run as the
   parent (`serverDerivedParent = true`), the declaring agent as the invocation chain, and the
-  flow root derived through `visibleOriginRootProcessId` for **that owner** — so a root the
-  owner cannot see is dropped rather than inherited. §12.
+  flow root derived from the triggering row the fire already read: a run with no root of its
+  own is the flow root, and otherwise `visibleRootProcessId` gates that root on **that
+  owner's** visibility — a root the owner cannot see is dropped rather than inherited, never
+  replaced by the run's own id (ADR-0058). §12.
 - **Payload.** `HMR_HOOK_PROCESS_ID`, `HMR_HOOK_AGENT_NAME`, `HMR_HOOK_STATUS`,
   `HMR_HOOK_DEPTH`, and — when the run has them — `HMR_HOOK_FAILURE_REASON` (the stored
   pre-start failure sentence, already fixed-vocabulary and redacted, ADR-0098) and
@@ -170,8 +174,10 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   - `server.hooks.maxChainDepth` (8): a fire whose triggering run is already that deep is settled
     `DROPPED` before any attempt, since the next attempt would be refused for the same reason. The
     depth is derived at fire time from that run's stored `HMR_HOOK_DEPTH` — the run's own durable
-    state, so a restart between a hook's start and its own transition cannot reset the bound, and
-    a run whose row is gone (evicted, record-purged) reads as depth 0 and fires.
+    state, so a restart between a hook's start and its own transition cannot reset the bound. A
+    run whose row is gone (evicted, record-purged) — or whose stored depth is not a number —
+    drops the hook: the bound fails closed, and neither state heals on a retry. A readable run
+    with no stored depth is not a hook run itself, so its fire starts at depth 1.
   - Transient start refusals (cooldown, cost cap, capacity, a full run queue, a full lock-wait
     queue, the shutdown drain) are released for a retry on `ContinuationFireService`'s doubling
     back-off, bounded by its `MAX_FIRE_ATTEMPTS` (8) — the same constants, not copies. Any other
@@ -183,10 +189,12 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   start and its `markDispatched` cannot double-fire), fire the rows the `UNKNOWN` writes
   recorded, then replay every remaining PENDING row. A second boot finds nothing PENDING and
   fires nothing.
-- **Failure isolation.** A lookup failure, a start failure or a fire failure is caught, logged
-  and settled on the row; it never propagates into the status write (ADR-0023's rule for
-  continuations, applied to the same shape). A `CancellationException` is rethrown so a
-  cancelled transition is not reported as a hook failure.
+- **Failure isolation.** A start failure or a fire failure is caught, logged and settled on
+  the row; it never propagates into the status write (ADR-0023's rule for continuations,
+  applied to the same shape). A `CancellationException` is rethrown so a cancelled transition
+  is not reported as a hook failure. A triggering run that can no longer be read is not a
+  failure at all: the fire drops the hook, because the chain bound cannot be checked off that
+  row — the fail-closed depth outcome above, settled `DROPPED`, not retried.
 
 **Why not the others:**
 
