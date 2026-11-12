@@ -333,15 +333,25 @@ private fun migrateToV30(
 }
 
 /**
- * v30→v31 adds what a graceful stop did to the run: its cause, the interrupted step and the
- * stop steps' outcome, as one JSON blob (ADR-0107). No backfill: a run that ended before this
- * version was never stopped gracefully, and a guessed cause is worse than none.
+ * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need (ADR-0106),
+ * and what a graceful stop did to the run: its cause, the interrupted step and the stop steps'
+ * outcome, as one JSON blob (ADR-0107). No backfill for either: a run that ended before this
+ * version was counted per agent and was never stopped gracefully, and a guessed subject or
+ * cause is worse than none — null simply means "no key", so a keyed cooldown ignores the row
+ * and a keyless one still counts it. Names match `Tables.kt`; `SchemaUtils.create` only
+ * indexes a table it creates, so the migration creates both indexes by hand.
  */
 private fun migrateToV31(
     st: Statement,
     current: Int,
 ) {
     if (current in 1 until 31) {
+        addColumnIfMissing(st, "processes", "cooldown_key", "TEXT")
+        st.execute("CREATE INDEX IF NOT EXISTS processes_agent_cooldown_key ON processes (agent_name, cooldown_key)")
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS processes_agent_cooldown_status_ended " +
+                "ON processes (agent_name, cooldown_key, status, ended_at)",
+        )
         addColumnIfMissing(st, "processes", "stop", "TEXT")
     }
 }

@@ -80,6 +80,14 @@ internal object Processes : Table("processes") {
     // from before v14. See ADR-0051.
     val endedAt = long("ended_at").nullable()
 
+    // The subject this run's cooldown windows are counted per: the agent's `cooldown.key`
+    // rendered at start from the run's env and resolved inputs, written in the INSERT's own
+    // transaction so it is valid the instant the row is. Null when the agent sets no key,
+    // and on every row from before v31 (no backfill — a pre-v31 run was counted per agent
+    // and cannot be attributed to a subject). A keyed cooldown ignores null rows; a keyless
+    // one counts every row of the agent, null included. See ADR-0106.
+    val cooldownKey = text("cooldown_key").nullable()
+
     // envNames of the inputs this agent declared `secret: true` AT THE TIME OF THE
     // RUN, as a JSON array. API redaction reads this rather than the agent's
     // current definition: records now outlive their workspace (ADR-0048), and an
@@ -170,6 +178,12 @@ internal object Processes : Table("processes") {
         index("processes_legacy_record_purge", false, status, purgeAt, filterCondition = { recordPurgeAt.isNull() })
         // v24: cooldown.afterFailure's latest-failure lookup, run under the write lock at run start.
         index("processes_agent_status_ended", false, agentName, status, endedAt)
+        // v31: the same two cooldown lookups scoped to one `cooldown.key`. The first is
+        // `agent_name = ? AND cooldown_key = ?` ordered by id, which the index's own rowid
+        // order serves; the second adds `status = ?` and orders by ended_at, so it needs
+        // both columns in the key to avoid a sort — the keyless pair above, mirrored.
+        index("processes_agent_cooldown_key", false, agentName, cooldownKey)
+        index("processes_agent_cooldown_status_ended", false, agentName, cooldownKey, status, endedAt)
     }
 
     override val primaryKey = PrimaryKey(id)

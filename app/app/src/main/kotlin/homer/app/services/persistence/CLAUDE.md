@@ -52,10 +52,11 @@ See ADR-0020.
   (INSERT with cooldown and capacity eviction, status transitions, boot
   reconciliation, single-row reads); the rest are extension functions on it by
   concern — `ProcessQueries.kt` (the list page, cost by tag, batched id reads),
-  `ProcessRetention.kt` (purge times, both sweeps, the shared-dir guard, record
-  purge, eviction), `ProcessStepRecords.kt` (step boundaries, runner state,
-  cost), `ProcessRunTags.kt` (run-time tags) — over the row mapping and column
-  codecs in `ProcessRows.kt`. The part of `ProcessManager`'s API that emits no
+  `ProcessCooldown.kt` (the cooldown windows' transaction-local lookups and the
+  subject filter they share), `ProcessRetention.kt` (purge times, both sweeps,
+  the shared-dir guard, record purge, eviction), `ProcessStepRecords.kt` (step
+  boundaries, runner state, cost), `ProcessRunTags.kt` (run-time tags) — over
+  the row mapping and column codecs in `ProcessRows.kt`. The part of `ProcessManager`'s API that emits no
   event is these records as stored, exposed by interface delegation from here:
   `ProcessRecordReads`, `ProcessRetentionRecords`, `ProcessRunRecords`.
   `DispatchRepository` owns the `dispatches` table
@@ -152,7 +153,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
-| 31 | `processes.stop` (what a graceful stop did) | [0107](../../../../../../../../../docs/adr/0107-graceful-stop-of-a-run.md) |
+| 31 | `processes.cooldown_key` (left NULL, no backfill) + `processes_agent_cooldown_key` and `processes_agent_cooldown_status_ended`; `processes.stop` (what a graceful stop did) | [0106](../../../../../../../../../docs/adr/0106-cooldown-key-scopes-windows-per-subject.md), [0107](../../../../../../../../../docs/adr/0107-graceful-stop-of-a-run.md) |
 
 ### Schema constraints
 
@@ -166,6 +167,16 @@ Editor-facing constraints the row's ADR does not state:
   drift. Row `id` is INSERT order and same-agent runs overlap by default, so an
   older run can fail after a newer one — ordering by id returned the wrong
   failure.
+- `processes.cooldown_key` (v31) is the run's rendered `cooldown.key`, captured
+  by the INSERT — a fact recorded when the run starts, not re-derived from a
+  definition that may have changed since (the v13/v14 principle). Null means the
+  run has no subject: a keyed agent's windows ignore it, and a keyless agent's
+  windows still count it, which is what "no key means unchanged" has to mean.
+  Both keyed lookups filter with `eq` — never `LIKE` — so a key containing `%`
+  or `_` matches only itself; they read through
+  `processes_agent_cooldown_key` and
+  `processes_agent_cooldown_status_ended`, while the keyless shapes stay on
+  `processes_agent_name` and `processes_agent_status_ended`. See ADR-0106.
 - `processes.secret_input_keys` (v15) records the `envName`s the agent declared
   `secret: true` **at run time**; API redaction reads it in preference to the
   agent's current definition, so an input later flipped to `secret: false`
