@@ -12,8 +12,10 @@ Every LLM harness attempt (`!<claude>`, `!<codex>`, `!<opencode>`) is cost-accou
 code: `LlmAttemptAccounting` charges what `LlmAttemptPricing` resolves — a lenient stdout scan
 (`scanLlmAccounting`) then `LlmCostResolver` (session-spend endpoint → the harness's own cost
 figure, or `CostSource.NONE` when the harness reports none and the endpoint doesn't answer).
-Success gating (`LlmHarness.inspect`) is separate, strict, and exit-0 only. See ADR-0061,
-ADR-0070.
+Success gating (`LlmHarness.inspect`) is separate and strict: exit 0 is parsed fail-closed, and a
+non-zero exit is inspected only for the terminal cap its harness opted into
+(`terminalStopConfigured`, Claude's `maxTurnsExitCode`), where only `Inspection.Terminal` is
+honoured. See ADR-0061, ADR-0070.
 
 With `llmPrice.sessionSpend` configured, a finished attempt does not wait for the endpoint:
 `LlmAttemptAccounting.finished` returns the harness figure at once, marked `session figure
@@ -58,10 +60,11 @@ with a per-step dedupe so translating one stdout file twice never double-charges
 never left without a priced generation: with no successful turn end its last turn end carries
 the charge, and with no turn end at all one fallback generation does. See ADR-0074.
 
-Only an exit-0 stream is parsed strictly. The telemetry hand-off of a non-zero exit, and of
-an attempt whose shell threw or whose accounting was cancelled (where `execute`'s own
-hand-off never runs), reads the stream with `parseNdjsonLenient`, so a killed CLI's
-truncated last line costs that line only, not the attempt's tool and message spans. Every
+Only an exit-0 stream is parsed strictly. The telemetry hand-off of a non-zero exit, the cap
+inspection of a non-zero exit, and an attempt whose shell threw or whose accounting was
+cancelled (where `execute`'s own hand-off never runs), read the stream with
+`parseNdjsonLenient`, so a killed CLI's truncated last line costs that line only, not the
+attempt's tool and message spans. Every
 skipped line is counted into `telemetry.llm.malformed_events`. The read is bounded at
 32 MiB and the parse at 50 000 events kept, and a tripped bound sets
 `telemetry.llm.handoff_truncated`; a hand-off shed at its concurrency or wait bound sets

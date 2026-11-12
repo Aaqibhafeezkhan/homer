@@ -58,6 +58,8 @@ class ClaudeHarness(
     override fun stdOutFilter(command: Command.Claude): LlmStdOutFilter? =
         dropSystemSubtypes.takeIf { it.isNotEmpty() }?.let { ClaudeSystemEventFilter(it) }
 
+    override fun terminalStopConfigured(command: Command.Claude): Boolean = command.options.maxTurnsExitCode != null
+
     override fun translate(line: JsonObject): Translation =
         when (line.nonBlankString("type")) {
             "system" -> {

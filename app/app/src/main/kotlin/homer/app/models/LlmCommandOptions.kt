@@ -25,10 +25,11 @@ sealed interface LlmPrompt {
  *
  * Wraps the entire CLI invocation (including stdin, env, and stdout
  * validation). Retries fire when the run finishes with a non-zero exit
- * code OR when its stdout fails the JSON-event-stream validation
- * (`MalformedLlmOutputException`). Other exceptions (timeouts,
- * cancellation, validation of `Command.Claude` itself) propagate
- * immediately.
+ * code — except a terminal stop the command opted into (Claude's
+ * `maxTurnsExitCode`), which is never retried — OR when its stdout fails
+ * the JSON-event-stream validation (`MalformedLlmOutputException`). Other
+ * exceptions (timeouts, cancellation, validation of `Command.Claude`
+ * itself) propagate immediately.
  *
  * Backoff is exponential with full jitter:
  * `min(maxDelayMs, baseDelayMs * 2^attemptIndex + random(0, baseDelayMs))`

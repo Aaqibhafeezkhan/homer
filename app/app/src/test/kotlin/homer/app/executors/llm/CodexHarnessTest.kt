@@ -35,6 +35,11 @@ class CodexHarnessTest {
             .toList()
 
     @Test
+    fun `codex configures no terminal stop, so a non-zero exit stays the failure it is`() {
+        assertFalse(harness.terminalStopConfigured(command))
+    }
+
+    @Test
     fun `escalated changes the model and replaces raw options only when the tier sets them`() {
         val base =
             Command.Codex(

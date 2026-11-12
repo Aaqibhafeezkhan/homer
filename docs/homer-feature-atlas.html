@@ -1209,10 +1209,11 @@ cmd: "/opt/claude/bin/claude"   # default: claude / codex / opencode</code></pre
 
         <article class="f">
           <h3>Retry on transient LLM failure <span class="where">claude · codex · opencode</span></h3>
-          <p>Retries a non-zero exit or malformed event stream with exponential backoff and full jitter. Other errors
-            (timeouts, cancellation) propagate immediately. Every attempt writes to the same artifact stem unless the
-            agent's <code>artifactNameTemplate</code> carries <code>{{HMR_CMD_ATTEMPT}}</code>, which keeps a failed
-            attempt's output inspectable.</p>
+          <p>Retries a non-zero exit or malformed event stream with exponential backoff and full jitter — except a
+            terminal cap stop the command opted into (Claude's <code>maxTurnsExitCode</code>), which is never retried.
+            Other errors (timeouts, cancellation) propagate immediately. Every attempt writes to the same artifact stem
+            unless the agent's <code>artifactNameTemplate</code> carries <code>{{HMR_CMD_ATTEMPT}}</code>, which keeps a
+            failed attempt's output inspectable.</p>
           <pre><code>retry: { attempts: 3, baseDelayMs: 2000, maxDelayMs: 20000 }</code></pre>
         </article>
 
