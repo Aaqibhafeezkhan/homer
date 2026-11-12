@@ -1505,7 +1505,7 @@ class ProcessManagerTest {
             // Just shouldn't throw; nothing to assert beyond that.
         }
 
-    // ========== Status-hook wiring (ADR-0105) ==========
+    // ========== Status-hook wiring (ADR-0106) ==========
 
     /** A recording that declares one hook for [status] only, so a write's own status picks it up. */
     private fun recording(
@@ -1556,7 +1556,7 @@ class ProcessManagerTest {
     fun `a status write over the pending cap hands the shed entries over with no ids`() =
         runTest {
             // A cap-shedding transition still hands its outcome over, so the hook service can log
-            // the drop after the commit: nothing else would report it. See ADR-0105.
+            // the drop after the commit: nothing else would report it. See ADR-0106.
             val handed = mutableListOf<RecordedHooks>()
             val manager =
                 newManager(

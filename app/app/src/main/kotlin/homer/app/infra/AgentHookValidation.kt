@@ -10,7 +10,7 @@ import homer.app.models.Agent
  *
  * A cycle is rejected here rather than left to the start preflight's invocation-chain check
  * because a hook is declared, not called: the author is the only one who can fix it, and the
- * run that would discover it at fire time is already several runs deep. See ADR-0105, ADR-0008.
+ * run that would discover it at fire time is already several runs deep. See ADR-0106, ADR-0008.
  */
 internal object AgentHookValidation {
     /**

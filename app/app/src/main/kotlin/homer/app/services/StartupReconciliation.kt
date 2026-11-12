@@ -42,7 +42,7 @@ internal class StartupReconciliation(
         val now = clock()
         // The hooks an UNKNOWN transition records are the same per-transition lookup
         // ProcessManager runs, so a hook declared for UNKNOWN fires for a restart-interrupted
-        // run too. See ADR-0105.
+        // run too. See ADR-0106.
         val interrupted = processRepository.markInterruptedAsUnknown(now, hookService.recording())
         if (interrupted.processIds.isNotEmpty()) {
             logger.info(
@@ -74,7 +74,7 @@ internal class StartupReconciliation(
         // Same again for hooks: fail any left mid-fire, fire the rows the UNKNOWN writes above
         // recorded, then replay whatever else is still PENDING — a server that stopped between
         // a transition's commit and its fire. The claim CAS keeps a replay from double-firing
-        // against a row a live transition is firing concurrently. See ADR-0105.
+        // against a row a live transition is firing concurrently. See ADR-0106.
         hookService.failOrphanedDispatching()
         hookService.onRowsRecorded(interrupted.hooks)
         hookService.refirePending()

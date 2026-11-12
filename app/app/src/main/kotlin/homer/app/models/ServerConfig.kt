@@ -348,7 +348,7 @@ data class DispatchConfig(
 
 /**
  * Agent-level status hooks: the local bounds on the durable hook rows a run's status
- * transitions can queue, and on how deep a chain of hook-started runs may go. See ADR-0105.
+ * transitions can queue, and on how deep a chain of hook-started runs may go. See ADR-0106.
  */
 @Serializable
 data class HookConfig(

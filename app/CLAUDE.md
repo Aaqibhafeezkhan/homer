@@ -229,7 +229,7 @@ marked `Constraint:`.
   `HookRepository`** (schema v31); the rows are written by `ProcessManager`'s status
   transitions and handed here after commit, and the fire itself (claim, target and grant
   re-check, start, bounded retry or drop) is `HookFireService`. The run belongs to the
-  triggering run's owner. ADR-0105.
+  triggering run's owner. ADR-0106.
   - **Constraint:** the rows are INSERTed inside the status write's transaction and fired
     **after** it commits — a fire starts a run, whose own row write must not nest in the
     triggering transaction (SQLite rule 3). A hook failure is logged and settled on the row;

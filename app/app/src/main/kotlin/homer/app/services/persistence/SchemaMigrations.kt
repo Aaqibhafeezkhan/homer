@@ -338,7 +338,7 @@ private fun migrateToV31(
     current: Int,
 ) {
     if (current in 1 until 31) {
-        // v30→v31 adds the pending_hooks table (ADR-0105). SchemaUtils.create above already
+        // v30→v31 adds the pending_hooks table (ADR-0106). SchemaUtils.create above already
         // created it on a database that did not have it; the indexes are created here by hand
         // because SchemaUtils.create only indexes a table it creates. Names and definitions
         // match the PendingHooks declaration in Tables.kt.

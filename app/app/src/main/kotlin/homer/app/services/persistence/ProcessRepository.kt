@@ -149,7 +149,7 @@ class ProcessRepository(
                 this[ProcessTags.tag] = tag
             }
             // CREATED hooks ride the INSERT's own transaction: a restart between the row and
-            // the fire loses nothing. See ADR-0105.
+            // the fire loses nothing. See ADR-0106.
             ObtainResult(newId, evicted, hookRecording.record(newId, agentName, ProcessStatus.CREATED, owner, nowSec))
         }
 
@@ -404,7 +404,7 @@ class ProcessRepository(
                 )
             }
             // UNKNOWN hook rows ride that write: no other transition will ever fire for
-            // these runs. See ADR-0105.
+            // these runs. See ADR-0106.
             val recorded = rows.map { (id, agent, owner) -> hookRecording.record(id, agent, ProcessStatus.UNKNOWN, owner, nowSec) }
             InterruptedResult(rows.map { it.first }, RecordedHooks(recorded.flatMap { it.ids }, recorded.flatMap { it.shed }))
         }

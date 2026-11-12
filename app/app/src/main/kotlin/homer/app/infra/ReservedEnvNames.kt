@@ -79,7 +79,7 @@ private val LANGGRAPH_CONTROL_PARAMS =
  * The `HMR_HOOK_*` params a hook fire merges over the target agent's resolved declared
  * inputs. An explicit allowlist for the same reason as [LANGGRAPH_CONTROL_PARAMS]: only
  * these server-minted names may ride a start, so a param map that reached this path from
- * anywhere else still cannot set `PATH`, `LD_*` or another `HMR_*` identity. See ADR-0105.
+ * anywhere else still cannot set `PATH`, `LD_*` or another `HMR_*` identity. See ADR-0106.
  */
 private val HOOK_CONTROL_PARAMS =
     setOf(

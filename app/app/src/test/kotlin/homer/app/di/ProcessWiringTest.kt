@@ -34,7 +34,7 @@ import kotlin.test.assertEquals
  * This drives the graph they declare end to end: `ProcessManager` resolves `HookService` at call
  * time — the cycle `ProcessManager` → `HookService` → `AgentRunStarter` → `ProcessExecutor` →
  * `ProcessManager` forbids resolving it at construction — and a status write through that graph
- * reaches a hook start. See ADR-0105.
+ * reaches a hook start. See ADR-0106.
  */
 class ProcessWiringTest {
     private val started = mutableListOf<String>()

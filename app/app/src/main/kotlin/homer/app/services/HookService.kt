@@ -12,7 +12,7 @@ import org.slf4j.Logger
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
-/** Where a hook row is in its one-shot delivery. `DROPPED` is settled before any attempt. See ADR-0105. */
+/** Where a hook row is in its one-shot delivery. `DROPPED` is settled before any attempt. See ADR-0106. */
 enum class HookStatus { PENDING, DISPATCHING, DISPATCHED, FAILED, DROPPED }
 
 /** One durable agent-level hook: a run of [declaringAgent] reached [triggeringStatus]. */
@@ -36,7 +36,7 @@ data class PendingHook(
  * Agent-declared status hooks: the row a run's status transition records is fired here, after
  * the transition's transaction has committed. Every hook is a durable row written with the
  * status it rides (so a restart loses none), claimed before its run starts (so nothing fires
- * twice), and settled once. The fire itself is [HookFireService]. See ADR-0105, ADR-0023.
+ * twice), and settled once. The fire itself is [HookFireService]. See ADR-0106, ADR-0023.
  */
 @OptIn(ExperimentalTime::class)
 internal class HookService(
@@ -93,7 +93,7 @@ internal class HookService(
      * Fires [hook] with every non-cancellation failure contained: the caller is a status write
      * that has already committed (or a sweep that still has rows behind this one), so nothing a
      * fire does may reach it. The row keeps the state the failed fire left it in and the retry
-     * sweep or the next boot's replay picks it up. See ADR-0023, ADR-0105.
+     * sweep or the next boot's replay picks it up. See ADR-0023, ADR-0106.
      */
     private suspend fun fireSafely(hook: PendingHook) {
         try {
@@ -108,7 +108,7 @@ internal class HookService(
     /**
      * One warn per transition that had hook entries shed by the pending cap, so an operator can
      * see what a burst cost. The transition itself has already committed: shedding never fails
-     * it, and never changes the triggering run's own status. See ADR-0105.
+     * it, and never changes the triggering run's own status. See ADR-0106.
      */
     private fun logShed(shed: List<ShedHooks>) {
         for (entry in shed) {
@@ -127,7 +127,7 @@ internal class HookService(
     /**
      * The per-transition hook lookup this service's rows are recorded with — the same one
      * [ProcessManager] runs, so an agent's hooks are resolved identically wherever a status is
-     * written. See ADR-0105.
+     * written. See ADR-0106.
      */
     fun recording(): HookRecording = hookRecordingFor(agents, config.maxPending)
 
@@ -167,7 +167,7 @@ internal class HookService(
         for (hook in pending) fireSafely(hook)
     }
 
-    /** Deletes settled hooks older than `settledRetentionSec`. See ADR-0105. */
+    /** Deletes settled hooks older than `settledRetentionSec`. See ADR-0106. */
     suspend fun pruneSettled() {
         val pruned = repository.pruneSettled(nowSec() - config.settledRetentionSec)
         if (pruned > 0) {
@@ -180,7 +180,7 @@ internal class HookService(
  * The per-transition hook lookup a status write records with, reached through
  * [HookService.recording] so every writer shares one definition. [agentsService] is read at call
  * time, so an agent reload between a run's start and its transition is honoured, and it reads no
- * database, so the lookup is safe inside the write transaction. See ADR-0105.
+ * database, so the lookup is safe inside the write transaction. See ADR-0106.
  */
 internal fun hookRecordingFor(
     agentsService: AgentsService,

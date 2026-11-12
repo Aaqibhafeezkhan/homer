@@ -7,7 +7,7 @@ import org.koin.core.parameter.parametersOf
 import org.koin.dsl.module
 
 /**
- * The agent-level status-hook layer (ADR-0105): the durable row queue and the service that fires
+ * The agent-level status-hook layer (ADR-0106): the durable row queue and the service that fires
  * it. Beside [appModule] for the same reason `ProcessWiring` is — that file is at its size limit
  * (root CLAUDE.md §2).
  */

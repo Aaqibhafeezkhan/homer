@@ -237,7 +237,7 @@ class HookFireServiceTest {
         runTest {
             // The row is durable and can outlive the run it was recorded from (eviction, record
             // purge): what is gone takes the depth and the metadata with it, and the hook still
-            // fires. See ADR-0105.
+            // fires. See ADR-0106.
             val resolve = startSucceeds(run = null)
 
             fires.fire(hook())
