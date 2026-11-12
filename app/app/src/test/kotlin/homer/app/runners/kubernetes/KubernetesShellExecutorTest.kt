@@ -593,7 +593,9 @@ class KubernetesShellExecutorTest {
         )
         assertEquals(1, seen.size)
         assertEquals(EXEC_CHANNEL_LOST, seen.single().reason)
-        assertEquals("Exec channel lost while the pod was running: ${seen.single().message}", thrown.message)
+        // Composed once: the step error is the same self-describing sentence the termination keeps,
+        // not a prefixed repeat of it.
+        assertEquals(seen.single().message, thrown.message)
     }
 
     @Test
@@ -714,6 +716,49 @@ class KubernetesShellExecutorTest {
         assertFalse(thrown.message.orEmpty().contains(secret), "the secret must not reach the step error: ${thrown.message}")
         assertTrue(thrown.message.orEmpty().contains("***"), "the secret must be masked: ${thrown.message}")
         assertFalse(seen.single().message.contains(secret), "the secret must not reach the termination: ${seen.single().message}")
+        assertTrue(seen.single().message.contains("***"), "the secret must be masked there too: ${seen.single().message}")
+    }
+
+    @Test
+    fun `a query-encoded secret in the cause text is redacted`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        // The cause quotes the exec URL, where the argv is query-encoded, so a secret holding a
+        // reserved character never appears raw there — its encoded form must be masked too.
+        val secret = "a/b+c=d&e"
+        val encoded = "a%2Fb%2Bc%3Dd%26e"
+        val closed =
+            mockk<Process>(relaxed = true) {
+                every { inputStream } returns ByteArrayInputStream(ByteArray(0))
+                every { errorStream } returns ByteArrayInputStream(ByteArray(0))
+                every { outputStream } returns ByteArrayOutputStream()
+                every { waitFor(any<Long>(), any<TimeUnit>()) } returns true
+                every { exitValue() } throws IllegalThreadStateException("wss://api/exec?command=env+TOKEN=$encoded")
+            }
+        val seen = mutableListOf<PodTermination>()
+        val executor =
+            KubernetesShellExecutor(
+                KubernetesExecClient { _, _, _, _ -> closed },
+                runningPodApi(),
+                "homer",
+                "pod-1",
+                onTermination = { seen += it },
+            )
+
+        val thrown =
+            assertFailsWith<PodFailedDuringExecutionException> {
+                executor.cmd(
+                    command = listOf("true"),
+                    stdOut = tmp.resolve("out"),
+                    stdErr = tmp.resolve("err"),
+                    env = mapOf("TOKEN" to secret, "SHORT" to "abc"),
+                    timeout = 10.seconds,
+                )
+            }
+
+        assertFalse(thrown.message.orEmpty().contains(encoded), "the query-encoded secret must not reach the step error: ${thrown.message}")
+        assertTrue(thrown.message.orEmpty().contains("***"), "the secret must be masked: ${thrown.message}")
+        assertFalse(seen.single().message.contains(encoded), "the encoded secret must not reach the termination: ${seen.single().message}")
         assertTrue(seen.single().message.contains("***"), "the secret must be masked there too: ${seen.single().message}")
     }
 
@@ -876,11 +921,47 @@ class KubernetesShellExecutorTest {
                 every { waitFor(any<Long>(), any<TimeUnit>()) } returns true
                 every { exitValue() } throws IllegalThreadStateException("channel closed")
             }
-        val executor = KubernetesShellExecutor(KubernetesExecClient { _, _, _, _ -> proc }, api, "homer", "pod-1")
+        var starts = 0
+        val executor =
+            KubernetesShellExecutor(
+                KubernetesExecClient { _, _, _, _ ->
+                    starts++
+                    proc
+                },
+                api,
+                "homer",
+                "pod-1",
+            )
 
         val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
 
         assertEquals("PodDeleted", e.termination?.reason)
+        assertEquals(1, starts) // only the command's exec: a pod Kubernetes deleted is never killed pod-wide
+    }
+
+    @Test
+    fun `a pod-read error that is not a 404 is no stop, and the lost channel still kills the leftover command`(
+        @TempDir tmp: Path,
+    ) = runTest {
+        val started = mutableListOf<List<String>>()
+        val proc = fakeProcess(stdout = "", stderr = "", exit = EXEC_NO_EXIT_STATUS_SENTINEL)
+        val client =
+            KubernetesExecClient { _, _, argv, _ ->
+                started += argv
+                proc
+            }
+        val api = podStatusApi(error = ApiException(500, "boom"))
+        every { api.listNamespacedEvent(any()) } returns
+            mockk(relaxed = true) {
+                every { fieldSelector(any()) } returns this
+                every { execute() } returns CoreV1EventList()
+            }
+        val executor = KubernetesShellExecutor(client, api, "homer", "pod-1")
+
+        val e = assertFailsWith<PodFailedDuringExecutionException> { run(executor, tmp) }
+
+        assertEquals(EXEC_CHANNEL_LOST, e.reason)
+        assertTrue(KILL_ARGV in started, "the leftover command must still be killed: $started")
     }
 
     @Test

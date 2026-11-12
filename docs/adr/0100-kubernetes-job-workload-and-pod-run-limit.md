@@ -113,8 +113,15 @@ read after a failed command**.
   `terminationMessagePath`. Homer never copies it, nor any container's, into `runner.termination` or
   the failure text (the pod diagnostics give a terminated container's exit code instead), which
   are stored and served without the redaction a command's output gets, so a secret the agent wrote
-  there cannot leak through them (CWE-532). The termination's reason and message come from fields the
-  kubelet sets, each reduced to one length-capped line (CWE-117).
+  there cannot leak through them (CWE-532). `runner.termination` has two provenance classes. A
+  Kubernetes stop's reason and message come from fields the kubelet sets, each reduced to one
+  length-capped line (CWE-117); that sourcing is what lets them be stored and served without the
+  redaction a command's output gets. `ExecChannelLost` (issue #146) is the second class: a reason
+  Homer sets itself, whose message is executor-built — what closed the websocket, plus the pod's
+  last event or diagnostic — and therefore redacted with the command's secret env values and cut to
+  the line cap where it is built, before it is stored or served (CWE-532, CWE-209). A contributor
+  adding another Homer-set reason must follow this second class: redact executor-built text at
+  build time, and never extend the kubelet-sourcing rule to it.
 - Homer's own ServiceAccount is widened by the `batch` `jobs` rule only in a namespace a Job-mode
   runner uses; the rule covers Jobs, not pods it could not already create.
 - Leaked Jobs are bounded by four mechanisms, none of them alone:

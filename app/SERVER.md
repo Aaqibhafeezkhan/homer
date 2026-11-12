@@ -2789,7 +2789,8 @@ the command, so a command that was still running must not outlive the
 step. A pod Kubernetes actually stopped still wins — its own reason
 (`DeadlineExceeded`, eviction, an OOM kill, deletion) is reported instead.
 Homer does not reattach to a lost channel: a command that was still
-running is not waited for.
+running is not waited for. See
+[ADR-0103](../docs/adr/0103-a-lost-exec-channel-kills-and-fails-without-reattach.md).
 
 **A stalled API server.** Every non-streaming call the runner makes to the
 API server — creating, reading, patching and deleting pods and Jobs, listing

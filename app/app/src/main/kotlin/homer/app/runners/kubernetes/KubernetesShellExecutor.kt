@@ -27,6 +27,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.slf4j.LoggerFactory
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.outputStream
@@ -248,8 +250,9 @@ class KubernetesShellExecutor(
 
     /**
      * The step error's text for a channel lost on a live pod: what closed the channel and the pod's last event.
-     * The exec URL carries the argv, so every env value long enough to be a credential is masked (ADR-0047
-     * rule 7), and the text is bounded to one line of [TERMINATION_MESSAGE_MAX_CHARS].
+     * The exec URL carries the argv, so every env value long enough to be a credential is masked, in its raw
+     * form and in the query-encoded form it takes in that URL (ADR-0047 rule 7), and the text is bounded to one
+     * line of [TERMINATION_MESSAGE_MAX_CHARS].
      */
     private fun channelLostMessage(
         cause: Throwable?,
@@ -260,7 +263,16 @@ class KubernetesShellExecutor(
         val text =
             "exec channel to pod $podName was lost while the pod was running: $closed. " +
                 (snap.events.lastOrNull() ?: snap.message)
-        return SecretRedactor.from(env, env.keys, minNeedleLength = MIN_SCREENED_SECRET_LENGTH).redact(text).toOneLine()
+        val redactor =
+            SecretRedactor.from(env, env.keys, minNeedleLength = MIN_SCREENED_SECRET_LENGTH) +
+                // The cause quotes the exec URL, where the argv (env KEY=VAL) is query-encoded: a secret
+                // holding a reserved character appears percent-encoded there, so the raw value alone misses it.
+                SecretRedactor.from(
+                    env.mapValues { (_, v) -> URLEncoder.encode(v, StandardCharsets.UTF_8) },
+                    env.keys,
+                    minNeedleLength = MIN_SCREENED_SECRET_LENGTH,
+                )
+        return redactor.redact(text).toOneLine()
     }
 
     private suspend fun failIfPodStopped(patient: Boolean) {
