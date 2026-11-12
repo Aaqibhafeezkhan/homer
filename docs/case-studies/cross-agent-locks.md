@@ -145,7 +145,8 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
   also allows one run on the host. The difference is the wait: a run queued
   on a saturated runner fails at the claim TTL, while a run queued on a
   `WAIT` lock waits until the holder ends — a wait bounded by
-  `maxQueuedRuns`, else `maxParallelRuns` (one waiter with the config above);
+  `maxQueuedRuns`, else `maxParallelRuns` (one waiter per agent with the
+  config above);
   a run over that bound fails at once instead of queuing. The lock also keeps
   working when the host later gets a second slot for something that does not
   touch the cache.
@@ -165,8 +166,9 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
 
 ## What it does not solve
 
-- **Two tickets that need the host serialize.** A queue of two — the holder
-  and one waiter — is the most the lock holds; a ticket ending `FAILED` at
+- **Two tickets that need the host serialize.** The holder plus one waiter
+  per agent that declares the key — three with the two host workers above —
+  is the most the lock holds; a ticket ending `FAILED` at
   once with `Lock wait queue full` means the pipeline has outgrown one build
   host. The answer then is a second host — or `maxQueuedRuns`, to admit more
   waiters — not a weaker lock.
