@@ -44,17 +44,18 @@ class DispatchGroupValidationPropertyTest {
             every { it.canDispatchHop(any(), any(), any()) } returns true
         }
 
-    private fun service(maxGroupSize: Int) = DispatchGroupService(
-        repo,
-        questions,
-        agents,
-        authorizer,
-        inputResolver,
-        processManager,
-        broadcaster,
-        LoggerFactory.getLogger("t"),
-        DispatchConfig(maxGroupSize = maxGroupSize),
-    ) { 1000L }
+    private fun service(maxGroupSize: Int) =
+        DispatchGroupService(
+            repo,
+            questions,
+            agents,
+            authorizer,
+            inputResolver,
+            processManager,
+            broadcaster,
+            LoggerFactory.getLogger("t"),
+            DispatchConfig(maxGroupSize = maxGroupSize),
+        ) { 1000L }
 
     init {
         every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)

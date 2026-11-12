@@ -108,26 +108,28 @@ class DispatchSweepServiceTest {
         expiresAt: Long? = null,
         createdAt: Long = System.currentTimeMillis() / 1000,
     ): Int =
-        (DispatchRepository(db).createGroup(
-            listOf("m1", "m2").map {
-                QuestionsService.Question(it, 1, "asker", "text", emptyList(), QuestionStatus.OPEN, createdAt = 1, dispatchBound = true)
-            },
-            Dispatch(
-                0,
-                DispatchGroupService.GROUP_QUESTION_ID_PREFIX + "sentinel",
-                DispatchStatus.PENDING,
-                "handler",
-                "answer",
-                emptyMap(),
-                1,
-                "asker",
-                expiresAt,
-                createdAt,
-                kind = DispatchKind.GROUP,
-            ),
-            maxPending = 10,
-            maxOpenPerProcess = 10,
-        ) as DispatchRepository.GroupCreateOutcome.Created).dispatchId
+        (
+            DispatchRepository(db).createGroup(
+                listOf("m1", "m2").map {
+                    QuestionsService.Question(it, 1, "asker", "text", emptyList(), QuestionStatus.OPEN, createdAt = 1, dispatchBound = true)
+                },
+                Dispatch(
+                    0,
+                    DispatchGroupService.GROUP_QUESTION_ID_PREFIX + "sentinel",
+                    DispatchStatus.PENDING,
+                    "handler",
+                    "answer",
+                    emptyMap(),
+                    1,
+                    "asker",
+                    expiresAt,
+                    createdAt,
+                    kind = DispatchKind.GROUP,
+                ),
+                maxPending = 10,
+                maxOpenPerProcess = 10,
+            ) as DispatchRepository.GroupCreateOutcome.Created
+        ).dispatchId
 
     @Test
     fun `a tick expires a lapsed group as a whole and emits one event per member`() =

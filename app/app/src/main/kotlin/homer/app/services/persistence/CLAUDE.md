@@ -152,6 +152,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
+| 31 | `dispatches.kind` + `dispatch_group_questions` table | [0105](../../../../../../../../../docs/adr/0105-grouped-ask-and-dispatch.md) |
 
 ### Schema constraints
 
@@ -165,6 +166,7 @@ Editor-facing constraints the row's ADR does not state:
   drift. Row `id` is INSERT order and same-agent runs overlap by default, so an
   older run can fail after a newer one — ordering by id returned the wrong
   failure.
+- A GROUP `dispatches` row's `question_id` is a synthetic `group:`-prefixed sentinel; the `dispatch_group_questions` table owns the ordered member set (v31). Readers of `dispatches.question_id` must branch on `kind`.
 - `processes.secret_input_keys` (v15) records the `envName`s the agent declared
   `secret: true` **at run time**; API redaction reads it in preference to the
   agent's current definition, so an input later flipped to `secret: false`

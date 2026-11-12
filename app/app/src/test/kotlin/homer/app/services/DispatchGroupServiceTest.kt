@@ -92,9 +92,10 @@ class DispatchGroupServiceTest {
             val over = assertFailsWith<DispatchGroupTooLargeException> { create(service(), specs(9)) }
             assertEquals(8, over.maxGroupSize)
 
-            val configured = assertFailsWith<DispatchGroupTooLargeException> {
-                create(service(DispatchConfig(maxGroupSize = 2)), specs(3))
-            }
+            val configured =
+                assertFailsWith<DispatchGroupTooLargeException> {
+                    create(service(DispatchConfig(maxGroupSize = 2)), specs(3))
+                }
             assertEquals(2, configured.maxGroupSize)
 
             coVerify(exactly = 0) { repo.createGroup(any(), any(), any(), any()) }

@@ -27,18 +27,11 @@ data class CreateDispatchResponse(
  */
 @Serializable
 data class CreateDispatchGroupRequest(
-    val questions: List<DispatchGroupQuestionSpec>,
+    val questions: List<AskQuestionRequest>,
     val agent: String,
     val answerParam: String = "answer",
     val params: Map<String, String> = emptyMap(),
     val ttlSec: Int? = null,
-)
-
-/** One question of a [CreateDispatchGroupRequest], with its optional answer options. */
-@Serializable
-data class DispatchGroupQuestionSpec(
-    val text: String,
-    val options: List<String> = emptyList(),
 )
 
 /** Response of `POST /api/v1/callback/dispatch-groups`: the group id and its question ids, in order. */

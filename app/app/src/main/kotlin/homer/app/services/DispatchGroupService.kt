@@ -42,6 +42,8 @@ internal class DispatchGroupService(
     private val questionsConfig: QuestionsConfig = QuestionsConfig(),
     private val nowSec: () -> Long = { Clock.System.now().epochSeconds },
 ) {
+    private val targetGate = DispatchTargetGate(authorizer, agentsService, agentInputResolver, processManager, logger)
+
     /** The bound [create] enforces; the MCP tool and `homer-ask.sh` name it in their help. */
     val maxGroupSize: Int get() = config.maxGroupSize
 
@@ -84,17 +86,8 @@ internal class DispatchGroupService(
         val registration = questionsService.liveRegistration(originProcessId)
         validatePayloadParam(answerParam, "answerParam", params)
         questions.forEach { questionsService.validateQuestionInput(it.text, it.options) }
-        val origin = processManager.getProcessInfo(originProcessId)
-        val owner = origin?.owner
-        val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
-        // Same inheritance rule as a single dispatch: an inheriting group to the same agent
-        // counts the origin run's stored inputs as provided. See ADR-0101.
-        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, target, "Dispatch group", logger)
-        agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
-        if (effectiveTtl != null && effectiveTtl <= 0) {
-            throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")
-        }
+        val owner = targetGate.check(originProcessId, registration.agentName, agent, answerParam, params, effectiveTtl, "Dispatch group")
         val now = nowSec()
         val members =
             questions.map {
@@ -130,17 +123,7 @@ internal class DispatchGroupService(
                 secretParamNames = agentsService.agents[agent]?.secretParamNames,
                 kind = DispatchKind.GROUP,
             )
-        val dispatchId =
-            when (
-                val outcome =
-                    repository.createGroup(members, dispatch, config.maxPending, questionsConfig.maxOpenPerProcess)
-            ) {
-                is DispatchRepository.GroupCreateOutcome.Created -> outcome.dispatchId
-                DispatchRepository.GroupCreateOutcome.PendingCapReached ->
-                    throw TooManyPendingDispatchesException(config.maxPending)
-                DispatchRepository.GroupCreateOutcome.OpenQuestionCapReached ->
-                    throw TooManyOpenQuestionsException(originProcessId, questionsConfig.maxOpenPerProcess)
-            }
+        val dispatchId = insertGroup(members, dispatch)
         // Ids and counts only: the questions' text is workspace-controlled. §12 rule 7.
         logger.info(
             "Process {} registered dispatch group {} of {} question(s) -> agent '{}'",
@@ -152,6 +135,27 @@ internal class DispatchGroupService(
         members.forEach { broadcaster.emit(ProcessEvent.QuestionAsked(originProcessId, it.id, registration.agentName)) }
         return CreateResult(dispatchId, members.map { it.id })
     }
+
+    private suspend fun insertGroup(
+        members: List<Question>,
+        dispatch: Dispatch,
+    ): Int =
+        when (
+            val outcome =
+                repository.createGroup(members, dispatch, config.maxPending, questionsConfig.maxOpenPerProcess)
+        ) {
+            is DispatchRepository.GroupCreateOutcome.Created -> {
+                outcome.dispatchId
+            }
+
+            DispatchRepository.GroupCreateOutcome.PendingCapReached -> {
+                throw TooManyPendingDispatchesException(config.maxPending)
+            }
+
+            DispatchRepository.GroupCreateOutcome.OpenQuestionCapReached -> {
+                throw TooManyOpenQuestionsException(dispatch.originProcessId, questionsConfig.maxOpenPerProcess)
+            }
+        }
 
     /**
      * The group's aggregated answer — a JSON array of the member answers in question order —

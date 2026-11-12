@@ -92,6 +92,8 @@ internal class DispatchService(
     private val config: DispatchConfig = DispatchConfig(),
     private val nowSec: () -> Long = { Clock.System.now().epochSeconds },
 ) {
+    private val targetGate = DispatchTargetGate(authorizer, agentsService, agentInputResolver, processManager, logger)
+
     data class CreateResult(
         val dispatchId: Int,
         val questionId: String,
@@ -111,17 +113,8 @@ internal class DispatchService(
         // reservedControlParams merge was narrowed, into the target's PATH.
         validatePayloadParam(answerParam, "answerParam", params)
         questionsService.validateQuestionInput(text, options)
-        val origin = processManager.getProcessInfo(originProcessId)
-        val owner = origin?.owner
-        val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
-        // An inheriting dispatch to the same agent counts the origin run's stored inputs
-        // as provided, so a `required: true` subject input registers. See ADR-0101.
-        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, target, "Dispatch", logger)
-        agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
-        if (effectiveTtl != null && effectiveTtl <= 0) {
-            throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")
-        }
+        val owner = targetGate.check(originProcessId, registration.agentName, agent, answerParam, params, effectiveTtl, "Dispatch")
         val now = nowSec()
         val questionId = UUID.randomUUID().toString()
         val question =
@@ -185,62 +178,42 @@ internal class DispatchService(
         // A member question of a group resolves to the group row, so a group is fired from the
         // same answer route as a single dispatch, with the group's own gate in front of the claim.
         if (dispatch.kind == DispatchKind.GROUP) return fireGroup(dispatch)
+        return claimAndStart(dispatch, answer)
+    }
+
+    /** Claims [dispatch], re-checks its target, and starts it with [payload]; null if the claim was lost. */
+    private suspend fun claimAndStart(
+        dispatch: Dispatch,
+        payload: String,
+    ): Dispatch? {
         if (!repository.claim(dispatch.id)) return null
         val now = nowSec()
         val agent =
             agentsService.agents[dispatch.agentName]
                 ?: return markFailed(dispatch, "Target agent '${dispatch.agentName}' not found", now)
-        val denial = hopDenial(dispatch, agent)
+        val denial = targetGate.hopDenial(dispatch, agent)
         if (denial != null) return markFailed(dispatch, denial, now)
-        return startTarget(dispatch, agent, answer, now)
+        return startTarget(dispatch, agent, payload, now)
     }
 
     /**
-     * Fires a GROUP dispatch once every member question is ANSWERED, returning null while any of
-     * them is still OPEN. The claim CAS is what makes the target start exactly once when the last
-     * two answers land concurrently, or when the boot re-fire races a live answer — the gate read
-     * below is only the pre-check; the claim is the gate.
+     * Fires a GROUP dispatch once every member question is ANSWERED, null while any is OPEN. The
+     * claim CAS (in [claimAndStart]) is the gate that starts the target exactly once when the
+     * last two answers land concurrently or the boot re-fire races a live answer.
      *
-     * An aggregate that can never be delivered — over `DispatchGroupService.MAX_ANSWER_BYTES` —
-     * settles the group FAILED rather than leaving it PENDING on answers that will never fit. The
-     * throw is caught here rather than escaping [fire] because [fire] also runs on the boot path,
-     * where it would abort [refirePendingAnswered] and with it startup reconciliation.
+     * An aggregate over `DispatchGroupService.MAX_ANSWER_BYTES` settles the group FAILED rather
+     * than leaving it PENDING; it is caught here because [fire] also runs on the boot path,
+     * where a throw would abort startup reconciliation.
      */
     private suspend fun fireGroup(dispatch: Dispatch): Dispatch? {
         val payload =
             try {
                 groupService.aggregateAnswers(dispatch.id) ?: return null
             } catch (e: DispatchGroupAnswersTooLargeException) {
-                // Claim first: the CAS is what makes this the single outcome of the last answer,
-                // and markFailed only transitions a DISPATCHING row.
                 if (!repository.claim(dispatch.id)) return null
                 return markFailed(dispatch, e.message ?: "Group answers exceed the payload bound", nowSec())
             }
-        if (!repository.claim(dispatch.id)) return null
-        val now = nowSec()
-        val agent =
-            agentsService.agents[dispatch.agentName]
-                ?: return markFailed(dispatch, "Target agent '${dispatch.agentName}' not found", now)
-        val denial = hopDenial(dispatch, agent)
-        if (denial != null) return markFailed(dispatch, denial, now)
-        return startTarget(dispatch, agent, payload, now)
-    }
-
-    /** Why the claimed [dispatch] may no longer start [agent], else null. */
-    private fun hopDenial(
-        dispatch: Dispatch,
-        agent: Agent,
-    ): String? {
-        if (!authorizer.canDispatchHop(dispatch.owner, dispatch.originAgentName, dispatch.agentName)) {
-            return "agent '${dispatch.originAgentName}' is not authorized to dispatch to '${dispatch.agentName}'"
-        }
-        // Re-check the opt-in at fire time: registration gated on `dispatch.enabled`, but the
-        // agent may have been reloaded to `enabled: false` or replaced since. Without this a
-        // pending dispatch created while enabled would still fire the now-disabled target.
-        if (agent.dispatch?.enabled != true) {
-            return "Target agent '${dispatch.agentName}' is no longer an allowed dispatch target"
-        }
-        return null
+        return claimAndStart(dispatch, payload)
     }
 
     private suspend fun markFailed(

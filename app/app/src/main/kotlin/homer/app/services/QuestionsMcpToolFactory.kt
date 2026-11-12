@@ -320,13 +320,8 @@ internal class QuestionsMcpToolFactory(
                 (args["options"] as? JsonArray)
                     ?.mapNotNull { (it as? JsonPrimitive)?.content }
                     .orEmpty()
-            val params =
-                (args["params"] as? JsonObject)
-                    ?.entries
-                    ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }
-                    ?.toMap()
-                    .orEmpty()
-            val ttlSec = (args["ttlSec"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.toInt()
+            val params = args.stringParams()
+            val ttlSec = args.ttlSecArg()
             val result = dispatchService.create(processId, text, options, agent, answerParam, params, ttlSec)
             CallToolResult(
                 content =

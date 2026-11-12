@@ -75,13 +75,8 @@ internal suspend fun askAndDispatchGroup(
             (args["agent"] as? JsonPrimitive)?.content
                 ?: return@runTool toolError("Missing required argument 'agent'")
         val answerParam = (args["answerParam"] as? JsonPrimitive)?.content ?: "answer"
-        val params =
-            (args["params"] as? JsonObject)
-                ?.entries
-                ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }
-                ?.toMap()
-                .orEmpty()
-        val ttlSec = (args["ttlSec"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.toInt()
+        val params = args.stringParams()
+        val ttlSec = args.ttlSecArg()
         val result =
             dispatchGroupService.create(
                 originProcessId = processId,
@@ -113,44 +108,7 @@ private fun dispatchGroupSchema(maxGroupSize: Int): ToolSchema =
     ToolSchema(
         properties =
             buildJsonObject {
-                put(
-                    "questions",
-                    buildJsonObject {
-                        put("type", "array")
-                        put(
-                            "description",
-                            "The questions for the operator, in the order their answers are passed to the " +
-                                "agent (at most $maxGroupSize).",
-                        )
-                        put(
-                            "items",
-                            buildJsonObject {
-                                put("type", "object")
-                                put(
-                                    "properties",
-                                    buildJsonObject {
-                                        put(
-                                            "text",
-                                            buildJsonObject {
-                                                put("type", "string")
-                                                put("description", "The question for the operator (Markdown).")
-                                            },
-                                        )
-                                        put(
-                                            "options",
-                                            buildJsonObject {
-                                                put("type", "array")
-                                                put("items", buildJsonObject { put("type", "string") })
-                                                put("description", "Optional predefined answers.")
-                                            },
-                                        )
-                                    },
-                                )
-                                put("required", buildJsonArray { add(JsonPrimitive("text")) })
-                            },
-                        )
-                    },
-                )
+                put("questions", questionsSchema(maxGroupSize))
                 put(
                     "agent",
                     buildJsonObject {
@@ -185,3 +143,52 @@ private fun dispatchGroupSchema(maxGroupSize: Int): ToolSchema =
             },
         required = listOf("questions", "agent"),
     )
+
+/** The `params` argument as a string map: non-primitive values are dropped. */
+internal fun JsonObject.stringParams(): Map<String, String> =
+    (this["params"] as? JsonObject)
+        ?.entries
+        ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }
+        ?.toMap()
+        .orEmpty()
+
+/** The optional `ttlSec` argument, truncated to whole seconds. */
+internal fun JsonObject.ttlSecArg(): Int? = (this["ttlSec"] as? JsonPrimitive)?.content?.toDoubleOrNull()?.toInt()
+
+/** The `questions` array: each item a `text` and optional `options`, at most [maxGroupSize] of them. */
+private fun questionsSchema(maxGroupSize: Int): JsonObject =
+    buildJsonObject {
+        put("type", "array")
+        put(
+            "description",
+            "The questions for the operator, in the order their answers are passed to the " +
+                "agent (at most $maxGroupSize).",
+        )
+        put(
+            "items",
+            buildJsonObject {
+                put("type", "object")
+                put(
+                    "properties",
+                    buildJsonObject {
+                        put(
+                            "text",
+                            buildJsonObject {
+                                put("type", "string")
+                                put("description", "The question for the operator (Markdown).")
+                            },
+                        )
+                        put(
+                            "options",
+                            buildJsonObject {
+                                put("type", "array")
+                                put("items", buildJsonObject { put("type", "string") })
+                                put("description", "Optional predefined answers.")
+                            },
+                        )
+                    },
+                )
+                put("required", buildJsonArray { add(JsonPrimitive("text")) })
+            },
+        )
+    }

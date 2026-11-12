@@ -340,6 +340,12 @@
           "minimum": 1,
           "default": 32,
           "description": "Maximum sub-agents a single POST /api/v1/callback/joins request may fan out to. Each sub starts a process immediately, so this caps synchronous per-request fan-out; an over-limit request is rejected with 400."
+        },
+        "maxGroupSize": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 8,
+          "description": "Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with 400 before any row is written. See ADR-0105."
         }
       }
     },

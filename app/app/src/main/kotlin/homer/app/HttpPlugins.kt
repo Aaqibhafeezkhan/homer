@@ -15,8 +15,7 @@ import homer.app.exceptions.CooldownActiveException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.CsrfValidationException
 import homer.app.exceptions.DispatchAgentNotFoundException
-import homer.app.exceptions.DispatchGroupAnswersTooLargeException
-import homer.app.exceptions.DispatchGroupTooLargeException
+import homer.app.exceptions.DispatchGroupLimitException
 import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
@@ -265,8 +264,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is AgentNotDispatchableException,
         is QuestionNotFoundException,
         is DispatchAgentNotFoundException,
-        is DispatchGroupAnswersTooLargeException,
-        is DispatchGroupTooLargeException,
+        is DispatchGroupLimitException,
         is DispatchNotFoundException,
         is ContinuationNotFoundException,
         is AnotherProcessStillActive,
@@ -363,7 +361,7 @@ private fun requestErrorStatus(e: HomerException): HttpStatusCode =
         }
 
         // BodylessBadRequestException, ValidationException,
-        // DispatchGroupTooLargeException, DispatchGroupAnswersTooLargeException.
+        // DispatchGroupLimitException.
         else -> {
             HttpStatusCode.BadRequest
         }

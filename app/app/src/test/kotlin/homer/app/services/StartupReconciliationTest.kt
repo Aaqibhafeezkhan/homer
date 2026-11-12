@@ -273,8 +273,14 @@ class StartupReconciliationTest {
                 1,
                 kind = DispatchKind.GROUP,
             )
-        return (repo.createGroup(members, dispatch, maxPending = 10, maxOpenPerProcess = 10) as DispatchRepository.GroupCreateOutcome.Created)
-            .dispatchId
+        return (
+            repo.createGroup(
+                members,
+                dispatch,
+                maxPending = 10,
+                maxOpenPerProcess = 10,
+            ) as DispatchRepository.GroupCreateOutcome.Created
+        ).dispatchId
     }
 
     @Test

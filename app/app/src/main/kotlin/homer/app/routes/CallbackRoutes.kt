@@ -233,7 +233,8 @@ private fun Route.callbackDispatchGroupRoutes(deps: ApiDeps) {
     }
 }
 
-/** `POST /api/v1/callback/runs`: starting an agent at once, optionally with a completion continuation. */private fun Route.callbackRunRoutes(deps: ApiDeps) {
+/** `POST /api/v1/callback/runs`: starting an agent at once, optionally with a completion continuation. */
+private fun Route.callbackRunRoutes(deps: ApiDeps) {
     with(deps) {
         route("/api/v1/callback/runs") {
             // Fire-and-forget: start an opt-in target agent immediately, no

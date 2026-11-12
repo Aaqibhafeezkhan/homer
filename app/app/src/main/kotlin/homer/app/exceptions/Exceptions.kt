@@ -372,21 +372,26 @@ class TooManyPendingDispatchesException(
     val maxPending: Int,
 ) : HomerException("Already at the maximum of $maxPending pending dispatches")
 
+/** A dispatch group's size or aggregate bound was exceeded. Maps to 400. */
+open class DispatchGroupLimitException(
+    message: String,
+) : HomerException(message)
+
 /**
  * Raised when a dispatch group names more questions than `server.dispatch.maxGroupSize`.
- * Refused at create, before any row is written. Maps to 400.
+ * Refused at create, before any row is written.
  */
 class DispatchGroupTooLargeException(
     val maxGroupSize: Int,
-) : HomerException("A dispatch group may hold at most $maxGroupSize questions")
+) : DispatchGroupLimitException("A dispatch group may hold at most $maxGroupSize questions")
 
 /**
  * Raised when a group's aggregated answers exceed the payload bound. The group settles
- * FAILED rather than staying PENDING on answers that can never be delivered. Maps to 400.
+ * FAILED rather than staying PENDING on answers that can never be delivered.
  */
 class DispatchGroupAnswersTooLargeException(
     val maxBytes: Int,
-) : HomerException("Aggregated dispatch-group answers exceed the $maxBytes-byte bound")
+) : DispatchGroupLimitException("Aggregated dispatch-group answers exceed the $maxBytes-byte bound")
 
 /** Raised when a continuation id does not exist. Maps to 404. */
 class ContinuationNotFoundException(
