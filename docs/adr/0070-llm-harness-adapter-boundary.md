@@ -75,13 +75,28 @@ adapter's own, per instance — the executor factory, the `/llm-events` harness 
 and agentdebug each build their own adapter — and the step-id dedupe makes
 `translate` idempotent per instance rather than order-dependent.)*
 
+*(Amended 2026-11-12: the interface also declares
+`fun terminalStopConfigured(command: C): Boolean = false`, and `inspect`'s
+contract widens with it. Claude Code does not always exit `0` at `maxTurns`,
+so a harness whose command opted into a terminal stop is consulted on a
+non-zero exit too: `LlmAttemptOutput.nonZeroOutcome` reads that attempt's
+stdout leniently and bounded, and honours **only** `Inspection.Terminal`,
+rewriting the exit code exactly as the exit-0 path does. Every other verdict —
+and a stream that cannot be read at all — leaves the exit's own failure as it
+was, so no non-zero exit turns into a malformed one. A harness that never
+returns `Terminal` keeps the `false` default and its non-zero behaviour
+unchanged.)*
+
 `id` equals the command's `kind` (`claude`, `codex`, …), and `reportsCost`
 states — once, per adapter, with no default — whether the CLI itself prices
 a run. `translate` is total (never throws) and returns a `Translation`
-(`Events`, `Ignored`, or `Malformed(reason)`); `inspect` judges a zero-exit
-attempt and returns `Success`, `Malformed(reason)`, or
+(`Events`, `Ignored`, or `Malformed(reason)`); `inspect` judges an attempt
+and returns `Success`, `Malformed(reason)`, or
 `Terminal(exitCode)` for a recoverable stop the agent opted into
-(Claude's `error_max_turns`). Adapters are constructed with their own
+(Claude's `error_max_turns`). The executor consults it on exit 0, and — when
+the adapter answers `terminalStopConfigured(command)` with true — on a
+non-zero exit as well, where only `Terminal` is honoured: every other verdict
+leaves the exit's own failure untouched. Adapters are constructed with their own
 config only — no shared mutable state — so each is tested as plain
 functions against recorded stdout lines, independent of the executor.
 

@@ -1849,6 +1849,91 @@ class LlmHarnessExecutorTest {
         }
 
     @Test
+    fun `a maxTurns stop whose CLI exits non-zero returns the configured exit code and is not retried`() =
+        runTest {
+            // Claude Code does not always exit 0 at the cap, so the same terminal stop must be read
+            // from a non-zero exit rather than taken for a crash.
+            stdOut.writeText("""{"type":"result","subtype":"error_max_turns","session_id":"s","total_cost_usd":1.5}""")
+            stubShellExit(1)
+
+            val result =
+                newExecutor(ClaudeHarness()).execute(
+                    claude(
+                        options = ClaudeCmdOptions(maxTurnsExitCode = 75),
+                        retry = LlmRetry(attempts = 3, baseDelayMs = 0, maxDelayMs = 0),
+                    ),
+                    context.copy(processId = 7, agentName = "demo"),
+                    span,
+                )
+
+            assertEquals(75, result.exitCode)
+            verify { span.setAttribute("claude.max_turns_stop", true) }
+            verify { span.setAttribute("retry.attempts.used", 1L) }
+            coVerify(exactly = 1) { context.shell.cmd(any(), any(), any(), any(), any(), any(), any()) }
+            // Accounting is unchanged by the exit code: the attempt is charged exactly once.
+            coVerify(exactly = 1) { processManager.addCost(7, 1.5, CostSource.CLI) }
+        }
+
+    @Test
+    fun `a non-zero exit without a cap result is retried and surfaces the real exit code`() =
+        runTest {
+            for (text in listOf("", """{"type":"result","subtype":"error_during_execution","session_id":"s"}""")) {
+                val llmCalls = mutableListOf<Call>()
+                scriptShell(llm = listOf(text to 1, text to 1), llmCalls = llmCalls)
+
+                val result =
+                    newExecutor(ClaudeHarness())
+                        .execute(
+                            claude(
+                                options = ClaudeCmdOptions(maxTurnsExitCode = 75),
+                                retry = LlmRetry(attempts = 2, baseDelayMs = 0, maxDelayMs = 0),
+                            ),
+                            context,
+                            span,
+                        )
+
+                assertEquals(1, result.exitCode)
+                assertEquals(2, llmCalls.size, "attempts run for $text")
+            }
+        }
+
+    @Test
+    fun `a non-zero exit at the cap without maxTurnsExitCode still fails`() =
+        runTest {
+            stdOut.writeText("""{"type":"result","subtype":"error_max_turns","session_id":"s"}""")
+            stubShellExit(1)
+
+            val result = newExecutor(ClaudeHarness()).execute(claude(), context, span)
+
+            assertEquals(1, result.exitCode)
+            verify(exactly = 0) { span.setAttribute("claude.max_turns_stop", any<Boolean>()) }
+        }
+
+    @Test
+    fun `a non-zero cap stop logs the harness and exit code and no stream text`() =
+        runTest {
+            // Denial path (§12 rule 7): the parsed stream is agent-written, so no part of it may
+            // reach a log line or a span attribute.
+            val marker = "OUTPUT-SECRET-MARKER"
+            stdOut.writeText("""{"type":"result","subtype":"error_max_turns","session_id":"s","result":"$marker"}""")
+            stubShellExit(1)
+            val log = LoggerFactory.getLogger("homer.app.executors.llm.claude") as LogbackLogger
+            val appender = ListAppender<ILoggingEvent>().apply { start() }
+            log.addAppender(appender)
+
+            newExecutor(ClaudeHarness()).execute(
+                claude(options = ClaudeCmdOptions(maxTurnsExitCode = 75)),
+                context,
+                span,
+            )
+            log.detachAppender(appender)
+
+            assertTrue(appender.list.any { it.formattedMessage == "claude stopped at a terminal cap; returning exit code 75" })
+            assertTrue(appender.list.none { it.formattedMessage.contains(marker) })
+            verify(exactly = 0) { span.setAttribute(any<String>(), match<String> { it.contains(marker) }) }
+        }
+
+    @Test
     fun `a persistently is_error stream stops at the retry cap and rethrows the reason`() =
         runTest {
             // The step is judged by the CLI's own verdict: retry runs, but it is bounded by the
@@ -2254,6 +2339,40 @@ class LlmHarnessExecutorTest {
             val result =
                 newExecutor(FakeHarness(terminalExit = 75))
                     .execute(claudeWithTiers(tier("strong", "true")), context, span)
+
+            assertEquals(0, result.exitCode)
+            assertEquals(2, llmCalls.size)
+            assertEquals("capped", predicateCalls.single().env[EnvConstants.LLM_OUTCOME])
+            assertEquals("75", predicateCalls.single().env[EnvConstants.LLM_EXIT_CODE])
+        }
+
+    @Test
+    fun `a tier stopped at its turn cap on a non-zero exit escalates with outcome capped`() =
+        runTest {
+            val llmCalls = mutableListOf<Call>()
+            val predicateCalls = mutableListOf<Call>()
+            scriptShell(
+                llm =
+                    listOf(
+                        """{"type":"result","subtype":"error_max_turns","session_id":"s"}""" to 1,
+                        """{"type":"result","subtype":"success","session_id":"s","total_cost_usd":0.0}""" to 0,
+                    ),
+                predicateExits = listOf(0),
+                llmCalls = llmCalls,
+                predicateCalls = predicateCalls,
+            )
+
+            val result =
+                newExecutor(ClaudeHarness())
+                    .execute(
+                        Command.Claude(
+                            prompt = LlmPrompt.Prompt("hi"),
+                            options = ClaudeCmdOptions(model = "cheap", maxTurnsExitCode = 75),
+                            escalate = listOf(tier("strong", "true")),
+                        ),
+                        context,
+                        span,
+                    )
 
             assertEquals(0, result.exitCode)
             assertEquals(2, llmCalls.size)

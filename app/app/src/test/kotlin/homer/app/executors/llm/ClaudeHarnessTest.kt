@@ -680,6 +680,13 @@ class ClaudeHarnessTest {
     }
 
     @Test
+    fun `a terminal stop is configured only when maxTurnsExitCode is set`() {
+        assertFalse(harness.terminalStopConfigured(command))
+        val opted = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 7))
+        assertTrue(harness.terminalStopConfigured(opted))
+    }
+
+    @Test
     fun `a result with a missing subtype translates to a Failed turn end and is Malformed`() {
         val e = events("""{"type":"result"}""").single() as LlmEvent.TurnEnd
         assertEquals(TurnStatus.Failed("<missing>"), e.status)

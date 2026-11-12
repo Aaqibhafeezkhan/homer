@@ -1519,7 +1519,7 @@ options:
 | `agent` | `String` | No | `null` | Single agent to use |
 | `agents` | `Map<String, ClaudeSubagent>` | No | `null` | Inline subagent definitions; serialized to `--agents` as a JSON object |
 | `maxTurns` | `Int` | No | `40` | Maximum agentic turns |
-| `maxTurnsExitCode` | `Int` | No | `null` | Opt-in: when Claude stops at `maxTurns` (result subtype `error_max_turns`), the command returns this exit code instead of failing the run. Must be in `1..255` (a value outside that range, e.g. `0`, is rejected at load time so a max-turns failure cannot masquerade as success). Combine with `continueIfFail: true` and a `resultEnvParam` with `src: RESULT_CODE` so a later deterministic step can push or discard the partial work. Cost is charged as usual; the attempt is not retried. |
+| `maxTurnsExitCode` | `Int` | No | `null` | Opt-in: when Claude stops at `maxTurns` (result subtype `error_max_turns`), the command returns this exit code instead of failing the run — whatever exit code the CLI itself ended that stop with, `0` or non-zero. Must be in `1..255` (a value outside that range, e.g. `0`, is rejected at load time so a max-turns failure cannot masquerade as success). Combine with `continueIfFail: true` and a `resultEnvParam` with `src: RESULT_CODE` so a later deterministic step can push or discard the partial work. A non-zero exit whose output holds no readable `error_max_turns` result stays a failure. Cost is charged as usual; the attempt is not retried. |
 | `maxMcpOutputTokens` | `Int` | No | `null` | Maximum MCP output tokens (`MAX_MCP_OUTPUT_TOKENS` env var) |
 | `model` | `String` | No | `null` | Claude model to use (`sonnet`, `opus`, `haiku`) |
 | `fallbackModel` | `String` | No | `null` | Fallback model if the primary is overloaded |

@@ -194,7 +194,7 @@ class LlmHarnessExecutor<C>(
         // usable success stays below and only for exit 0. See ADR-0061.
         val (accounting, settlement) = accountFinished(attempt, endedAtMs = System.currentTimeMillis())
 
-        if (result.exitCode != 0) return Attempted(RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting)), settlement)
+        if (result.exitCode != 0) return Attempted(output.nonZeroOutcome(command, result, accounting, attemptOut, span), settlement)
         return Attempted(output.exitZeroOutcome(command, result, accounting, attemptOut, attemptIndex, span), settlement)
     }
 

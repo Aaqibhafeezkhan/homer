@@ -41,6 +41,14 @@ interface LlmHarness<C> where C : Command, C : Command.LlmCommand {
 
     fun stdOutFilter(command: C): LlmStdOutFilter? = null
 
+    /**
+     * Whether [command] opted into a terminal stop this harness reports as [Inspection.Terminal]
+     * (Claude's `maxTurnsExitCode`). Only then does the executor read and inspect a non-zero exit's
+     * stdout; a harness that never returns [Inspection.Terminal] keeps the default, and its non-zero
+     * exit stays the failure its exit code already is. See ADR-0070.
+     */
+    fun terminalStopConfigured(command: C): Boolean = false
+
     /** [command] as one escalation tier runs it: its model, and its raw CLI options when the tier sets them. See ADR-0079. */
     fun escalated(
         command: C,
@@ -50,7 +58,12 @@ interface LlmHarness<C> where C : Command, C : Command.LlmCommand {
     /** Total: never throws. One raw line may yield several events (Codex items). */
     fun translate(line: JsonObject): Translation
 
-    /** Judges a zero-exit attempt. [raw] is the strict-parsed line list, for checks the canonical model does not carry (Claude's version pin). */
+    /**
+     * Judges an attempt. [raw] is the strict-parsed line list, for checks the canonical model does
+     * not carry (Claude's version pin). The executor consults it on exit 0, and — when
+     * [terminalStopConfigured] is true — on a non-zero exit as well, where only [Inspection.Terminal]
+     * is honoured: every other verdict leaves the exit's own failure untouched.
+     */
     fun inspect(
         events: List<LlmEvent>,
         raw: List<JsonObject>,

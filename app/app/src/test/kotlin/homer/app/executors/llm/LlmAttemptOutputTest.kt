@@ -22,7 +22,12 @@ import kotlin.test.assertIs
 class LlmAttemptOutputTest {
     private val output = LlmAttemptOutput(FakeHarness(), LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
     private val command = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions())
+
+    /** The same step, opted into the turn cap whose exit code a terminal stop is rewritten to. */
+    private val cappedCommand = Command.Claude(prompt = LlmPrompt.Prompt("hi"), options = ClaudeCmdOptions(maxTurnsExitCode = 75))
     private val accounting = LlmAccounting(sessionId = "s", costUsd = 0.0, source = CostSource.CLI)
+
+    private val claudeOutput = LlmAttemptOutput(ClaudeHarness(), LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
 
     @Test
     fun `an exit-0 attempt with a successful turn end is a success, and an empty stdout is malformed`(
@@ -63,6 +68,136 @@ class LlmAttemptOutputTest {
             "result event is not a successful turn: is_error (terminal_reason=api_error, api_error_status=529)",
             failure.exception.reason,
         )
+    }
+
+    // ========== non-zero exit ==========
+    // The CLI can end a turn-cap stop on a non-zero exit code, so a harness with a terminal stop
+    // configured is read on that path too; everything else keeps the exit's own failure.
+
+    @Test
+    fun `a non-zero exit whose result is error_max_turns is the capped stop of exit 0`(
+        @TempDir dir: Path,
+    ) {
+        val out = dir.resolve("out").also { it.writeText("""{"type":"result","subtype":"error_max_turns","session_id":"s"}""" + "\n") }
+        val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+        val span = TestFixtures.mockSpan()
+
+        val capped = assertIs<RetryOutcome.CappedStop>(claudeOutput.nonZeroOutcome(cappedCommand, result, accounting, out, span))
+
+        assertEquals(75, capped.result.exitCode)
+        assertEquals(accounting, capped.result.llmAccounting)
+        verify { span.setAttribute("claude.max_turns_stop", true) }
+    }
+
+    @Test
+    fun `a harness that opts into a terminal stop is read on a non-zero exit too`(
+        @TempDir dir: Path,
+    ) {
+        // The read is driven by the adapter's opt-in, not by a Claude-specific rule (ADR-0070).
+        val fake = FakeHarness(terminalExit = 9, terminalStopConfigured = true)
+        val out = dir.resolve("out").also { it.writeText("""{"t":"stop"}""") }
+        val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+        val capped =
+            assertIs<RetryOutcome.CappedStop>(
+                LlmAttemptOutput(fake, LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
+                    .nonZeroOutcome(command, result, accounting, out, TestFixtures.mockSpan()),
+            )
+
+        assertEquals(9, capped.result.exitCode)
+    }
+
+    @Test
+    fun `without a configured cap a non-zero exit never reads the stream`(
+        @TempDir dir: Path,
+    ) {
+        val fake = FakeHarness()
+        val out = dir.resolve("out").also { it.writeText("""{"t":"stop"}""") }
+        val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+        val failure =
+            assertIs<RetryOutcome.OtherFailure>(
+                LlmAttemptOutput(fake, LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
+                    .nonZeroOutcome(command, result, accounting, out, TestFixtures.mockSpan()),
+            )
+
+        assertEquals(1, failure.result.exitCode)
+        assertEquals(0, fake.inspectCalls)
+    }
+
+    @Test
+    fun `a non-zero exit whose stream holds no cap result stays the failure its exit code is`(
+        @TempDir dir: Path,
+    ) {
+        // Denial path (§12 rule 8): only a terminal verdict is taken from the stream; an empty,
+        // unparseable, result-less, successful, failed or is_error stream leaves the exit alone.
+        val streams =
+            listOf(
+                "" to "empty stdout",
+                "not json\n" to "unparseable",
+                """{"type":"system","subtype":"init","session_id":"s"}""" + "\n" to "no result event",
+                """{"type":"result","subtype":"success","session_id":"s","total_cost_usd":0.0}""" + "\n" to "a success result",
+                """{"type":"result","subtype":"error_during_execution"}""" + "\n" to "another subtype",
+                """{"type":"result","subtype":"success","is_error":true,"stop_reason":"refusal"}""" + "\n" to "an is_error result",
+            )
+        val span = TestFixtures.mockSpan()
+
+        for ((text, what) in streams) {
+            val out = dir.resolve("out").also { it.writeText(text) }
+            val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+            val failure =
+                assertIs<RetryOutcome.OtherFailure>(claudeOutput.nonZeroOutcome(cappedCommand, result, accounting, out, span), what)
+
+            assertEquals(1, failure.result.exitCode, what)
+            assertEquals(accounting, failure.result.llmAccounting, what)
+        }
+    }
+
+    @Test
+    fun `a non-zero exit is not judged by the version pin a success carries`(
+        @TempDir dir: Path,
+    ) {
+        val pinned =
+            LlmAttemptOutput(ClaudeHarness(requireClaudeCodeVersion = "1.2.3"), LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
+        val out =
+            dir.resolve("out").also {
+                it.writeText(
+                    """
+                    {"type":"system","subtype":"init","session_id":"s","claude_code_version":"9.9.9"}
+                    {"type":"result","subtype":"success","session_id":"s","total_cost_usd":0.0}
+                    """.trimIndent() + "\n",
+                )
+            }
+        val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+        val failure =
+            assertIs<RetryOutcome.OtherFailure>(pinned.nonZeroOutcome(cappedCommand, result, accounting, out, TestFixtures.mockSpan()))
+
+        assertEquals(1, failure.result.exitCode)
+    }
+
+    @Test
+    fun `a cap result past the lenient read bound leaves the non-zero exit a failure`(
+        @TempDir dir: Path,
+    ) {
+        // The read is bounded (CWE-400): a cap result past the event cap is never reached, so the
+        // outcome is the plain failure and no exception escapes the parse.
+        val out =
+            dir.resolve("out").also {
+                it.writeText(
+                    ("""{"type":"system","subtype":"init","session_id":"s"}""" + "\n").repeat(50_001) +
+                        """{"type":"result","subtype":"error_max_turns","session_id":"s"}""" + "\n",
+                )
+            }
+        val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+        val failure =
+            assertIs<RetryOutcome.OtherFailure>(
+                claudeOutput.nonZeroOutcome(cappedCommand, result, accounting, out, TestFixtures.mockSpan()),
+            )
+
+        assertEquals(1, failure.result.exitCode)
     }
 
     @Test

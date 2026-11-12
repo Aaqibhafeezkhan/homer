@@ -16,8 +16,9 @@ import kotlin.io.path.bufferedReader
 
 /**
  * Reads what one [LlmHarnessExecutor] attempt wrote: its stdout strictly, to judge an exit-0
- * attempt fail-closed, or leniently, for the telemetry hand-off of any other outcome; and
- * records the stdout filter's drops on its stderr. Logs to the executor's [logger].
+ * attempt fail-closed, or leniently, to look for a configured terminal stop on a non-zero exit
+ * and for the telemetry hand-off of any other outcome; and records the stdout filter's drops on
+ * its stderr. Logs to the executor's [logger].
  */
 internal class LlmAttemptOutput<C>(
     private val harness: LlmHarness<C>,
@@ -47,16 +48,56 @@ internal class LlmAttemptOutput<C>(
             }
 
             is Inspection.Terminal -> {
-                // Not retried — a fresh attempt would spend the same budget the same way.
-                logger.warn("{} stopped at a terminal cap; returning exit code {}", harness.id, inspection.exitCode)
-                span.setAttribute("claude.max_turns_stop", true)
-                RetryOutcome.CappedStop(result.copy(exitCode = inspection.exitCode, llmAccounting = accounting), stream)
+                cappedStop(result, accounting, inspection, stream, span)
             }
 
             is Inspection.Malformed -> {
                 RetryOutcome.MalformedFailure(MalformedLlmOutputException(inspection.reason))
             }
         }
+    }
+
+    /**
+     * What a non-zero attempt means. The CLI can end a turn-cap stop on a non-zero exit code, so a
+     * harness with a terminal stop configured gets its stream read (leniently, and bounded) for the
+     * same [Inspection.Terminal] an exit-0 attempt yields; everything else stays the failure the
+     * exit code already is — including a stream that cannot be read or holds no usable result.
+     * Never malformed: a non-zero exit is judged by its exit code. See ADR-0070.
+     */
+    fun nonZeroOutcome(
+        command: C,
+        result: CommandResult,
+        accounting: LlmAccounting,
+        attemptOut: Path,
+        span: Span,
+    ): RetryOutcome {
+        // Nothing to look for without an opt-in cap: the exit code is the whole verdict, and the
+        // stream is left to the telemetry hand-off's own lenient read.
+        if (!harness.terminalStopConfigured(command)) return RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting))
+        // The stdout of a non-zero exit is agent-written and may be unreadable, truncated or
+        // oversized (§12 rule 2), and inspecting it can throw where an adapter checks something
+        // only a success carries (Claude's version pin). Neither turns the exit into another
+        // failure: only a terminal verdict is taken from it.
+        val capped =
+            runCatching {
+                val stream = readLeniently(attemptOut, span)
+                (harness.inspect(stream.events, stream.raw, command) as? Inspection.Terminal)?.let { it to stream }
+            }.getOrNull() ?: return RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting))
+        return cappedStop(result, accounting, capped.first, capped.second, span)
+    }
+
+    /** The terminal cap both exit paths share: the configured exit code, its stream, never retried. */
+    private fun cappedStop(
+        result: CommandResult,
+        accounting: LlmAccounting,
+        inspection: Inspection.Terminal,
+        stream: TranslatedStream,
+        span: Span,
+    ): RetryOutcome.CappedStop {
+        // Not retried — a fresh attempt would spend the same budget the same way.
+        logger.warn("{} stopped at a terminal cap; returning exit code {}", harness.id, inspection.exitCode)
+        span.setAttribute("claude.max_turns_stop", true)
+        return RetryOutcome.CappedStop(result.copy(exitCode = inspection.exitCode, llmAccounting = accounting), stream)
     }
 
     /**
