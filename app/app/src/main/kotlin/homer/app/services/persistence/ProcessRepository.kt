@@ -9,6 +9,7 @@ import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.services.CooldownDecision
 import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.and
@@ -182,6 +183,47 @@ class ProcessRepository(
                 ?: ProcessStatus.UNKNOWN
         }
 
+    /** One transaction: [accepts] judges the current status, then writes [newStatus] and records hooks; a rejection records none. */
+    private suspend fun guardedTransition(
+        processId: Int,
+        newStatus: ProcessStatus,
+        nowSec: Long,
+        hookRecording: HookRecording?,
+        clearCommand: Boolean,
+        reportAgentOnReject: Boolean,
+        accepts: (ProcessStatus) -> Boolean,
+    ): TransitionResult =
+        db.query {
+            val row = transitionRowTx(processId) ?: return@query TransitionResult(updated = false, agentName = null)
+            if (!accepts(ProcessStatus.valueOf(row[Processes.status]))) {
+                return@query TransitionResult(updated = false, agentName = if (reportAgentOnReject) row[Processes.agentName] else null)
+            }
+            writeStatusTx(processId, row, newStatus, nowSec, clearCommand)
+            settledTransitionTx(processId, row[Processes.agentName], row[Processes.owner], newStatus, hookRecording, nowSec)
+        }
+
+    /** Appends [newStatus] to history and writes status (`endedAt` when terminal) in the caller's transaction. */
+    private fun writeStatusTx(
+        processId: Int,
+        row: ResultRow,
+        newStatus: ProcessStatus,
+        nowSec: Long,
+        clearCommand: Boolean,
+    ) {
+        val newHistory = decodeHistory(row[Processes.history]) + (nowSec to newStatus)
+        Processes.update({ Processes.id eq processId }) {
+            it[status] = newStatus.name
+            it[history] = encodeHistory(newHistory)
+            if (clearCommand) {
+                it[currentCommand] = null
+                it[currentCommandStart] = null
+            }
+            // Same UPDATE that sets the status, so the terminal time can never
+            // disagree with it. See ADR-0051.
+            if (newStatus.name in TERMINAL_STATUS_NAMES) it[endedAt] = nowSec
+        }
+    }
+
     /**
      * Appends [newStatus] to history and writes it when the row exists and
      * [guard] accepts its current status (null guard = unconditional). The
@@ -195,22 +237,8 @@ class ProcessRepository(
         guard: Set<ProcessStatus>?,
         hookRecording: HookRecording? = null,
     ): TransitionResult =
-        db.query {
-            val row = transitionRowTx(processId) ?: return@query TransitionResult(updated = false, agentName = null)
-            val current = ProcessStatus.valueOf(row[Processes.status])
-            if (guard != null && current !in guard) {
-                // A guard-rejected CAS records nothing: the run never reached this status.
-                return@query TransitionResult(updated = false, agentName = row[Processes.agentName])
-            }
-            val newHistory = decodeHistory(row[Processes.history]) + (nowSec to newStatus)
-            Processes.update({ Processes.id eq processId }) {
-                it[status] = newStatus.name
-                it[history] = encodeHistory(newHistory)
-                // Same UPDATE that sets the status, so the terminal time can never
-                // disagree with it. See ADR-0051.
-                if (newStatus.name in TERMINAL_STATUS_NAMES) it[endedAt] = nowSec
-            }
-            settledTransitionTx(processId, row[Processes.agentName], row[Processes.owner], newStatus, hookRecording, nowSec)
+        guardedTransition(processId, newStatus, nowSec, hookRecording, clearCommand = false, reportAgentOnReject = true) {
+            guard == null || it in guard
         }
 
     /**
@@ -223,21 +251,8 @@ class ProcessRepository(
         nowSec: Long,
         hookRecording: HookRecording? = null,
     ): TransitionResult =
-        db.query {
-            val row = transitionRowTx(processId) ?: return@query TransitionResult(updated = false, agentName = null)
-            val current = ProcessStatus.valueOf(row[Processes.status])
-            if (current != ProcessStatus.WORKING && current != ProcessStatus.CREATED) {
-                return@query TransitionResult(updated = false, agentName = null)
-            }
-            val newHistory = decodeHistory(row[Processes.history]) + (nowSec to ProcessStatus.KILLED)
-            Processes.update({ Processes.id eq processId }) {
-                it[status] = ProcessStatus.KILLED.name
-                it[history] = encodeHistory(newHistory)
-                it[currentCommand] = null
-                it[currentCommandStart] = null
-                it[endedAt] = nowSec
-            }
-            settledTransitionTx(processId, row[Processes.agentName], row[Processes.owner], ProcessStatus.KILLED, hookRecording, nowSec)
+        guardedTransition(processId, ProcessStatus.KILLED, nowSec, hookRecording, clearCommand = true, reportAgentOnReject = false) {
+            it == ProcessStatus.WORKING || it == ProcessStatus.CREATED
         }
 
     /**

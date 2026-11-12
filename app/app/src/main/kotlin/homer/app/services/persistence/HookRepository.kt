@@ -13,7 +13,7 @@ import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
-import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
@@ -90,22 +90,19 @@ internal fun insertPendingHooksTx(
             .where { PendingHooks.status eq HookStatus.PENDING.name }
             .count()
             .toInt()
-    val ids = mutableListOf<Int>()
-    for (hook in hooks) {
-        if (pending >= maxPending) break
-        ids +=
-            PendingHooks.insert {
-                it[processId] = hook.processId
-                it[declaringAgent] = hook.declaringAgent
-                it[status] = HookStatus.PENDING.name
-                it[agentName] = hook.targetAgentName
-                it[owner] = hook.owner
-                it[createdAt] = hook.createdAt
-                it[triggeringStatus] = hook.triggeringStatus.name
-            }[PendingHooks.id]
-        pending++
-    }
-    return ids
+    val room = (maxPending - pending).coerceAtLeast(0)
+    val accepted = hooks.take(room)
+    if (accepted.isEmpty()) return emptyList()
+    return PendingHooks
+        .batchInsert(accepted) { hook ->
+            this[PendingHooks.processId] = hook.processId
+            this[PendingHooks.declaringAgent] = hook.declaringAgent
+            this[PendingHooks.status] = HookStatus.PENDING.name
+            this[PendingHooks.agentName] = hook.targetAgentName
+            this[PendingHooks.owner] = hook.owner
+            this[PendingHooks.createdAt] = hook.createdAt
+            this[PendingHooks.triggeringStatus] = hook.triggeringStatus.name
+        }.map { it[PendingHooks.id] }
 }
 
 /**

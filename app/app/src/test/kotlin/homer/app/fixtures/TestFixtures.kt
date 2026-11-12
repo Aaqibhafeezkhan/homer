@@ -66,7 +66,7 @@ object TestFixtures {
      * relaxed mock returns yields a bare `Object`, not a list, so a test that drives a status
      * write through a mocked hook layer must stub this one method.
      */
-    fun mockHookService(): HookService =
+    internal fun mockHookService(): HookService =
         mockk(relaxed = true) {
             every { recording() } returns HookRecording({ _, _ -> emptyList() }, maxPending = 200)
         }
