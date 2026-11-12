@@ -952,7 +952,7 @@ class ProcessTest {
             coVerify { mockLockManager.releaseLock("shared", 9) }
         }
 
-    // ========== Lock-before-slot admission order (ADR-0103) Tests ==========
+    // ========== Lock-before-slot admission order (ADR-0104) Tests ==========
 
     /** A Process over the given (real) gates; its lock key is rendered from the `MR` input. */
     private fun processFor(

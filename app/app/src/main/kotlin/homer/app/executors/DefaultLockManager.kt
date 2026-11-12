@@ -53,7 +53,7 @@ class DefaultLockManager(
 
                     KILL_OLD_RUN_CURRENT -> {
                         // The victim is registered against the key here and returned to be killed
-                        // later: the kill must not land before the new run holds a slot (ADR-0103).
+                        // later: the kill must not land before the new run holds a slot (ADR-0104).
                         entry.holders.add(processID)
                         activeProcessID
                     }

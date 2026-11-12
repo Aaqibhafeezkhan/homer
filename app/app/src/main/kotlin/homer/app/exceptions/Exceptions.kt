@@ -141,7 +141,7 @@ class MaxQueuedRunsExceededException(
 
 /**
  * Raised when an agent already has `bound` runs suspended waiting for a subject lock. A run
- * waiting on a lock no longer holds a parallel-run slot (ADR-0103), so the wait needs its own
+ * waiting on a lock no longer holds a parallel-run slot (ADR-0104), so the wait needs its own
  * local bound: an unbounded lock queue on one agent could pin just as many process rows as the
  * slot queue could, and starve every other agent. The bound is `maxQueuedRuns` when that shares
  * the slot queue, and `maxParallelRuns` otherwise — the surplus run is failed instead of parked.

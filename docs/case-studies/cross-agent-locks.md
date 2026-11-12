@@ -124,7 +124,7 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
 
 - **Where the lock sits in a run's start.** A run takes its subject lock
   first, then a parallel-run slot, then waits in the
-  [runner claim queue](../../app/SERVER.md#runner-claim-queue) (ADR-0103).
+  [runner claim queue](../../app/SERVER.md#runner-claim-queue) (ADR-0104).
   Waiting on the lock holds no parallel-run slot — lock waiters are bounded
   by `maxQueuedRuns`, else `maxParallelRuns` — and a run waiting on the
   lock stays `CREATED`, so it shows up in

@@ -151,7 +151,7 @@ class Process(
     /**
      * Takes the run's gates in order — its subject lock, then a parallel-run slot, then the kill a
      * `KILL_OLD_RUN_CURRENT` collision deferred — recording each in [admission] as it is taken.
-     * The lock comes first (ADR-0103): a run waiting on another run's subject lock must not hold
+     * The lock comes first (ADR-0104): a run waiting on another run's subject lock must not hold
      * an agent-wide slot, or one busy subject starves every other subject of this agent. The slot
      * attempt can still be refused, and the victim is killed only once it is not: a refused slot
      * leaves the displaced run alive and this run's `tearDown` releases the lock again.

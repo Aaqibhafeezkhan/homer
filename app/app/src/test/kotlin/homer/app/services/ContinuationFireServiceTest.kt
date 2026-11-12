@@ -261,7 +261,7 @@ class ContinuationFireServiceTest {
     fun `a target whose lock-wait queue is full is released for a retry`() =
         runTest {
             // A full lock-wait queue reflects the target's momentary state, like the slot queue: the
-            // resume must not be consumed by it. See ADR-0103, ADR-0023.
+            // resume must not be consumed by it. See ADR-0104, ADR-0023.
             every { agents.agents } returns mapOf("h" to agent)
             coEvery { repo.claim(5) } returns true
             coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws

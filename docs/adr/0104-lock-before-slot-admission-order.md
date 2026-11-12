@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0002, ADR-0029, ADR-0047, ADR-0051, ADR-0098
 ---
 
-# ADR-0103: A run takes its lock before its parallel-run slot, and the lock-wait queue is bounded
+# ADR-0104: A run takes its lock before its parallel-run slot, and the lock-wait queue is bounded
 
 ## Context and Problem Statement
 

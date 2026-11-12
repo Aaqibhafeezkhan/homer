@@ -5,14 +5,14 @@ deciders: Lukáš Vlk
 ---
 # ADR-0029: Flow-scoped lock pass-through (`acceptParentLock`)
 
-> **Amendment — the admission order reversed by [ADR-0103](0103-lock-before-slot-admission-order.md).**
+> **Amendment — the admission order reversed by [ADR-0104](0104-lock-before-slot-admission-order.md).**
 > The decision below stands: `acceptParentLock` still lets a descendant skip a lock its
 > ancestor holds. Two details no longer hold. Decision point 5's aside — that
 > `maxParallelRuns` is "acquired before the lock in `Process.execute`" — is reversed: a run
 > now takes the lock first and the slot second. Decision point 1 names
 > `waitForLockOrThrow` as the call it skips; that is now `acquireLock`, which only decides
 > the collision (the kill, where there is one, happens once the new run holds a slot). See
-> ADR-0103.
+> ADR-0104.
 
 > **Amendment — transport superseded by [ADR-0030](0030-runagent-in-process-dispatch.md).**
 > The decision below stands: `acceptParentLock` still lets a descendant skip a

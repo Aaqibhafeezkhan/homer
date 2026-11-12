@@ -163,7 +163,7 @@ marked `Constraint:`.
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).
 - **`LockManager`** — the three `onCollision` strategies (`WAIT`,
   `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`). `Process` takes the lock **before** the
-  parallel-run slot (ADR-0103), so `acquireLock` only *decides* the collision: it returns a
+  parallel-run slot (ADR-0104), so `acquireLock` only *decides* the collision: it returns a
   `LockGrant` carrying the run a `KILL_OLD_RUN_CURRENT` collision displaced, and
   `killDisplaced` kills it once the new run holds a slot. A `WAIT` run takes its lock-wait
   ticket (`ParallelRunsManager.enterLockWait`) inside the mutex, before it enqueues, and
@@ -175,7 +175,7 @@ marked `Constraint:`.
   a surplus run fails fast (the start still returns `200`; the run ends
   `FAILED`). See ADR-0029. `enterLockWait` bounds the runs parked on a lock: it shares the
   `maxQueuedRuns` counter when that is set, and otherwise caps them at `maxParallelRuns`
-  (ADR-0103).
+  (ADR-0104).
   - **Constraint:** `releaseSlot` takes the exact `Semaphore` returned by
     `acquireSlot`, and the waiter counter is captured, not re-looked-up — a
     concurrent `AgentsService.reload()` would otherwise lose the reference or

@@ -130,7 +130,7 @@ scheduled (`next_attempt_at`, doubling from 60 s up to 1 h), and
 bounded twice — by an 8-attempt budget and by the continuation's own TTL, which
 is checked first so a lapsed row expires rather than spending another attempt.
 *(Amended 2026-11-12: the lock-wait bound added by
-[ADR-0103](0103-lock-before-slot-admission-order.md) joins the list —
+[ADR-0104](0104-lock-before-slot-admission-order.md) joins the list —
 `MaxLockWaitersExceededException` is classified transient like the run queue. It shares
 that arm's reachability, though: the lock wait is entered inside the already-launched
 target run, so the refusal ends that run `FAILED` with a stored reason and never reaches

@@ -14,7 +14,7 @@ fun interface LockWaitTicket {
 /**
  * Reserves a [LockWaitTicket] at the moment a run is about to suspend on a subject lock, and
  * throws when the agent's lock-wait bound is reached. A run waiting for a lock holds no
- * parallel-run slot (ADR-0103), so this is where the wait stays bounded (§12 rules 4–5).
+ * parallel-run slot (ADR-0104), so this is where the wait stays bounded (§12 rules 4–5).
  */
 fun interface LockWaitGate {
     fun enter(): LockWaitTicket
