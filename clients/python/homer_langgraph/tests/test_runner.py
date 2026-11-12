@@ -588,19 +588,23 @@ def test_fanout_retries_a_failed_sub_and_continues(
     thread, iid = _park_retry_fanout(RETRY_FANOUT, captured_runs)
 
     # Segment 2: the sub comes back FAILED -> the node re-parks and the runtime
-    # dispatches the SAME sub again, under the same interrupt id.
+    # dispatches the SAME sub again. The interrupt id is LangGraph's per-park
+    # assignment and need not survive a re-park (ADR-0075): the contract is that
+    # the dispatch carries the id of the park it was made from, and a resume
+    # keyed by a recorded id still binds after a re-park.
     captured_runs.clear()
     _resume(monkeypatch, thread, iid, json.dumps({"status": "FAILED", "processId": 1, "result": None}))
     assert runner.run(module=RETRY_FANOUT) == 0
     assert len(captured_runs) == 1
     retry_argv = captured_runs[0]
     assert _agent_of(retry_argv) == "worker"
-    assert _flag_pairs(retry_argv, "--continue-param")["HMR_LG_INTERRUPT"] == iid
+    retry_iid = _flag_pairs(retry_argv, "--continue-param")["HMR_LG_INTERRUPT"]
     assert "homer_fanout: retrying worker attempt 1/2 after FAILED" in capsys.readouterr().err
 
     # Segment 3: the retried sub finishes -> the graph continues with its result.
+    # Resuming with the id the retry dispatch carried is Homer's own flow.
     captured_runs.clear()
-    _resume(monkeypatch, thread, iid, json.dumps({"status": "FINISHED", "processId": 2, "result": "R2"}))
+    _resume(monkeypatch, thread, retry_iid, json.dumps({"status": "FINISHED", "processId": 2, "result": "R2"}))
     assert runner.run(module=RETRY_FANOUT) == 0
     assert captured_runs == []
     out = json.loads(capsys.readouterr().out)
@@ -714,25 +718,19 @@ def test_ungrouped_retry_redispatches_only_the_failed_branch(
     assert len(captured_runs) == 1
     thread, iid = _thread_and_iid(captured_runs[0])
     first_agent = _agent_of(captured_runs[0])
+    dispatched = [first_agent]
 
-    # That branch's sub fails: only it re-parks, the other two stay pending.
+    # That branch's sub fails: its node re-parks for the retry (its interrupt id
+    # is a fresh per-park value, so the segment may advance any pending branch),
+    # and the segment still dispatches exactly one unit. The loop below counts
+    # this dispatch when it resumes it.
     captured_runs.clear()
     _resume(monkeypatch, thread, iid, json.dumps({"status": "FAILED", "processId": 1, "result": None}))
     assert runner.run(module=THREE_RETRY_FANOUT) == 0
     assert len(captured_runs) == 1
-    assert _agent_of(captured_runs[0]) == first_agent
 
-    # The retried sub finishes -> that branch completes and the runtime moves on to
-    # another pending branch instead of retrying again.
-    captured_runs.clear()
-    _resume(monkeypatch, thread, iid, json.dumps({"status": "FINISHED", "processId": 2, "result": "R2"}))
-    assert runner.run(module=THREE_RETRY_FANOUT) == 0
-    assert len(captured_runs) == 1
-    assert _agent_of(captured_runs[0]) != first_agent
-
-    # Segments 4+: the still-parked branches each finish on their first attempt,
-    # one segment per sub, until none is pending and the graph completes with
-    # all three results.
+    # Every pending branch finishes on its first attempt, one segment per sub,
+    # until none is pending and the graph completes with all three results.
     finished = {first_agent: "R2"}
     while captured_runs:
         argv = captured_runs[-1]
@@ -743,6 +741,7 @@ def test_ungrouped_retry_redispatches_only_the_failed_branch(
             json.dumps({"status": "FINISHED", "processId": 3, "result": f"R_{agent}"}),
         )
         finished[agent] = f"R_{agent}"
+        dispatched.append(agent)
         captured_runs.clear()
         assert runner.run(module=THREE_RETRY_FANOUT) == 0
 
@@ -750,6 +749,11 @@ def test_ungrouped_retry_redispatches_only_the_failed_branch(
     for agent, result in finished.items():
         assert out[agent.split("_")[1].lower()]["result"] == result
     assert all(out[key]["status"] == "FINISHED" for key in ("a", "b", "c"))
+    # Bounded retries: the failed branch was dispatched exactly once more than
+    # the untouched ones — its one retry, and no branch dispatched twice.
+    assert len(dispatched) == 4
+    assert dispatched.count(first_agent) == 2
+    assert len(set(dispatched)) == 3
 
 
 def test_grouped_retry_redispatches_only_the_failed_member(
