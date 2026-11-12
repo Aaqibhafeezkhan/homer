@@ -144,8 +144,11 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
   (`concurrency: 1`, or `HOMER_RUNNER_CONCURRENCY=1` on a pull-mode runner)
   also allows one run on the host. The difference is the wait: a run queued
   on a saturated runner fails at the claim TTL, while a run queued on a
-  `WAIT` lock waits as long as it takes. The lock also keeps working when the
-  host later gets a second slot for something that does not touch the cache.
+  `WAIT` lock waits until the holder ends — a wait bounded by
+  `maxQueuedRuns`, else `maxParallelRuns` (one waiter with the config above);
+  a run over that bound fails at once instead of queuing. The lock also keeps
+  working when the host later gets a second slot for something that does not
+  touch the cache.
 - **A shared key across workers is not the same as a key per worker.** One
   of the two deployments keys each worker on its own name and the ticket
   (`plan-{{TICKET_ID}}`), which only stops a duplicate run of that one stage.
@@ -162,9 +165,11 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
 
 ## What it does not solve
 
-- **Two tickets that need the host serialize.** A queue of two is fine; a
-  queue that never empties means the pipeline has outgrown one build host.
-  The answer then is a second host, not a weaker lock.
+- **Two tickets that need the host serialize.** A queue of two — the holder
+  and one waiter — is the most the lock holds; a ticket ending `FAILED` at
+  once with `Lock wait queue full` means the pipeline has outgrown one build
+  host. The answer then is a second host — or `maxQueuedRuns`, to admit more
+  waiters — not a weaker lock.
 - **The lock does not repair a cache already broken** by an earlier
   collision. Stale entries have to be cleared on the host once.
 - **A lock only covers runs that declare it.** A manual build on the host, or

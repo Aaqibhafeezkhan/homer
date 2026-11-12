@@ -1,5 +1,5 @@
 name: lock-subject
-description: Waits per subject while two subjects run in parallel (WAIT, maxParallelRuns: 2)
+description: Waits per subject while two subjects run in parallel (WAIT, two slots)
 maxParallelRuns: 2
 onMaxParallelRuns: WAIT
 inputs:
