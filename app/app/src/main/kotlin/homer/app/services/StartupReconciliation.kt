@@ -76,7 +76,7 @@ internal class StartupReconciliation(
         // a transition's commit and its fire. The claim CAS keeps a replay from double-firing
         // against a row a live transition is firing concurrently. See ADR-0105.
         hookService.failOrphanedDispatching()
-        hookService.onRowsRecorded(interrupted.hookIds)
+        hookService.onRowsRecorded(interrupted.hooks)
         hookService.refirePending()
     }
 }

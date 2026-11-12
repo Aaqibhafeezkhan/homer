@@ -52,7 +52,7 @@ class ProcessRepository(
     data class ObtainResult(
         val processId: Int,
         val evicted: EvictedProcess?,
-        val hookIds: List<Int> = emptyList(),
+        val hooks: RecordedHooks = RecordedHooks(),
     )
 
     /** The terminal row evicted to make room, with enough detail for the caller to log it and purge its workspace. */
@@ -67,7 +67,7 @@ class ProcessRepository(
     data class TransitionResult(
         val updated: Boolean,
         val agentName: String?,
-        val hookIds: List<Int> = emptyList(),
+        val hooks: RecordedHooks = RecordedHooks(),
     )
 
     /**
@@ -405,8 +405,8 @@ class ProcessRepository(
             }
             // UNKNOWN hook rows ride that write: no other transition will ever fire for
             // these runs. See ADR-0105.
-            val hookIds = rows.flatMap { (id, agent, owner) -> hookRecording.record(id, agent, ProcessStatus.UNKNOWN, owner, nowSec) }
-            InterruptedResult(rows.map { it.first }, hookIds)
+            val recorded = rows.map { (id, agent, owner) -> hookRecording.record(id, agent, ProcessStatus.UNKNOWN, owner, nowSec) }
+            InterruptedResult(rows.map { it.first }, RecordedHooks(recorded.flatMap { it.ids }, recorded.flatMap { it.shed }))
         }
 
     /**

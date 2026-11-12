@@ -1,20 +1,25 @@
 package homer.app.services
 
 import homer.app.fixtures.AgentFixtures
+import homer.app.fixtures.TestFixtures
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
 import homer.app.models.AgentHook
 import homer.app.models.HookConfig
 import homer.app.models.ProcessStatus
 import homer.app.services.persistence.HookRepository
+import homer.app.services.persistence.RecordedHooks
+import homer.app.services.persistence.ShedHooks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import kotlin.test.assertEquals
 
@@ -39,6 +44,21 @@ class HookServiceTest {
         LoggerFactory.getLogger("t"),
         config,
     ) { now }
+
+    /** The same service over [logger], so a test can assert the lines it writes. */
+    private fun serviceOver(
+        logger: Logger,
+        config: HookConfig = HookConfig(),
+    ) = HookService(
+        repo,
+        runStarter,
+        agents,
+        authorizer,
+        mockk<AgentInputResolver>(relaxed = true),
+        processManager,
+        logger,
+        config,
+    ) { 1000L }
 
     private fun hook(
         id: Int,
@@ -69,7 +89,7 @@ class HookServiceTest {
             coEvery { repo.get(any()) } answers { hook(firstArg()) }
             coEvery { repo.claim(any()) } returns true
 
-            service().onRowsRecorded(listOf(5, 6))
+            service().onRowsRecorded(RecordedHooks(listOf(5, 6)))
 
             coVerify(exactly = 1) { repo.claim(5) }
             coVerify(exactly = 1) { repo.claim(6) }
@@ -78,10 +98,60 @@ class HookServiceTest {
     @Test
     fun `onRowsRecorded does nothing for a transition that recorded none`() =
         runTest {
-            service().onRowsRecorded(emptyList())
+            service().onRowsRecorded(RecordedHooks())
 
             coVerify(exactly = 0) { repo.get(any()) }
             coVerify(exactly = 0) { repo.claim(any()) }
+        }
+
+    @Test
+    fun `a transition that shed rows over the pending cap logs one line per shed entry`() =
+        runTest {
+            // The drop is the only outcome with no row to look at: without this line an operator
+            // sees a hook that never fired and no reason for it. The cap is named, so the fix is
+            // the config key rather than a code hunt. See ADR-0105.
+            val logger = TestFixtures.mockLogger()
+
+            serviceOver(logger, config = HookConfig(maxPending = 200))
+                .onRowsRecorded(
+                    RecordedHooks(
+                        shed =
+                            listOf(
+                                ShedHooks(count = 2, agentName = "declarer", status = ProcessStatus.FINISHED),
+                                ShedHooks(count = 1, agentName = "other", status = ProcessStatus.FAILED),
+                            ),
+                    ),
+                )
+
+            verify(exactly = 1) {
+                logger.warn(
+                    match<String> { it.contains("Dropped") && it.contains("hook row(s)") },
+                    2,
+                    "declarer",
+                    ProcessStatus.FINISHED,
+                    200,
+                )
+            }
+            verify(exactly = 1) {
+                logger.warn(any<String>(), 1, "other", ProcessStatus.FAILED, 200)
+            }
+        }
+
+    @Test
+    fun `a fully shed transition logs the drop and claims nothing`() =
+        runTest {
+            // Every entry was shed, so there is no row to fire — the log line is the whole
+            // record of the transition's hooks.
+            val logger = TestFixtures.mockLogger()
+
+            serviceOver(logger)
+                .onRowsRecorded(
+                    RecordedHooks(shed = listOf(ShedHooks(1, "declarer", ProcessStatus.CREATED))),
+                )
+
+            coVerify(exactly = 0) { repo.get(any()) }
+            coVerify(exactly = 0) { repo.claim(any()) }
+            verify(exactly = 1) { logger.warn(any<String>(), 1, "declarer", ProcessStatus.CREATED, 200) }
         }
 
     @Test
@@ -91,7 +161,7 @@ class HookServiceTest {
             // able to fail it, and the row stays PENDING for the boot replay. ADR-0023.
             coEvery { repo.get(any()) } throws IllegalStateException("database is gone")
 
-            service().onRowsRecorded(listOf(5))
+            service().onRowsRecorded(RecordedHooks(listOf(5)))
 
             coVerify(exactly = 0) { repo.claim(any()) }
         }
@@ -101,7 +171,7 @@ class HookServiceTest {
         runTest {
             coEvery { repo.get(any()) } throws CancellationException("shutting down")
 
-            assertThrows<CancellationException> { service().onRowsRecorded(listOf(5)) }
+            assertThrows<CancellationException> { service().onRowsRecorded(RecordedHooks(listOf(5))) }
         }
 
     @Test
@@ -115,7 +185,7 @@ class HookServiceTest {
             coEvery { repo.claim(5) } throws IllegalStateException("database is gone")
             coEvery { repo.claim(6) } returns true
 
-            service().onRowsRecorded(listOf(5, 6))
+            service().onRowsRecorded(RecordedHooks(listOf(5, 6)))
 
             coVerify(exactly = 1) { repo.claim(6) }
         }

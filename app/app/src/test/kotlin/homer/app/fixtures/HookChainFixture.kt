@@ -52,7 +52,7 @@ internal class HookChainFixture(
             // Both resolved at call time, as the DI wiring does, so the hook service can be
             // built after the manager that calls back into it.
             hookRecording = { hookService.recording() },
-            onHooksRecorded = { ids -> hookService.onRowsRecorded(ids) },
+            onHooksRecorded = { recorded -> hookService.onRowsRecorded(recorded) },
         )
 
     val hookService: HookService by lazy {

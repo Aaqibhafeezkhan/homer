@@ -18,6 +18,7 @@ import homer.app.services.persistence.NewPendingHook
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.Processes
 import homer.app.services.persistence.QuestionsRepository
+import homer.app.services.persistence.RecordedHooks
 import homer.app.services.persistence.RunMessagesRepository
 import homer.app.services.persistence.insertPendingHooksTx
 import homer.app.services.persistence.setPurgeAt
@@ -219,7 +220,7 @@ class StartupReconciliationTest {
             val questionsService = mockk<QuestionsService>(relaxed = true)
             val logger = TestFixtures.mockLogger()
             coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
-                InterruptedResult(emptyList(), emptyList())
+                InterruptedResult(emptyList())
             StartupReconciliation(
                 processRepository,
                 questionsService,
@@ -245,7 +246,7 @@ class StartupReconciliationTest {
             val questionsService = mockk<QuestionsService>(relaxed = true)
             val logger = TestFixtures.mockLogger()
             coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
-                InterruptedResult(emptyList(), emptyList())
+                InterruptedResult(emptyList())
             StartupReconciliation(
                 processRepository,
                 questionsService,
@@ -268,7 +269,7 @@ class StartupReconciliationTest {
             val hookService = TestFixtures.mockHookService()
             val processRepository = mockk<ProcessRepository>(relaxed = true)
             coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
-                InterruptedResult(listOf(7), listOf(11, 12))
+                InterruptedResult(listOf(7), RecordedHooks(listOf(11, 12)))
             StartupReconciliation(
                 processRepository,
                 mockk(relaxed = true),
@@ -282,7 +283,7 @@ class StartupReconciliationTest {
 
             coVerifyOrder {
                 hookService.failOrphanedDispatching()
-                hookService.onRowsRecorded(listOf(11, 12))
+                hookService.onRowsRecorded(RecordedHooks(listOf(11, 12)))
                 hookService.refirePending()
             }
         }

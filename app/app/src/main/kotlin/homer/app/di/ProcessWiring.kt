@@ -31,7 +31,7 @@ internal val processModule =
                 // ProcessManager → HookService → AgentRunStarter → ProcessExecutor →
                 // ProcessManager. See ADR-0105.
                 hookRecording = { get<HookService>().recording() },
-                onHooksRecorded = { ids -> get<HookService>().onRowsRecorded(ids) },
+                onHooksRecorded = { recorded -> get<HookService>().onRowsRecorded(recorded) },
             )
         }
     }

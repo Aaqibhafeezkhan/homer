@@ -2456,7 +2456,7 @@ class ProcessRepositoryTest {
                     hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
                 )
 
-            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            val hook = assertNotNull(hooks.get(result.hooks.ids.single()))
             assertEquals(result.processId, hook.processId)
             assertEquals("declarer", hook.declaringAgent)
             assertEquals(ProcessStatus.CREATED, hook.triggeringStatus)
@@ -2486,7 +2486,7 @@ class ProcessRepositoryTest {
                     hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier"))),
                 )
 
-            assertEquals(emptyList(), working.hookIds)
+            assertEquals(emptyList(), working.hooks.ids)
             assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
         }
 
@@ -2507,7 +2507,7 @@ class ProcessRepositoryTest {
                     hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier", "audit"))),
                 )
 
-            assertEquals(2, result.hookIds.size)
+            assertEquals(2, result.hooks.ids.size)
             val recorded = hooks.list(HookStatus.PENDING)
             assertEquals(listOf("notifier", "audit"), recorded.map { it.targetAgentName })
             assertEquals(listOf("alice", "alice"), recorded.map { it.owner })
@@ -2531,7 +2531,7 @@ class ProcessRepositoryTest {
                 )
 
             assertFalse(result.updated)
-            assertEquals(emptyList(), result.hookIds)
+            assertEquals(emptyList(), result.hooks.ids)
             assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
         }
 
@@ -2560,7 +2560,7 @@ class ProcessRepositoryTest {
                 )
 
             assertTrue(reasserted.updated)
-            assertEquals(emptyList(), reasserted.hookIds)
+            assertEquals(emptyList(), reasserted.hooks.ids)
             assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
         }
 
@@ -2580,7 +2580,7 @@ class ProcessRepositoryTest {
                 )
 
             assertEquals("declarer", result.agentName)
-            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            val hook = assertNotNull(hooks.get(result.hooks.ids.single()))
             assertEquals(ProcessStatus.KILLED, hook.triggeringStatus)
             assertEquals("alice", hook.owner)
         }
@@ -2601,7 +2601,7 @@ class ProcessRepositoryTest {
                 )
 
             assertNull(result.agentName)
-            assertEquals(emptyList(), result.hookIds)
+            assertEquals(emptyList(), result.hooks.ids)
         }
 
     @Test
@@ -2628,7 +2628,7 @@ class ProcessRepositoryTest {
 
             // Only the run the reconciliation actually moved to UNKNOWN records its hook.
             assertEquals(listOf(first), result.processIds)
-            val hook = assertNotNull(hooks.get(result.hookIds.single()))
+            val hook = assertNotNull(hooks.get(result.hooks.ids.single()))
             assertEquals(first, hook.processId)
             assertEquals("declarer", hook.declaringAgent)
             assertEquals(ProcessStatus.UNKNOWN, hook.triggeringStatus)
@@ -2653,7 +2653,13 @@ class ProcessRepositoryTest {
                         ),
                 )
 
-            assertEquals(2, result.hookIds.size)
+            assertEquals(2, result.hooks.ids.size)
+            // The shed entry travels out of the transaction, so the caller can log it after the
+            // commit rather than inside the write block. See ADR-0105.
+            assertEquals(
+                listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
+                result.hooks.shed,
+            )
             assertEquals(2, HookRepository(db).list(HookStatus.PENDING).size)
         }
 
@@ -2665,7 +2671,7 @@ class ProcessRepositoryTest {
 
             val result = repo.obtainProcessId("declarer", emptyMap(), 100)
 
-            assertEquals(emptyList(), result.hookIds)
+            assertEquals(emptyList(), result.hooks.ids)
             assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
         }
 }

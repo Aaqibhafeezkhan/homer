@@ -22,6 +22,7 @@ import homer.app.services.persistence.ProcessRecordReads
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.ProcessRetentionRecords
 import homer.app.services.persistence.ProcessRunRecords
+import homer.app.services.persistence.RecordedHooks
 import homer.app.services.persistence.SettlementSwap
 import homer.app.services.persistence.completeStep
 import homer.app.services.persistence.remove
@@ -69,9 +70,11 @@ class ProcessManager(
     // transition is honoured; the lookup reads no database, so it is safe inside the write
     // transaction. Null = record none. See ADR-0105.
     private val hookRecording: () -> HookRecording? = { null },
-    // Fires the hook rows a transition just recorded. Called after the write's commit, never
-    // inside it: a fire starts a run, whose own row write must not nest in this transaction.
-    private val onHooksRecorded: suspend (List<Int>) -> Unit = {},
+    // Fires the hook rows a transition just recorded, and logs the entries the pending cap shed.
+    // Called after the write's commit, never inside it: a fire starts a run, whose own row write
+    // must not nest in this transaction, and a log line inside it would be file IO under the
+    // write lock (SQLite rule 3).
+    private val onHooksRecorded: suspend (RecordedHooks) -> Unit = {},
 ) : ProcessRecordReads by DefaultProcessRecordReads(repository),
     ProcessRetentionRecords by DefaultProcessRetentionRecords(repository),
     ProcessRunRecords by DefaultProcessRunRecords(repository),
@@ -141,7 +144,7 @@ class ProcessManager(
             broadcaster.emit(ProcessEvent.StatusChanged(processId, ProcessStatus.KILLED, killedAgent))
             broadcaster.emit(ProcessEvent.CurrentCommandChanged(processId, null, null))
         }
-        onHooksRecorded(killed.hookIds)
+        onHooksRecorded(killed.hooks)
     }
 
     // The facade forwards ProcessRepository.obtainProcessId's optional parameters one for one.
@@ -196,7 +199,7 @@ class ProcessManager(
         }
         // After the INSERT's commit: a CREATED hook fires here, and the run it starts writes
         // its own row in its own transaction. See ADR-0105.
-        onHooksRecorded(result.hookIds)
+        onHooksRecorded(result.hooks)
         return result.processId
     }
 
@@ -263,7 +266,7 @@ class ProcessManager(
         }
         // After the status write's commit, and only for a write that applied: a guard-rejected
         // CAS records no hook rows, so there is nothing to fire. See ADR-0105.
-        onHooksRecorded(result.hookIds)
+        onHooksRecorded(result.hooks)
         return result.updated
     }
 

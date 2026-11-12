@@ -5,6 +5,8 @@ import homer.app.models.HookConfig
 import homer.app.models.ProcessStatus
 import homer.app.services.persistence.HookRecording
 import homer.app.services.persistence.HookRepository
+import homer.app.services.persistence.RecordedHooks
+import homer.app.services.persistence.ShedHooks
 import kotlinx.coroutines.CancellationException
 import org.slf4j.Logger
 import kotlin.time.Clock
@@ -62,17 +64,18 @@ internal class HookService(
         )
 
     /**
-     * Fires the hook rows a just-committed status transition recorded. Called after the write,
-     * never inside it: a fire starts a run, and that run's own row write must not nest inside
-     * the triggering transition's transaction (app/CLAUDE.md SQLite rule 3).
+     * Fires the hook rows a just-committed status transition recorded, and reports the entries
+     * the pending cap shed. Called after the write, never inside it: a fire starts a run, and
+     * that run's own row write must not nest inside the triggering transition's transaction
+     * (app/CLAUDE.md SQLite rule 3).
      *
      * A lookup or a fire failure is logged and swallowed — the status transition has already
      * committed and a hook must never be able to fail it; a row a failed fire left unclaimed
      * stays PENDING, so the boot replay or the retry sweep picks it up. See ADR-0023.
      */
-    suspend fun onRowsRecorded(ids: List<Int>) {
-        if (ids.isEmpty()) return
-        for (id in ids) {
+    suspend fun onRowsRecorded(recorded: RecordedHooks) {
+        logShed(recorded.shed)
+        for (id in recorded.ids) {
             val hook =
                 try {
                     repository.get(id)
@@ -99,6 +102,23 @@ internal class HookService(
             throw e
         } catch (e: Exception) {
             logger.error("Hook {} fire failed: {}", hook.id, e.message, e)
+        }
+    }
+
+    /**
+     * One warn per transition that had hook entries shed by the pending cap, so an operator can
+     * see what a burst cost. The transition itself has already committed: shedding never fails
+     * it, and never changes the triggering run's own status. See ADR-0105.
+     */
+    private fun logShed(shed: List<ShedHooks>) {
+        for (entry in shed) {
+            logger.warn(
+                "Dropped {} hook row(s) for agent '{}' status {} over server.hooks.maxPending ({})",
+                entry.count,
+                entry.agentName,
+                entry.status,
+                config.maxPending,
+            )
         }
     }
 

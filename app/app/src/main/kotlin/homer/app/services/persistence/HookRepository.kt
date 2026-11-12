@@ -28,10 +28,30 @@ data class NewPendingHook(
     val createdAt: Long,
 )
 
+/**
+ * Hook rows one status write shed because the PENDING cap was reached: [count] entries of
+ * [agentName]'s run were not queued for [status]. The caller logs it after the write commits —
+ * a log line inside the transaction would be file IO under the write lock (SQLite rule 3).
+ */
+data class ShedHooks(
+    val count: Int,
+    val agentName: String,
+    val status: ProcessStatus,
+)
+
+/**
+ * What one status write recorded: the hook row [ids] to fire once it commits, and the entries
+ * the PENDING cap [shed] instead of queueing. Both empty for a write that matched no entry.
+ */
+data class RecordedHooks(
+    val ids: List<Int> = emptyList(),
+    val shed: List<ShedHooks> = emptyList(),
+)
+
 /** Outcome of the boot reconciliation's UNKNOWN write: the reconciled run ids and the hook rows they recorded. */
 data class InterruptedResult(
     val processIds: List<Int>,
-    val hookIds: List<Int> = emptyList(),
+    val hooks: RecordedHooks = RecordedHooks(),
 )
 
 /**
@@ -47,8 +67,8 @@ class HookRecording(
 
 /**
  * Records [this] recording's hook rows for run [processId] **inside the caller's transaction**
- * and returns their ids; an absent recording records nothing. A nullable receiver so each of
- * the four status writes reads as one line. See ADR-0105.
+ * and returns their ids plus the entries the cap shed; an absent recording records nothing. A
+ * nullable receiver so each of the four status writes reads as one line. See ADR-0105.
  */
 internal fun HookRecording?.record(
     processId: Int,
@@ -56,10 +76,10 @@ internal fun HookRecording?.record(
     status: ProcessStatus,
     owner: String?,
     now: Long,
-): List<Int> {
-    val recording = this ?: return emptyList()
+): RecordedHooks {
+    val recording = this ?: return RecordedHooks()
     val hooks = recording.hooksFor(agentName, status)
-    if (hooks.isEmpty()) return emptyList()
+    if (hooks.isEmpty()) return RecordedHooks()
     return insertPendingHooksTx(
         hooks.map { NewPendingHook(processId, agentName, status, it.agent, owner, now) },
         recording.maxPending,
@@ -68,10 +88,10 @@ internal fun HookRecording?.record(
 
 /**
  * INSERTs one row per entry of [hooks] **inside the caller's transaction**, stopping at the
- * global PENDING cap [maxPending] and returning the ids it wrote. A hook over the cap is
- * dropped, never queued: the status transition it rides must not fail, and the cap is what
- * keeps a burst of runs from queueing unbounded rows behind one busy target. The caller logs
- * the drop. §12 rule 4.
+ * global PENDING cap [maxPending] and returning the ids it wrote plus the entries it shed. A
+ * hook over the cap is dropped, never queued: the status transition it rides must not fail, and
+ * the cap is what keeps a burst of runs from queueing unbounded rows behind one busy target.
+ * The caller logs each shed entry after the commit, from [RecordedHooks.shed]. §12 rule 4.
  *
  * A free function, not a [HookRepository] member, because `ProcessRepository` records hook
  * rows inside its own status-transition transactions and must not gain a second database
@@ -80,8 +100,8 @@ internal fun HookRecording?.record(
 internal fun insertPendingHooksTx(
     hooks: List<NewPendingHook>,
     maxPending: Int,
-): List<Int> {
-    if (hooks.isEmpty()) return emptyList()
+): RecordedHooks {
+    if (hooks.isEmpty()) return RecordedHooks()
     // Counted once, not per row: the cap check is a COUNT, and a fan-out of N hooks would
     // otherwise run it N times under the write lock.
     var pending =
@@ -92,17 +112,29 @@ internal fun insertPendingHooksTx(
             .toInt()
     val room = (maxPending - pending).coerceAtLeast(0)
     val accepted = hooks.take(room)
-    if (accepted.isEmpty()) return emptyList()
-    return PendingHooks
-        .batchInsert(accepted) { hook ->
-            this[PendingHooks.processId] = hook.processId
-            this[PendingHooks.declaringAgent] = hook.declaringAgent
-            this[PendingHooks.status] = HookStatus.PENDING.name
-            this[PendingHooks.agentName] = hook.targetAgentName
-            this[PendingHooks.owner] = hook.owner
-            this[PendingHooks.createdAt] = hook.createdAt
-            this[PendingHooks.triggeringStatus] = hook.triggeringStatus.name
-        }.map { it[PendingHooks.id] }
+    val ids =
+        if (accepted.isEmpty()) {
+            emptyList()
+        } else {
+            PendingHooks
+                .batchInsert(accepted) { hook ->
+                    this[PendingHooks.processId] = hook.processId
+                    this[PendingHooks.declaringAgent] = hook.declaringAgent
+                    this[PendingHooks.status] = HookStatus.PENDING.name
+                    this[PendingHooks.agentName] = hook.targetAgentName
+                    this[PendingHooks.owner] = hook.owner
+                    this[PendingHooks.createdAt] = hook.createdAt
+                    this[PendingHooks.triggeringStatus] = hook.triggeringStatus.name
+                }.map { it[PendingHooks.id] }
+        }
+    // One shed entry per declaring agent and status, so the log line can name both. A caller
+    // passes one transition's entries, but grouping keeps the report right whatever it passes.
+    val shed =
+        hooks
+            .drop(accepted.size)
+            .groupBy { it.declaringAgent to it.triggeringStatus }
+            .map { (declaring, rows) -> ShedHooks(rows.size, declaring.first, declaring.second) }
+    return RecordedHooks(ids = ids, shed = shed)
 }
 
 /**

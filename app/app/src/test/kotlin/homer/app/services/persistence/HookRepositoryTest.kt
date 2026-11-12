@@ -43,11 +43,17 @@ class HookRepositoryTest {
         createdAt = createdAt,
     )
 
-    /** Records [hooks] in one write transaction, as a status transition does. */
+    /** Records [hooks] in one write transaction, as a status transition does, keeping the ids. */
     private suspend fun record(
         vararg hooks: NewPendingHook,
         maxPending: Int = 100,
-    ): List<Int> = db.query { insertPendingHooksTx(hooks.toList(), maxPending) }
+    ): List<Int> = recordResult(*hooks, maxPending = maxPending).ids
+
+    /** The whole outcome of that write: the ids it wrote and the entries the cap shed. */
+    private suspend fun recordResult(
+        vararg hooks: NewPendingHook,
+        maxPending: Int = 100,
+    ): RecordedHooks = db.query { insertPendingHooksTx(hooks.toList(), maxPending) }
 
     @Test
     fun `a recorded row round-trips every field as PENDING`() =
@@ -85,14 +91,25 @@ class HookRepositoryTest {
         }
 
     @Test
-    fun `the global pending cap stops the insert at maxPending and drops the rest`() =
+    fun `the global pending cap stops the insert at maxPending and reports the rest as shed`() =
         runTest {
             // A fan-out burst sheds rather than queues: the run that caused it must not fail,
-            // and the rows over the cap are never written at all. §12 rule 4.
-            val ids = record(hook(target = "a"), hook(target = "b"), hook(target = "c"), maxPending = 2)
+            // and the rows over the cap are never written at all. The shed entries are what the
+            // caller logs after the commit. §12 rule 4.
+            val recorded = recordResult(hook(target = "a"), hook(target = "b"), hook(target = "c"), maxPending = 2)
 
-            assertEquals(2, ids.size)
+            assertEquals(2, recorded.ids.size)
             assertEquals(listOf("a", "b"), repo.list(HookStatus.PENDING).map { it.targetAgentName })
+            assertEquals(
+                listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.FINISHED)),
+                recorded.shed,
+            )
+        }
+
+    @Test
+    fun `a write with room under the cap sheds nothing`() =
+        runTest {
+            assertEquals(emptyList(), recordResult(hook(target = "a"), maxPending = 2).shed)
         }
 
     @Test
@@ -100,7 +117,10 @@ class HookRepositoryTest {
         runTest {
             record(hook(target = "a"), hook(target = "b"), maxPending = 2)
 
-            assertEquals(emptyList(), record(hook(target = "c"), maxPending = 2))
+            val blocked = recordResult(hook(target = "c"), maxPending = 2)
+
+            assertEquals(emptyList(), blocked.ids)
+            assertEquals(1, blocked.shed.single().count)
             assertEquals(2, repo.list(HookStatus.PENDING).size)
         }
 

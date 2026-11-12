@@ -13,6 +13,8 @@ import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
 import homer.app.services.persistence.HookRecording
 import homer.app.services.persistence.ProcessRepository
+import homer.app.services.persistence.RecordedHooks
+import homer.app.services.persistence.ShedHooks
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
@@ -55,7 +57,7 @@ class ProcessManagerTest {
         onProcessEvicted: suspend (Int) -> Unit = {},
         workspaceRoot: Path = Path.of("."),
         hookRecording: () -> HookRecording? = { null },
-        onHooksRecorded: suspend (List<Int>) -> Unit = {},
+        onHooksRecorded: suspend (RecordedHooks) -> Unit = {},
     ): ProcessManager {
         val registry = ProcessJobRegistry()
         val repository = ProcessRepository(PersistenceTestSupport.tempDatabase(), registry)
@@ -1517,7 +1519,7 @@ class ProcessManagerTest {
     @Test
     fun `the transitions that record a hook row hand its id to the hook service after the commit`() =
         runTest {
-            val handed = mutableListOf<List<Int>>()
+            val handed = mutableListOf<RecordedHooks>()
             val manager =
                 newManager(
                     hookRecording = { recording(ProcessStatus.CREATED) },
@@ -1527,15 +1529,15 @@ class ProcessManagerTest {
             val id = manager.obtainProcessId("declarer", owner = "alice")
 
             // The CREATED write recorded exactly one row, and its id is what the callback got.
-            assertEquals(1, handed.single().size)
-            assertTrue(handed.single().single() > 0)
+            assertEquals(1, handed.single().ids.size)
+            assertTrue(handed.single().ids.single() > 0)
             assertEquals(ProcessStatus.CREATED, manager.getProcessStatus(id))
         }
 
     @Test
     fun `a status write hands the rows it recorded to the hook service and a silent status hands none`() =
         runTest {
-            val handed = mutableListOf<List<Int>>()
+            val handed = mutableListOf<RecordedHooks>()
             val manager =
                 newManager(
                     hookRecording = { recording(ProcessStatus.FINISHED) },
@@ -1547,13 +1549,41 @@ class ProcessManagerTest {
             manager.setProcessStatus(id, ProcessStatus.FINISHED)
 
             // One hand-over per transition, in order; only the FINISHED write recorded a row.
-            assertEquals(listOf(0, 0, 1), handed.map { it.size })
+            assertEquals(listOf(0, 0, 1), handed.map { it.ids.size })
+        }
+
+    @Test
+    fun `a status write over the pending cap hands the shed entries over with no ids`() =
+        runTest {
+            // A cap-shedding transition still hands its outcome over, so the hook service can log
+            // the drop after the commit: nothing else would report it. See ADR-0105.
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = {
+                        HookRecording(
+                            hooksFor = { _, written ->
+                                if (written == ProcessStatus.CREATED) listOf(AgentHook(written, "notifier")) else emptyList()
+                            },
+                            maxPending = 0,
+                        )
+                    },
+                    onHooksRecorded = { handed += it },
+                )
+
+            manager.obtainProcessId("declarer")
+
+            assertEquals(
+                listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
+                handed.single().shed,
+            )
+            assertEquals(emptyList(), handed.single().ids)
         }
 
     @Test
     fun `killProcess hands the KILLED hook row to the hook service`() =
         runTest {
-            val handed = mutableListOf<List<Int>>()
+            val handed = mutableListOf<RecordedHooks>()
             val manager =
                 newManager(
                     hookRecording = { recording(ProcessStatus.KILLED) },
@@ -1564,13 +1594,13 @@ class ProcessManagerTest {
 
             manager.killProcess(id, "operator kill")
 
-            assertEquals(1, handed.last().size)
+            assertEquals(1, handed.last().ids.size)
         }
 
     @Test
     fun `a guard-rejected CAS records no hook row and hands none over`() =
         runTest {
-            val handed = mutableListOf<List<Int>>()
+            val handed = mutableListOf<RecordedHooks>()
             val manager =
                 newManager(
                     hookRecording = { recording(ProcessStatus.FINISHED) },
@@ -1583,18 +1613,18 @@ class ProcessManagerTest {
 
             assertFalse(manager.compareAndSetStatus(id, setOf(ProcessStatus.WORKING), ProcessStatus.FINISHED))
 
-            assertEquals(listOf(emptyList<Int>()), handed)
+            assertEquals(listOf(RecordedHooks()), handed)
         }
 
     @Test
-    fun `a manager with no recording hands an empty list over on every transition`() =
+    fun `a manager with no recording hands an empty outcome over on every transition`() =
         runTest {
-            val handed = mutableListOf<List<Int>>()
+            val handed = mutableListOf<RecordedHooks>()
             val manager = newManager(onHooksRecorded = { handed += it })
 
             val id = manager.obtainProcessId("declarer")
             manager.setProcessStatus(id, ProcessStatus.FINISHED)
 
-            assertEquals(listOf(emptyList<Int>(), emptyList()), handed)
+            assertEquals(listOf(RecordedHooks(), RecordedHooks()), handed)
         }
 }
