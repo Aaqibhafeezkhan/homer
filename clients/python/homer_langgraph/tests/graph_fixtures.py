@@ -64,9 +64,9 @@ def _branch_human(label: str, key: str):
     return node
 
 
-def _branch_fanout(label: str, key: str, group: str | None = None):
+def _branch_fanout(label: str, key: str, group: str | None = None, retries: int = 0):
     def node(state: MultiState) -> MultiState:
-        return {key: homer_fanout(f"worker_{label}", group=group)}
+        return {key: homer_fanout(f"worker_{label}", group=group, retries=retries)}
 
     return node
 
@@ -189,6 +189,62 @@ three_parallel_fanout_graph = _build_parallel(
         "c": _branch_fanout("C", "c", "g"),
     }
 )
+
+# Retry-enabled fan-outs (README.md "Retrying failed fan-outs").
+
+
+def _fanout_retry_node(retries: int, infra_retries: int = 0):
+    def node(state: State) -> State:
+        return {"answer": homer_fanout("worker", retries=retries, infra_retries=infra_retries)}
+
+    return node
+
+
+# A single fan-out node with both budgets set, so a test can exhaust either.
+retry_fanout_graph = _build(_fanout_retry_node(retries=2))
+mixed_retry_fanout_graph = _build(_fanout_retry_node(retries=1, infra_retries=1))
+
+
+def _stateful_retry_fanout_node(state: State) -> State:
+    # Keeps a counter in graph state and resets it on every run — the writable,
+    # tampered state value the retry budget must not be read from.
+    return {"answer": homer_fanout("worker", retries=1), "value": 0}
+
+
+stateful_retry_fanout_graph = _build(_stateful_retry_fanout_node)
+
+# Three parallel ungrouped fan-outs that each retry their own sub once.
+three_retry_fanout_graph = _build_parallel(
+    {
+        "a": _branch_fanout("A", "a", retries=1),
+        "b": _branch_fanout("B", "b", retries=1),
+        "c": _branch_fanout("C", "c", retries=1),
+    }
+)
+# The same, sharing a group: one join, then only the failed member re-parks.
+three_retry_fanout_grouped_graph = _build_parallel(
+    {
+        "a": _branch_fanout("A", "a", "g", retries=1),
+        "b": _branch_fanout("B", "b", "g", retries=1),
+        "c": _branch_fanout("C", "c", "g", retries=1),
+    }
+)
+
+# How many more times the node's own check raises after its fan-out returns.
+FANOUT_CHECK_FAILURES = {"left": 0}
+
+
+def _fanout_check_node(state: State) -> State:
+    result = homer_fanout("worker")
+    if FANOUT_CHECK_FAILURES["left"] > 0:
+        FANOUT_CHECK_FAILURES["left"] -= 1
+        raise RuntimeError("graph check rejected the sub")
+    return {"answer": result}
+
+
+# A graph whose node raises after a resumed fan-out — the shape the ticket's
+# implementation note describes (recover must re-enter it, not call it finished).
+fanout_check_graph = _build(_fanout_check_node)
 
 
 # Graphs for the `traversed` path in `state` output (ADR-0075).
