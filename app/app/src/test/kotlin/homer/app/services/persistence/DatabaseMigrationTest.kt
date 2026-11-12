@@ -9,6 +9,7 @@ import homer.app.services.QuestionsService
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
+import org.jetbrains.exposed.v1.core.Table
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.slf4j.LoggerFactory
@@ -1155,6 +1156,7 @@ class DatabaseMigrationTest {
         DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
             c.createStatement().use { st ->
                 assertEquals(30, userVersion(st))
+                assertModelColumns(st, Continuations)
                 assertEquals(
                     mapOf(1 to "t-a", 2 to "t-b", 3 to null, 4 to null, 5 to "t-\"q\"-ž\\", 6 to null),
                     threadIds(st),
@@ -1486,6 +1488,7 @@ class DatabaseMigrationTest {
                         it.getInt(1)
                     }
                 assertEquals(0, bound)
+                assertModelColumns(st, Questions)
                 val tables = tableNames(st)
                 assertTrue("dispatches" in tables)
                 assertTrue("continuations" in tables)
@@ -1549,6 +1552,7 @@ class DatabaseMigrationTest {
                 assertTrue("continuation_watches" in tableNames(st))
                 assertTrue("kind" in columnNames(st, "continuations"))
                 assertTrue("consumer_agent" in columnNames(st, "result_tokens"))
+                assertModelColumns(st, Continuations)
                 val (surviving, kind) =
                     st.executeQuery("SELECT COUNT(*), MAX(kind) FROM continuations").use {
                         it.next()
@@ -1903,6 +1907,7 @@ class DatabaseMigrationTest {
                 assertEquals(30, userVersion(st))
                 assertTrue("secret_input_keys" in columnNames(st, "dispatches"))
                 assertTrue("secret_input_keys" in columnNames(st, "continuations"))
+                assertModelColumns(st, Dispatches)
                 val (surviving, keys) =
                     st.executeQuery("SELECT COUNT(*), MAX(secret_input_keys) FROM dispatches").use {
                         it.next()
@@ -1947,6 +1952,7 @@ class DatabaseMigrationTest {
                 assertEquals(30, userVersion(st))
                 assertTrue("secret_param_names" in columnNames(st, "dispatches"))
                 assertTrue("secret_param_names" in columnNames(st, "continuations"))
+                assertModelColumns(st, Dispatches)
                 val (surviving, paramNames, envNames) =
                     st.executeQuery("SELECT COUNT(*), MAX(secret_param_names), MAX(secret_input_keys) FROM dispatches").use {
                         it.next()
@@ -2320,5 +2326,248 @@ class DatabaseMigrationTest {
             }
         }
         db.close()
+    }
+
+    // --- Version boundaries ---
+
+    /**
+     * Asserts [table] carries every column its model declares. `SchemaUtils.create` never ALTERs an
+     * existing table, so every column a seeded old shape lacks reached it through a migration block;
+     * comparing against the model's own list is what makes a wrong guard fail here.
+     */
+    private fun assertModelColumns(
+        st: java.sql.Statement,
+        table: Table,
+    ) {
+        assertEquals(
+            emptySet<String>(),
+            table.columns.map { it.name }.toSet() - columnNames(st, table.tableName).toSet(),
+            "${table.tableName} must carry every column the model declares",
+        )
+    }
+
+    /**
+     * One version guard of `SchemaMigrations` and the step it runs: `current in [lower] until [until]`.
+     * [added] are the columns the step adds — the old shape of its table is the model's own column
+     * list minus them — and [fragment] is a piece of the step's SQL that no other step issues.
+     * [oldDdl] overrides that old shape where the model's columns cannot express it (the v25 move).
+     */
+    private class MigrationStep(
+        val name: String,
+        val lower: Int,
+        val until: Int,
+        val table: Table,
+        val fragment: String,
+        val added: Set<String> = emptySet(),
+        val oldDdl: String? = null,
+    )
+
+    /** A guard whose step adds one column, plus [alsoAdded], the block's other columns. */
+    private fun columnStep(
+        name: String,
+        lower: Int,
+        until: Int,
+        table: Table,
+        column: String,
+        definition: String,
+        vararg alsoAdded: String,
+        fragment: String? = null,
+    ) = MigrationStep(
+        name = name,
+        lower = lower,
+        until = until,
+        table = table,
+        fragment = fragment ?: "ALTER TABLE ${table.tableName} ADD COLUMN $column $definition",
+        added = setOf(column, *alsoAdded),
+    )
+
+    /** A guard whose step adds no column: an index, the v25 move, or the v27 thread_id backfill. */
+    private fun sqlStep(
+        name: String,
+        lower: Int,
+        until: Int,
+        table: Table,
+        fragment: String,
+        oldDdl: String? = null,
+    ) = MigrationStep(name, lower, until, table, fragment, oldDdl = oldDdl)
+
+    /** Every guard of `SchemaMigrations`, in version order. */
+    private val migrationSteps =
+        listOf(
+            columnStep("questions.dispatch_bound", 1, 2, Questions, "dispatch_bound", "INTEGER NOT NULL DEFAULT 0"),
+            columnStep("continuations.kind", 3, 5, Continuations, "kind", "TEXT NOT NULL DEFAULT 'SINGLE'"),
+            columnStep("result_tokens.consumer_agent", 3, 7, ResultTokens, "consumer_agent", "TEXT NOT NULL DEFAULT ''"),
+            columnStep("processes.owner", 1, 8, Processes, "owner", "TEXT"),
+            columnStep(
+                "continuations.fire_attempts",
+                3,
+                10,
+                Continuations,
+                "fire_attempts",
+                "INTEGER NOT NULL DEFAULT 0",
+                "next_attempt_at",
+            ),
+            columnStep("processes.trace_id", 1, 11, Processes, "trace_id", "VARCHAR(32)"),
+            columnStep("processes.record_purge_at", 1, 12, Processes, "record_purge_at", "INTEGER"),
+            columnStep("processes.created_at", 1, 13, Processes, "created_at", "INTEGER"),
+            columnStep("processes.ended_at", 1, 14, Processes, "ended_at", "INTEGER"),
+            columnStep("processes.secret_input_keys", 1, 15, Processes, "secret_input_keys", "TEXT"),
+            columnStep("dispatches.secret_input_keys", 3, 16, Dispatches, "secret_input_keys", "TEXT"),
+            columnStep("dispatches.secret_param_names", 3, 17, Dispatches, "secret_param_names", "TEXT"),
+            columnStep(
+                "processes.retain_artifacts",
+                1,
+                18,
+                Processes,
+                "retain_artifacts",
+                "TEXT",
+                "workspace_purged_at",
+                "retained_truncated",
+            ),
+            columnStep("processes.parent_process_id", 1, 19, Processes, "parent_process_id", "INTEGER"),
+            columnStep("processes.cost_source", 1, 21, Processes, "cost_source", "TEXT NOT NULL DEFAULT 'cli'"),
+            columnStep("processes.root_process_id", 1, 22, Processes, "root_process_id", "INTEGER"),
+            sqlStep("v23 indexes", 1, 23, Processes, "CREATE INDEX IF NOT EXISTS processes_agent_name ON processes (agent_name)"),
+            sqlStep("v24 indexes", 1, 24, Processes, "CREATE INDEX IF NOT EXISTS processes_artifacts_dir ON processes (artifacts_dir)"),
+            sqlStep(
+                "v25 input_params move",
+                1,
+                25,
+                Processes,
+                "INSERT INTO process_inputs (process_id, input_params)",
+                v24ProcessesColumns,
+            ),
+            sqlStep(
+                "v26 indexes",
+                1,
+                26,
+                Dispatches,
+                "CREATE INDEX IF NOT EXISTS dispatches_status_created ON dispatches (status, created_at)",
+            ),
+            columnStep(
+                "v27 continuations.thread_id",
+                1,
+                27,
+                Continuations,
+                "thread_id",
+                "TEXT",
+                fragment = "UPDATE continuations SET thread_id",
+            ),
+            sqlStep(
+                "v28 questions_agent_name",
+                1,
+                28,
+                Questions,
+                "CREATE INDEX IF NOT EXISTS questions_agent_name ON questions (agent_name)",
+            ),
+            columnStep("processes.failure_reason", 1, 30, Processes, "failure_reason", "TEXT", "failure_reason_run_id"),
+        )
+
+    /** The shape a table had one version before a step: the model's columns minus the ones it adds. */
+    private fun oldShapeDdl(
+        table: Table,
+        missing: Set<String> = emptySet(),
+    ): String =
+        "CREATE TABLE ${table.tableName} (" +
+            table.columns.filterNot { it.name in missing }.joinToString(", ") { "${it.name} TEXT" } +
+            ")"
+
+    /**
+     * A database stamped [current] whose [step]'s table is seeded in [ddl] — the shape that version
+     * had — migrated through the real entry point with the writer handle's raw SQL recorded. One file
+     * per case: an upgrade is one-way, so the cases cannot share a database.
+     */
+    private fun migrateSeeded(
+        dir: Path,
+        step: MigrationStep,
+        current: Int,
+        ddl: String,
+    ): RecordingWriterConnection {
+        val dbPath = dir.resolve("${step.name.replace(' ', '-')}-v$current.db").toString()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                st.execute(ddl)
+                st.execute("PRAGMA user_version = $current")
+            }
+        }
+        val recorded = RecordingWriterConnection()
+        DatabaseService(dbPath, logger, wrapWriterConnection = recorded.wrap).also {
+            it.migrate()
+            it.close()
+        }
+        return recorded
+    }
+
+    /**
+     * Every guard is a range check on `PRAGMA user_version`, so it can be wrong at either end: the
+     * step must run at the guard's own lower bound and at the last version it still covers, exactly
+     * once, and must not run at its upper bound — the version whose databases already have its
+     * effect. Asserted on the SQL the writer connection runs, because a repeated `ALTER` and a
+     * skipped one both leave a fresh database looking the same.
+     */
+    @Test
+    fun `every version guard runs its step once inside its span and not at its upper bound`(
+        @TempDir dir: Path,
+    ) = runTest {
+        for (step in migrationSteps) {
+            for (current in setOf(step.lower, step.until - 1)) {
+                val recorded = migrateSeeded(dir, step, current, step.oldDdl ?: oldShapeDdl(step.table, step.added))
+                assertEquals(
+                    1,
+                    recorded.matching(step.fragment).size,
+                    "${step.name} at v$current must run its step exactly once, ran: ${recorded.statements}",
+                )
+            }
+            val past = migrateSeeded(dir, step, step.until, oldShapeDdl(step.table))
+            assertEquals(
+                emptyList(),
+                past.matching(step.fragment),
+                "${step.name} must not run at v${step.until}, ran: ${past.statements}",
+            )
+        }
+    }
+
+    /**
+     * A database that already carries the columns a backfilling step adds — what a file upgraded by
+     * a newer release and then opened under an older stamp looks like — but whose `user_version`
+     * still names a version below those steps. The guard is on the version, the backfill on
+     * `addColumnIfMissing`'s answer: a step that runs here rewrites committed data the upgrade
+     * deliberately left alone, so both must stay put.
+     */
+    @Test
+    fun `a database that already has the column re-runs no backfill`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("already-upgraded.db").toString()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                st.execute(oldShapeDdl(Processes))
+                st.execute(
+                    "INSERT INTO processes (status, agent_name, history, executions, created_at, ended_at) " +
+                        "VALUES ('FINISHED', 'agent-1', '[[100,\"CREATED\"],[200,\"FINISHED\"]]', '[]', NULL, NULL)",
+                )
+                st.execute("PRAGMA user_version = 12")
+            }
+        }
+        DatabaseService(dbPath, logger).also {
+            it.migrate()
+            it.close()
+        }
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                assertEquals(30, userVersion(st))
+                val (surviving, createdAt, endedAt) =
+                    st.executeQuery("SELECT COUNT(*), MAX(created_at), MAX(ended_at) FROM processes").use {
+                        it.next()
+                        Triple(it.getInt(1), it.getString(2), it.getString(3))
+                    }
+                assertEquals(1, surviving)
+                // v13 and v14 are still in range for this stamp, but the columns were already
+                // there, so neither backfill may run: the history holds a start (100) and a
+                // terminal time (200) a re-run would write over the NULLs left here.
+                assertEquals(null, createdAt)
+                assertEquals(null, endedAt)
+            }
+        }
     }
 }
