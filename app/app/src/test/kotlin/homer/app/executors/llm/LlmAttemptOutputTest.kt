@@ -18,6 +18,8 @@ import kotlin.io.path.writeText
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class LlmAttemptOutputTest {
     private val output = LlmAttemptOutput(FakeHarness(), LoggerFactory.getLogger(LlmAttemptOutputTest::class.java))
@@ -123,6 +125,8 @@ class LlmAttemptOutputTest {
 
         assertEquals(1, failure.result.exitCode)
         assertEquals(0, fake.inspectCalls)
+        // No read was made, so the telemetry hand-off does its own lenient one.
+        assertNull(failure.stream)
     }
 
     @Test
@@ -151,6 +155,9 @@ class LlmAttemptOutputTest {
 
             assertEquals(1, failure.result.exitCode, what)
             assertEquals(accounting, failure.result.llmAccounting, what)
+            // The read the inspection made is carried, so the telemetry hand-off
+            // reuses it instead of parsing the file a second time.
+            assertNotNull(failure.stream, what)
         }
     }
 

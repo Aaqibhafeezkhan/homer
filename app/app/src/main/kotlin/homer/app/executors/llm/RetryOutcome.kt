@@ -19,6 +19,9 @@ internal sealed interface RetryOutcome {
     sealed interface Returned : RetryOutcome {
         val result: CommandResult
 
+        /** The attempt's stdout stream for the telemetry hand-off; null when nothing was read. */
+        val stream: TranslatedStream?
+
         /** `HMR_LLM_OUTCOME` for an escalate predicate (ADR-0079). */
         val outcomeName: String
             get() =
@@ -32,7 +35,7 @@ internal sealed interface RetryOutcome {
     data class Success(
         override val result: CommandResult,
         val attemptIndex: Int,
-        val stream: TranslatedStream,
+        override val stream: TranslatedStream,
     ) : Returned
 
     data class MalformedFailure(
@@ -41,12 +44,14 @@ internal sealed interface RetryOutcome {
 
     data class OtherFailure(
         override val result: CommandResult,
+        /** The lenient stdout read made looking for a terminal stop, reused by the telemetry hand-off; null when nothing was read. */
+        override val stream: TranslatedStream? = null,
     ) : Returned
 
     /** The harness reported a terminal stop the agent opted into (Claude `maxTurnsExitCode`); not retried. */
     data class CappedStop(
         override val result: CommandResult,
-        val stream: TranslatedStream,
+        override val stream: TranslatedStream,
     ) : Returned
 }
 

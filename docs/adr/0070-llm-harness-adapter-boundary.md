@@ -85,7 +85,11 @@ rewriting the exit code exactly as the exit-0 path does. Every other verdict —
 and a stream that cannot be read at all — leaves the exit's own failure as it
 was, so no non-zero exit turns into a malformed one. A harness that never
 returns `Terminal` keeps the `false` default and its non-zero behaviour
-unchanged.)*
+unchanged. The member is a deliberate widening of the adapter contract rather
+than an implicit rule: the alternative — no new member, reading every
+non-zero exit's stdout leniently and honouring only a `Terminal` verdict —
+would spend an extra bounded read on the failed attempt of every harness,
+opted in or not.)*
 
 `id` equals the command's `kind` (`claude`, `codex`, …), and `reportsCost`
 states — once, per adapter, with no default — whether the CLI itself prices

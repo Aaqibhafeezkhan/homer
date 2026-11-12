@@ -578,7 +578,7 @@ commands:
 
 #### Claude Retry
 
-The optional `retry` block wraps the entire CLI invocation (stdin, env, and stdout validation). Retries fire when an attempt finishes with a non-zero exit code OR when its stdout fails JSON-event-stream validation (`MalformedLlmOutputException`). Other exceptions (timeouts, cancellation) propagate immediately. Backoff is exponential with full jitter: `min(maxDelayMs, baseDelayMs * 2^(n-1) + random(0, baseDelayMs))` for the n-th retry (n = 1 for the first). With the default `attempts: 1` no retry happens.
+The optional `retry` block wraps the entire CLI invocation (stdin, env, and stdout validation). Retries fire when an attempt finishes with a non-zero exit code — except a stop at `maxTurns` with `maxTurnsExitCode` set, which is never retried — OR when its stdout fails JSON-event-stream validation (`MalformedLlmOutputException`). Other exceptions (timeouts, cancellation) propagate immediately. Backoff is exponential with full jitter: `min(maxDelayMs, baseDelayMs * 2^(n-1) + random(0, baseDelayMs))` for the n-th retry (n = 1 for the first). With the default `attempts: 1` no retry happens.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|

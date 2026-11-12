@@ -114,7 +114,8 @@ class LlmHarnessExecutor<C>(
 
     /**
      * Invokes the harness CLI, validating its output, and retrying transient failures
-     * (non-zero exit OR [MalformedLlmOutputException]) per the command's [LlmRetry]
+     * (non-zero exit — except a terminal stop the command opted into, which is never
+     * retried — OR [MalformedLlmOutputException]) per the command's [LlmRetry]
      * configuration. With the default `attempts = 1` the loop runs exactly once.
      *
      * The last attempt's outcome is the one that surfaces: a successful run is returned
@@ -375,12 +376,8 @@ class LlmHarnessExecutor<C>(
         try {
             // A non-zero exit's stream is read leniently: a killed CLI's trailing partial line
             // must not take the attempt's tool and message spans with it. Exit 0 stays strict.
-            val stream =
-                when (outcome) {
-                    is RetryOutcome.Success -> outcome.stream
-                    is RetryOutcome.CappedStop -> outcome.stream
-                    is RetryOutcome.OtherFailure -> output.readLeniently(outcome.result.stdOut, span)
-                }
+            // OtherFailure's null stream (nothing was read for it) reads here, once.
+            val stream = outcome.stream ?: output.readLeniently(outcome.result.stdOut, span)
             val step = LlmStepInfo(label = command.label, configuredModel = command.model)
             handOff(settlement, outcome.result.llmAccounting, stream, compiledPrompt, span, redactor, step)
         } catch (e: CancellationException) {

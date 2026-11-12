@@ -77,13 +77,15 @@ internal class LlmAttemptOutput<C>(
         // The stdout of a non-zero exit is agent-written and may be unreadable, truncated or
         // oversized (§12 rule 2), and inspecting it can throw where an adapter checks something
         // only a success carries (Claude's version pin). Neither turns the exit into another
-        // failure: only a terminal verdict is taken from it.
-        val capped =
-            runCatching {
-                val stream = readLeniently(attemptOut, span)
-                (harness.inspect(stream.events, stream.raw, command) as? Inspection.Terminal)?.let { it to stream }
-            }.getOrNull() ?: return RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting))
-        return cappedStop(result, accounting, capped.first, capped.second, span)
+        // failure: only a terminal verdict is taken from it. The read is kept on the failure
+        // either way, so the telemetry hand-off never parses the file a second time.
+        val stream =
+            runCatching { readLeniently(attemptOut, span) }.getOrNull()
+                ?: return RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting))
+        val terminal =
+            runCatching { harness.inspect(stream.events, stream.raw, command) as? Inspection.Terminal }.getOrNull()
+                ?: return RetryOutcome.OtherFailure(result.copy(llmAccounting = accounting), stream)
+        return cappedStop(result, accounting, terminal, stream, span)
     }
 
     /** The terminal cap both exit paths share: the configured exit code, its stream, never retried. */
