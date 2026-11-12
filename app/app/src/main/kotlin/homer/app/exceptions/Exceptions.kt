@@ -140,6 +140,19 @@ class MaxQueuedRunsExceededException(
 ) : HomerException("Agent '$agentName' has reached the maximum of $maxQueuedRuns queued runs")
 
 /**
+ * Raised when an agent already has `bound` runs suspended waiting for a subject lock. A run
+ * waiting on a lock no longer holds a parallel-run slot (ADR-0104), so the wait needs its own
+ * local bound: an unbounded lock queue on one agent could pin just as many process rows as the
+ * slot queue could, and starve every other agent. The bound is `maxQueuedRuns` when that shares
+ * the slot queue, and `maxParallelRuns` otherwise — the surplus run is failed instead of parked.
+ * §12 rules 4–5, ADR-0047.
+ */
+class MaxLockWaitersExceededException(
+    val agentName: String,
+    val bound: Int,
+) : HomerException("Agent '$agentName' has reached the maximum of $bound runs waiting for a lock")
+
+/**
  * Raised when an incoming agent invocation would exceed the configured maximum
  * RunAgent chain depth. Prevents accidental (or malicious) recursion from
  * burning unbounded tokens. The chain is threaded across HTTP hops via the

@@ -162,17 +162,25 @@ marked `Constraint:`.
   and dispatches and continuations left mid-fire settled
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).
 - **`LockManager`** — the three `onCollision` strategies (`WAIT`,
-  `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`).
+  `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`). `Process` takes the lock **before** the
+  parallel-run slot (ADR-0104), so `acquireLock` only *decides* the collision: it returns a
+  `LockGrant` carrying the run a `KILL_OLD_RUN_CURRENT` collision displaced, and
+  `killDisplaced` kills it once the new run holds a slot. A `WAIT` run takes its lock-wait
+  ticket (`ParallelRunsManager.enterLockWait`) inside the mutex, before it enqueues, and
+  frees it however the wait ends — the two calls are the interface's whole admission path.
   - **Constraint:** `releaseLock` warns on unknown-lock and non-holder
     releases — don't silence that warning, it masks real bugs.
 - **`ParallelRunsManager`** — per-agent slot limiter (`maxParallelRuns`,
   `WAIT` | `REJECT`); under `WAIT`, `maxQueuedRuns` bounds suspended waiters and
   a surplus run fails fast (the start still returns `200`; the run ends
-  `FAILED`). See ADR-0029.
+  `FAILED`). See ADR-0029. `enterLockWait` bounds the runs parked on a lock: it shares the
+  `maxQueuedRuns` counter when that is set, and otherwise caps them at `maxParallelRuns`
+  (ADR-0104).
   - **Constraint:** `releaseSlot` takes the exact `Semaphore` returned by
     `acquireSlot`, and the waiter counter is captured, not re-looked-up — a
     concurrent `AgentsService.reload()` would otherwise lose the reference or
-    misdirect the decrement.
+    misdirect the decrement. The same holds for a lock-wait ticket, which captures
+    its counter and is idempotent to close.
 - **`OtelTelemetryService`** — thin wrapper over OpenTelemetry. Exposes the
   `TelemetryService` interface — depend on that in DI. The Langfuse exporter
   declares OTLP ingestion version 4 (`x-langfuse-ingestion-version`), and

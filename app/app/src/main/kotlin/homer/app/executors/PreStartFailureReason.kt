@@ -2,6 +2,7 @@ package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.ClaimQueueFullException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
@@ -56,6 +57,13 @@ object PreStartFailureReason {
                 PreStartFailure(
                     "Parallel-run wait queue full (maxQueuedRuns: ${e.maxQueuedRuns}): agent '${e.agentName}' " +
                         "already had that many runs waiting for a slot, so this run never started.",
+                )
+            }
+
+            is MaxLockWaitersExceededException -> {
+                PreStartFailure(
+                    "Lock wait queue full (maxParallelRuns: ${e.bound}): agent '${e.agentName}' " +
+                        "already had that many runs waiting for a lock, so this run never started.",
                 )
             }
 

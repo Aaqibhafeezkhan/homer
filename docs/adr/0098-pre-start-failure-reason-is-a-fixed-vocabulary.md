@@ -39,13 +39,16 @@ failure cause extends it, and every reader who can open the run sees it.
 Chosen option: **"Map each typed cause to a fixed-vocabulary sentence built
 from its typed fields, never the exception message."**
 
-Exactly six causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
-parallel-run cap, the full parallel-run wait queue, the claim timeout, the
-full claim queue and an unresolved `lockStrategy.key` placeholder (the
-amendment below). Any other exception — including one that failed a run
-mid-flight — stores no reason: its message may carry anything, and the reader
-gains nothing from it that the run's own record does not say (ADR-0047 rule 7:
-secrets travel never in error text).
+Exactly seven causes store a reason: the `SKIP_CURRENT` lock skip, the `REJECT`
+parallel-run cap, the full parallel-run wait queue, the full lock wait queue,
+the claim timeout, the full claim queue and an unresolved `lockStrategy.key`
+placeholder (the amendment below).
+*(Amended 2026-11-12: the full lock wait queue is the sixth — the bound a run
+waiting for a subject lock is refused by, added by
+[ADR-0104](0104-lock-before-slot-admission-order.md).)* Any other exception —
+including one that failed a run mid-flight — stores no reason: its message may
+carry anything, and the reader gains nothing from it that the run's own record
+does not say (ADR-0047 rule 7: secrets travel never in error text).
 
 The mapping's obligations, which every new cause must keep:
 
@@ -84,7 +87,7 @@ The mapping's obligations, which every new cause must keep:
   the tick of delay, and the reason write must never change the status a kill
   or a failure already committed.
 
-## Amendment (2026-11-12): an unresolved lock key placeholder is the sixth cause
+## Amendment (2026-11-12): an unresolved lock key placeholder is the seventh cause
 
 A `lockStrategy.key` whose `{{NAME}}` the run's environment cannot resolve used
 to be left as literal text, so every run of that agent rendered the same key and
@@ -93,7 +96,7 @@ killed by another's. The run is now refused before it starts — before it takes
 lock, a parallel-run slot or a workspace — and stores a reason naming the
 placeholder.
 
-**The decision.** `UnresolvedLockKeyPlaceholderException` is the sixth mapped
+**The decision.** `UnresolvedLockKeyPlaceholderException` is the seventh mapped
 cause, and its obligations are the ones this ADR already fixes, applied to a
 field that is new here: the reason names the **placeholder names only** — never
 the rendered key, which holds input values, and never any value. The names are

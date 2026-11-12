@@ -1,6 +1,7 @@
 package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.models.OnKeyCollisionStrategy
 import homer.app.services.ProcessManager
 import io.mockk.coEvery
@@ -20,11 +21,27 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.slf4j.Logger
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+
+/**
+ * The lock half of `Process.admit`'s admission — acquire, then kill the holder the collision
+ * displaced — under a no-op gate: these tests exercise the lock manager, not the agent's
+ * lock-wait bound.
+ */
+private suspend fun LockManager.acquireThenDisplace(
+    lockName: String,
+    onKeyCollisionStrategy: OnKeyCollisionStrategy,
+    processID: Int,
+) {
+    val gate = LockWaitGate { LockWaitTicket {} }
+    killDisplaced(acquireLock(lockName, onKeyCollisionStrategy, processID, gate), processID)
+}
 
 /**
  * Unit tests for DefaultLockManager
@@ -50,27 +67,27 @@ class DefaultLockManagerTest {
     // ========== Lock Acquisition Tests ==========
 
     @Test
-    fun `waitForLockOrThrow should acquire lock when no collision`() =
+    fun `acquireLock should acquire lock when no collision`() =
         runTest {
             val lockName = "test-lock"
             val processId = 1
 
             // Should not throw
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
 
             assertTrue(true)
         }
 
     @Test
-    fun `waitForLockOrThrow should acquire different locks for different names`() =
+    fun `acquireLock should acquire different locks for different names`() =
         runTest {
             val lockName1 = "lock-1"
             val lockName2 = "lock-2"
             val processId1 = 1
             val processId2 = 2
 
-            lockManager.waitForLockOrThrow(lockName1, OnKeyCollisionStrategy.WAIT, processId1)
-            lockManager.waitForLockOrThrow(lockName2, OnKeyCollisionStrategy.WAIT, processId2)
+            lockManager.acquireThenDisplace(lockName1, OnKeyCollisionStrategy.WAIT, processId1)
+            lockManager.acquireThenDisplace(lockName2, OnKeyCollisionStrategy.WAIT, processId2)
 
             assertTrue(true)
         }
@@ -85,12 +102,12 @@ class DefaultLockManagerTest {
             val processId2 = 2
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId1)
 
             // Second process should throw exception
             val exception =
                 assertFailsWith<AnotherProcessStillActive> {
-                    lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId2)
+                    lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId2)
                 }
 
             assertEquals("The process $processId1 is still active, stopping current", exception.message)
@@ -104,11 +121,11 @@ class DefaultLockManagerTest {
             val processId2 = 2
 
             // First process acquires and releases lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId1)
             lockManager.releaseLock(lockName, processId1)
 
             // Second process should succeed
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId2)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, processId2)
 
             assertTrue(true)
         }
@@ -125,10 +142,10 @@ class DefaultLockManagerTest {
             coEvery { mockProcessManager.killProcess(any(), any()) } returns Unit
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId1)
 
             // Second process should kill first and acquire lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId2)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId2)
 
             coVerify { mockProcessManager.killProcess(processId1, "The new process $processId2 takes precedence") }
         }
@@ -141,7 +158,7 @@ class DefaultLockManagerTest {
 
             coEvery { mockProcessManager.killProcess(any(), any()) } returns Unit
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId)
 
             coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
         }
@@ -156,10 +173,10 @@ class DefaultLockManagerTest {
             coEvery { mockProcessManager.killProcess(any(), any()) } returns Unit
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId1)
 
             // Second process kills first but both should be in the set temporarily
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId2)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId2)
 
             // Release both
             lockManager.releaseLock(lockName, processId1)
@@ -167,7 +184,7 @@ class DefaultLockManagerTest {
 
             // After both releases, third process should acquire without killing
             coEvery { mockProcessManager.killProcess(any(), any()) } returns Unit
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 3)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 3)
 
             assertTrue(true)
         }
@@ -181,12 +198,12 @@ class DefaultLockManagerTest {
                 killEntered.complete(Unit)
                 killRelease.await()
             }
-            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
 
-            val taking = launch { lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2) }
+            val taking = launch { lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2) }
             killEntered.await()
             // The kill is a database write: another lock must stay acquirable while it runs.
-            withTimeout(1.seconds) { lockManager.waitForLockOrThrow("other-lock", OnKeyCollisionStrategy.WAIT, 3) }
+            withTimeout(1.seconds) { lockManager.acquireThenDisplace("other-lock", OnKeyCollisionStrategy.WAIT, 3) }
             killRelease.complete(Unit)
             taking.join()
 
@@ -194,7 +211,7 @@ class DefaultLockManagerTest {
             lockManager.releaseLock("test-lock", 1)
             val blocked =
                 assertFailsWith<AnotherProcessStillActive> {
-                    lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 4)
+                    lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 4)
                 }
             assertEquals("The process 2 is still active, stopping current", blocked.message)
         }
@@ -203,20 +220,67 @@ class DefaultLockManagerTest {
     fun `KILL_OLD_RUN_CURRENT whose kill throws still leaves the new process holding the lock`() =
         runTest {
             coEvery { mockProcessManager.killProcess(any(), any()) } throws IllegalStateException("kill failed")
-            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
 
             assertFailsWith<IllegalStateException> {
-                lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2)
+                lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2)
             }
 
             lockManager.releaseLock("test-lock", 1)
             val blocked =
                 assertFailsWith<AnotherProcessStillActive> {
-                    lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+                    lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
                 }
             assertEquals("The process 2 is still active, stopping current", blocked.message)
             lockManager.releaseLock("test-lock", 2)
-            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+        }
+
+    // ========== Decision / kill split Tests ==========
+
+    @Test
+    fun `acquireLock returns the victim without killing it, and killDisplaced kills it once`() =
+        runTest {
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+
+            val grant =
+                lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 2, LockWaitGate { LockWaitTicket {} })
+
+            assertEquals(1, grant.displacedProcessId)
+            // The decision is made under the mutex; the kill waits for the caller to admit the run.
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+
+            lockManager.killDisplaced(grant, 2)
+
+            coVerify(exactly = 1) { mockProcessManager.killProcess(1, "The new process 2 takes precedence") }
+        }
+
+    @Test
+    fun `acquireLock without a collision carries no victim to kill`() =
+        runTest {
+            val grant =
+                lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1, LockWaitGate { LockWaitTicket {} })
+
+            assertNull(grant.displacedProcessId)
+            lockManager.killDisplaced(grant, 1)
+
+            coVerify(exactly = 0) { mockProcessManager.killProcess(any(), any()) }
+        }
+
+    @Test
+    fun `a collision that never enters the gate consumes no lock-wait place`() =
+        runTest {
+            // KILL_OLD_RUN_CURRENT does not wait, so it must not reserve a place in the bound.
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, 1)
+
+            lockManager.acquireLock(
+                "test-lock",
+                OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT,
+                2,
+                LockWaitGate { throw AssertionError("the gate must not be entered") },
+            )
+
+            assertTrue(true)
         }
 
     // ========== WAIT Strategy Tests ==========
@@ -230,12 +294,12 @@ class DefaultLockManagerTest {
             var process2Acquired = false
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId1)
 
             // Launch second process in background
             val job =
                 launch {
-                    lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId2)
+                    lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId2)
                     process2Acquired = true
                     lockManager.releaseLock(lockName, processId2)
                 }
@@ -262,12 +326,12 @@ class DefaultLockManagerTest {
             val processId2 = 2
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId1)
 
             // Launch second process in background
             val job =
                 launch {
-                    lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId2)
+                    lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId2)
                 }
 
             // Give second process time to start waiting
@@ -279,15 +343,15 @@ class DefaultLockManagerTest {
             // First process should still hold the lock
             // Verify by trying SKIP_CURRENT strategy
             assertFailsWith<AnotherProcessStillActive> {
-                lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+                lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, 3)
             }
         }
 
     @Test
     fun `a WAIT cancelled while the mutex is contended still leaves the queue`() =
         runTest {
-            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.WAIT, 1)
-            val waiter = launch { lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.WAIT, 2) }
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+            val waiter = launch { lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.WAIT, 2) }
             runCurrent()
 
             // Hold the manager's own mutex across the cancel, as a concurrent release would.
@@ -304,7 +368,7 @@ class DefaultLockManagerTest {
             lockManager.releaseLock("test-lock", 1)
 
             // Had the dead waiter stayed queued, the release would have handed it the lock.
-            lockManager.waitForLockOrThrow("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
         }
 
     @Test
@@ -314,10 +378,75 @@ class DefaultLockManagerTest {
             val processId = 1
             val startTime = System.currentTimeMillis()
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
 
             val elapsed = System.currentTimeMillis() - startTime
             assertTrue(elapsed < 100, "Lock acquisition should be immediate, took ${elapsed}ms")
+        }
+
+    // ========== Lock-wait gate Tests ==========
+
+    @Test
+    fun `a WAIT refused by the gate is not enqueued`() =
+        runTest {
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            assertFailsWith<MaxLockWaitersExceededException> {
+                lockManager.acquireLock(
+                    "test-lock",
+                    OnKeyCollisionStrategy.WAIT,
+                    2,
+                    LockWaitGate { throw MaxLockWaitersExceededException("agent", 1) },
+                )
+            }
+
+            // Had the refused run been enqueued, this release would have handed it the lock.
+            lockManager.releaseLock("test-lock", 1)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+        }
+
+    @Test
+    fun `a granted WAIT frees its gate place`() =
+        runTest {
+            val open = AtomicInteger(0)
+            val gate =
+                LockWaitGate {
+                    open.incrementAndGet()
+                    LockWaitTicket { open.decrementAndGet() }
+                }
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            val waiter = launch { lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.WAIT, 2, gate) }
+            runCurrent()
+            assertEquals(1, open.get(), "the waiting run holds its place")
+
+            lockManager.releaseLock("test-lock", 1)
+            waiter.join()
+
+            assertEquals(0, open.get(), "the granted run frees its place")
+        }
+
+    @Test
+    fun `a cancelled WAIT frees its gate place and leaves no queue entry`() =
+        runTest {
+            val open = AtomicInteger(0)
+            val gate =
+                LockWaitGate {
+                    open.incrementAndGet()
+                    LockWaitTicket { open.decrementAndGet() }
+                }
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.WAIT, 1)
+
+            val waiter = launch { lockManager.acquireLock("test-lock", OnKeyCollisionStrategy.WAIT, 2, gate) }
+            runCurrent()
+            assertEquals(1, open.get())
+
+            waiter.cancelAndJoin()
+
+            assertEquals(0, open.get(), "the cancelled run frees its place")
+            // The dead waiter left the queue: the release hands the lock to nobody.
+            lockManager.releaseLock("test-lock", 1)
+            lockManager.acquireThenDisplace("test-lock", OnKeyCollisionStrategy.SKIP_CURRENT, 3)
         }
 
     // ========== Lock Release Tests ==========
@@ -328,11 +457,11 @@ class DefaultLockManagerTest {
             val lockName = "test-lock"
             val processId = 1
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
 
             // Verify lock is available by acquiring it again
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
 
             assertTrue(true)
         }
@@ -343,12 +472,12 @@ class DefaultLockManagerTest {
             val lockName = "test-lock"
             val processId = 1
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
 
             // Acquire lock again - should succeed immediately since lock was removed
             val startTime = System.currentTimeMillis()
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             val elapsed = System.currentTimeMillis() - startTime
 
             assertTrue(elapsed < 100, "Lock should have been removed and reacquired immediately")
@@ -373,14 +502,14 @@ class DefaultLockManagerTest {
             val processId1 = 1
             val processId2 = 2
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId1)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId1)
 
             // Release with wrong processId should not throw
             lockManager.releaseLock(lockName, processId2)
 
             // Original process should still hold lock
             assertFailsWith<AnotherProcessStillActive> {
-                lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, 3)
+                lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, 3)
             }
         }
 
@@ -390,11 +519,11 @@ class DefaultLockManagerTest {
             val lockName = "test-lock"
             val processId = 1
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
 
             // Verify lock was released by trying to acquire it again
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
 
             // Cleanup
             lockManager.releaseLock(lockName, processId)
@@ -412,14 +541,14 @@ class DefaultLockManagerTest {
             val acquisitionOrder = mutableListOf<Int>()
 
             // First process acquires lock
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processIds[0])
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processIds[0])
             acquisitionOrder.add(processIds[0])
 
             // Launch other processes
             coroutineScope {
                 processIds.drop(1).forEach { processId ->
                     launch {
-                        lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+                        lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
                         synchronized(acquisitionOrder) {
                             acquisitionOrder.add(processId)
                         }
@@ -450,7 +579,7 @@ class DefaultLockManagerTest {
                     launch {
                         val lockName = "lock-${i % 3}"
                         val processId = i
-                        lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+                        lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
                         synchronized(results) {
                             results.add(lockName to processId)
                         }
@@ -474,7 +603,7 @@ class DefaultLockManagerTest {
                 repeat(5) { i ->
                     launch {
                         try {
-                            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, i)
+                            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.SKIP_CURRENT, i)
                             delay(100)
                             lockManager.releaseLock(lockName, i)
                         } catch (e: AnotherProcessStillActive) {
@@ -503,7 +632,7 @@ class DefaultLockManagerTest {
                 processIds.forEach { processId ->
                     launch {
                         delay(processId * 10L) // Stagger requests
-                        lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId)
+                        lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.KILL_OLD_RUN_CURRENT, processId)
                         delay(50)
                         lockManager.releaseLock(lockName, processId)
                     }
@@ -524,9 +653,9 @@ class DefaultLockManagerTest {
             val processId = 1
 
             // Acquire, release, and reacquire
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
 
             assertTrue(true)
         }
@@ -537,7 +666,7 @@ class DefaultLockManagerTest {
             val lockName = "a".repeat(1000)
             val processId = 1
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
 
             assertTrue(true)
@@ -549,7 +678,7 @@ class DefaultLockManagerTest {
             val lockName = "test-lock"
             val processId = 1
 
-            lockManager.waitForLockOrThrow(lockName, OnKeyCollisionStrategy.WAIT, processId)
+            lockManager.acquireThenDisplace(lockName, OnKeyCollisionStrategy.WAIT, processId)
             lockManager.releaseLock(lockName, processId)
             lockManager.releaseLock(lockName, processId)
             lockManager.releaseLock(lockName, processId)

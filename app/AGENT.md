@@ -126,9 +126,9 @@ mcp:
 | `env` | `Map<String, String>` | No | `{}` | Agent-specific environment variables |
 | `workspace` | `Workspace` | No | Default workspace | Workspace configuration |
 | `lockStrategy` | `LockStrategy` | No | Default lock strategy | Concurrency control strategy |
-| `maxParallelRuns` | `Int` | No | `10` | Maximum number of concurrent executions of this agent |
+| `maxParallelRuns` | `Int` | No | `10` | Maximum number of concurrent executions of this agent. Bounds the runs that are actually executing: a run waiting for its `lockStrategy` lock holds no slot. |
 | `onMaxParallelRuns` | `OnMaxParallelRunsStrategy` | No | `WAIT` | Behavior when `maxParallelRuns` is reached: `WAIT` (queue) or `REJECT` (fail immediately) |
-| `maxQueuedRuns` | `Int?` | No | `null` | Under `onMaxParallelRuns: WAIT`, the maximum number of runs that may be queued waiting for a slot. `null` (default) = unbounded, a surplus run waits indefinitely; a non-null value fails the surplus run once the queue is full (the start returns `200`; the run ends `FAILED`), bounding how many process rows one agent can pin. Must be `>= 0`. No effect under `REJECT`. |
+| `maxQueuedRuns` | `Int?` | No | `null` | Under `onMaxParallelRuns: WAIT`, the maximum number of runs that may be queued waiting for a slot **or for a lock** (both queues share this one cap). `null` (default) = the slot queue is unbounded (a surplus run waits indefinitely); lock waiters are still capped at `maxParallelRuns` (see [Admission order](#admission-order-the-lock-comes-before-the-slot)). A non-null value fails the surplus run once the queue is full (the start returns `200`; the run ends `FAILED`), bounding how many process rows one agent can pin. Must be `>= 0`. No effect under `REJECT`, which never queues. |
 | `cron` | `CronConfig` | No | `null` | Cron schedule configuration |
 | `runner` | `String?` | No | `null` (= `local`) | Alias of the execution backend to run commands on. Omitted = `local` (Homer's host); any other value must match a key in [`AppConfig.runners`](SERVER.md#runners-pluggable-execution-backends); a blank value fails agent load. All commands in the agent run inside the same runner session. Mutually exclusive with `runnerTags`. See [Runner selection](#runner-selection). |
 | `runnerTags` | `List<String>` | No | `[]` | Select a runner by tags instead of alias: any configured runner whose `tags` contain every listed tag may take the run. Shape `^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`, at most 32, no duplicates. Mutually exclusive with `runner`; setting both fails agent load. |
@@ -2641,6 +2641,24 @@ onMaxParallelRuns: WAIT   # queue the 6th and beyond
 maxQueuedRuns: 50         # ...but fail the 56th once 50 are queued
 ```
 
+### Admission order: the lock comes before the slot
+
+A run takes its `lockStrategy` lock first and a parallel-run slot second, so
+`maxParallelRuns` bounds the runs that are *executing*, not the runs that are
+waiting for a lock. With a per-subject key (`mr-{{MR}}`, say) and
+`onCollision: WAIT`, a run queued behind one subject's lock no longer occupies
+a slot, so one busy subject cannot starve the agent's other subjects.
+
+A run waiting for a lock is bounded too. Under `onMaxParallelRuns: WAIT` with
+`maxQueuedRuns` set, lock waiters and slot waiters share that one cap: once
+that many runs are parked in total, the next run ends `FAILED` without
+starting. Otherwise (no `maxQueuedRuns`, or `REJECT`, where `maxQueuedRuns`
+has no meaning) an agent may have at most `maxParallelRuns` runs waiting for a
+lock, and the surplus ends `FAILED`. Every refusal is a `FAILED` run with a
+stored reason; the start itself still returns `200`. See
+[Lock Collision Strategies](#lock-collision-strategies) for what each
+`onCollision` value does at which moment.
+
 ## Lock Strategy
 
 The `lockStrategy` field controls concurrency and prevents conflicting executions:
@@ -2676,9 +2694,16 @@ lockStrategy:
 
 | Strategy | Behavior | Use Case |
 |----------|----------|----------|
-| `KILL_OLD_RUN_CURRENT` | Kill existing process, run new one | Latest execution wins |
-| `SKIP_CURRENT` | Skip new execution, keep existing | First execution wins |
-| `WAIT` | Wait for lock release, then run | Sequential processing |
+| `KILL_OLD_RUN_CURRENT` | Take the lock, then kill the existing process once the new run holds a parallel-run slot, then run it | Latest execution wins |
+| `SKIP_CURRENT` | Skip the new execution at the lock, before any slot is taken | First execution wins |
+| `WAIT` | Wait for lock release holding no parallel-run slot, then take a slot and run | Sequential processing |
+
+Every collision is decided at the lock, before the run holds a slot — so a
+`SKIP_CURRENT` refusal is immediate, and a `WAIT` run parks on its own subject's
+key rather than in the agent's slot queue. `KILL_OLD_RUN_CURRENT` is the one
+strategy whose *kill* is deferred: the previous holder is killed only once the
+new run has a slot, so a new run refused a slot (a `REJECT` cap, a full wait
+queue, a kill) leaves the old run alive and releases the lock again.
 
 ### Lock Examples
 

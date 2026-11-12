@@ -21,6 +21,7 @@ import homer.app.exceptions.InvocationDepthExceededException
 import homer.app.exceptions.MaintenanceQueueFullException
 import homer.app.exceptions.MaintenanceWaitTimeoutException
 import homer.app.exceptions.MalformedLlmOutputException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.PayloadSchemaValidationException
@@ -120,6 +121,7 @@ class StatusPagesTest {
                 AnotherProcessStillActive(1) to HttpStatusCode.Conflict,
                 MaxParallelRunsExceededException("a", 1) to HttpStatusCode.TooManyRequests,
                 MaxQueuedRunsExceededException("a", 1) to HttpStatusCode.TooManyRequests,
+                MaxLockWaitersExceededException("a", 1) to HttpStatusCode.TooManyRequests,
                 ProcessManagerAtCapacityException(1) to HttpStatusCode.ServiceUnavailable,
                 InvocationDepthExceededException("a", 1, listOf("a")) to HttpStatusCode.UnprocessableEntity,
                 InvocationCycleDetectedException("a", listOf("a")) to HttpStatusCode.UnprocessableEntity,

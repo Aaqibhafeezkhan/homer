@@ -3,6 +3,7 @@ package homer.app.services
 import homer.app.exceptions.CooldownActiveException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.HomerException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.ProcessManagerAtCapacityException
 import homer.app.exceptions.ServerDrainingException
@@ -342,6 +343,7 @@ internal class ContinuationFireService(
             e is CostCapExceededException ||
             e is ProcessManagerAtCapacityException ||
             e is MaxQueuedRunsExceededException ||
+            e is MaxLockWaitersExceededException ||
             // A fire refused because the drain started is released for the next boot's sweep
             // rather than settled FAILED: the origin ended and its resume must not be lost.
             e is ServerDrainingException

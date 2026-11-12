@@ -2,6 +2,7 @@ package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.ClaimQueueFullException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
@@ -1214,6 +1215,22 @@ class ProcessExecutorTest {
                     "waiting for a slot, so this run never started.",
                 reason,
             )
+        }
+
+    @Test
+    fun `a full lock-wait queue is stored, so the refusal arms no failure cooldown`() =
+        runBlocking {
+            val reason = storedReasonFor(MaxLockWaitersExceededException("demo", 5))!!
+
+            assertEquals(
+                "Lock wait queue full (maxParallelRuns: 5): agent 'demo' already had that many runs waiting " +
+                    "for a lock, so this run never started.",
+                reason,
+            )
+            // The stored reason is what keeps the row out of `cooldown.afterFailure`'s
+            // latest-failure lookup: a run refused before it started never ran, so it must
+            // not back the agent off. See ADR-0098, ADR-0051.
+            coVerify { mockProcessManager.setFailureReason(1, reason, null) }
         }
 
     @Test

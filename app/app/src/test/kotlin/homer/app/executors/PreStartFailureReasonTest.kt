@@ -2,6 +2,7 @@ package homer.app.executors
 
 import homer.app.exceptions.AnotherProcessStillActive
 import homer.app.exceptions.ClaimQueueFullException
+import homer.app.exceptions.MaxLockWaitersExceededException
 import homer.app.exceptions.MaxParallelRunsExceededException
 import homer.app.exceptions.MaxQueuedRunsExceededException
 import homer.app.exceptions.RunnerClaimTimeoutException
@@ -56,6 +57,18 @@ class PreStartFailureReasonTest {
 
         assertTrue(failure.reason.contains("maxQueuedRuns: 5"))
         assertTrue(failure.reason.contains("'demo'"))
+    }
+
+    @Test
+    fun `a full lock-wait queue names the agent and its bound`() {
+        val failure = PreStartFailureReason.of(MaxLockWaitersExceededException("demo", 5))!!
+
+        assertTrue(failure.reason.contains("maxParallelRuns: 5"))
+        assertTrue(failure.reason.contains("'demo'"))
+        assertTrue(failure.reason.contains("waiting for a lock"))
+        // The lock key names the run's subject, read from its inputs: never in the text.
+        assertTrue(!failure.reason.contains("mr-"))
+        assertNull(failure.holderRunId)
     }
 
     @Test
@@ -184,6 +197,7 @@ class PreStartFailureReasonTest {
                         AnotherProcessStillActive(1),
                         MaxParallelRunsExceededException(agentName, 2),
                         MaxQueuedRunsExceededException(agentName, 2),
+                        MaxLockWaitersExceededException(agentName, 2),
                         ClaimQueueFullException(2),
                         claimTimeout(
                             filter = RunnerFilter.Tags(setOf(tag)),

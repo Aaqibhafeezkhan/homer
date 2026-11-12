@@ -161,10 +161,11 @@ if real != root and not real.startswith(root + os.sep):
   evaluation error fails the run. `continueIfFail` does not cover a timeout
   or an output-cap kill. Those still fail the run and the bridge posts a
   generic failure, so size each `timeout` well above the step's usual time.
-- **A waiting turn holds a parallel slot.** A run takes its
-  `maxParallelRuns` slot before it waits for its lock. Three quick messages
-  in one thread can occupy all three slots, one running and two waiting,
-  while other threads queue behind them. Runs past `maxQueuedRuns` end
+- **A waiting turn holds no parallel slot.** A run waits for its thread's
+  lock before it takes a `maxParallelRuns` slot, so three quick messages in
+  one thread hold one slot — the running turn — while the other two park on
+  the lock, and threads on other subjects keep their slots. Both kinds of
+  waiting run count against `maxQueuedRuns`, so runs past it still end
   `FAILED` at once, though the start still returns `200` with a `processId`
   ([Parallel-Run Limiting](../../app/AGENT.md#parallel-run-limiting)). The
   bridge has to report that run as "busy, try again", not wait for a reply.
@@ -215,7 +216,9 @@ if real != root and not real.startswith(root + os.sep):
 ## What it does not solve
 
 - **Cost is capped globally, not per person.** One requester can fill the
-  three slots and the queue. Add a per-user quota in the bridge if the
+  three slots and the queue — messages across enough threads each hold a
+  slot of their own, and even one thread can fill the shared wait queue
+  with turns parked on its lock. Add a per-user quota in the bridge if the
   global caps prove too loose.
 - **The hook guards Claude's file tools and the code-index tool, nothing
   else.** It is not a sandbox. Work from strangers is better on a runner
