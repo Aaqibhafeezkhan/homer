@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0023, ADR-0025, ADR-0026, ADR-0044, ADR-0046, ADR-0047
 ---
 
-# ADR-0103: Fan-out retries are a client-side graph capability with replay-derived attempt counts
+# ADR-0105: Fan-out retries are a client-side graph capability with replay-derived attempt counts
 
 ## Context and Problem Statement
 
