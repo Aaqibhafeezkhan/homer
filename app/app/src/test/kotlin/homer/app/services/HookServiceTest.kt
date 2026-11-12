@@ -86,10 +86,9 @@ class HookServiceTest {
             // No target is loaded, so each fire settles FAILED at once — what this asserts is
             // that each recorded row was picked up and claimed exactly once.
             every { agents.agents } returns emptyMap()
-            coEvery { repo.get(any()) } answers { hook(firstArg()) }
             coEvery { repo.claim(any()) } returns true
 
-            service().onRowsRecorded(RecordedHooks(listOf(5, 6)))
+            service().onRowsRecorded(RecordedHooks(rows = listOf(hook(5), hook(6))))
 
             coVerify(exactly = 1) { repo.claim(5) }
             coVerify(exactly = 1) { repo.claim(6) }
@@ -155,23 +154,19 @@ class HookServiceTest {
         }
 
     @Test
-    fun `a row that cannot be looked up never reaches the status write`() =
+    fun `a cancelling fire propagates out of onRowsRecorded and leaves the rows behind it`() =
         runTest {
-            // The transition has already committed when this runs: a hook failure must not be
-            // able to fail it, and the row stays PENDING for the boot replay. ADR-0023.
-            coEvery { repo.get(any()) } throws IllegalStateException("database is gone")
+            // fireSafely contains every failure but a cancellation: a shutdown in flight must
+            // not be swallowed into a log line, and the row stays PENDING for the boot replay.
+            // ADR-0023, ADR-0107.
+            every { agents.agents } returns emptyMap()
+            coEvery { repo.claim(5) } throws CancellationException("shutting down")
 
-            service().onRowsRecorded(RecordedHooks(listOf(5)))
+            assertThrows<CancellationException> {
+                service().onRowsRecorded(RecordedHooks(rows = listOf(hook(5), hook(6))))
+            }
 
-            coVerify(exactly = 0) { repo.claim(any()) }
-        }
-
-    @Test
-    fun `a lookup that is a cancellation is rethrown`() =
-        runTest {
-            coEvery { repo.get(any()) } throws CancellationException("shutting down")
-
-            assertThrows<CancellationException> { service().onRowsRecorded(RecordedHooks(listOf(5))) }
+            coVerify(exactly = 0) { repo.claim(6) }
         }
 
     @Test
@@ -185,7 +180,7 @@ class HookServiceTest {
             coEvery { repo.claim(5) } throws IllegalStateException("database is gone")
             coEvery { repo.claim(6) } returns true
 
-            service().onRowsRecorded(RecordedHooks(listOf(5, 6)))
+            service().onRowsRecorded(RecordedHooks(rows = listOf(hook(5), hook(6))))
 
             coVerify(exactly = 1) { repo.claim(6) }
         }
@@ -237,6 +232,16 @@ class HookServiceTest {
             service().sweepRetries()
 
             coVerify(exactly = 0) { repo.claim(any()) }
+        }
+
+    @Test
+    fun `a sweep lookup that is a cancellation is rethrown`() =
+        runTest {
+            // The sweep still has rows behind this one; a shutdown must interrupt it, not turn
+            // into an empty sweep. ADR-0102.
+            coEvery { repo.findDueRetries(any()) } throws CancellationException("shutting down")
+
+            assertThrows<CancellationException> { service().sweepRetries() }
         }
 
     @Test

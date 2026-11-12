@@ -65,28 +65,18 @@ internal class HookService(
 
     /**
      * Fires the hook rows a just-committed status transition recorded, and reports the entries
-     * the pending cap shed. Called after the write, never inside it: a fire starts a run, and
-     * that run's own row write must not nest inside the triggering transition's transaction
+     * the pending cap shed. The rows are the ones the insert wrote — they are not read back
+     * by id. Called after the write, never inside it: a fire starts a run, and that run's own
+     * row write must not nest inside the triggering transition's transaction
      * (app/CLAUDE.md SQLite rule 3).
      *
-     * A lookup or a fire failure is logged and swallowed — the status transition has already
-     * committed and a hook must never be able to fail it; a row a failed fire left unclaimed
-     * stays PENDING, so the boot replay or the retry sweep picks it up. See ADR-0023.
+     * A fire failure is logged and swallowed — the status transition has already committed
+     * and a hook must never be able to fail it; a row a failed fire left unclaimed stays
+     * PENDING, so the boot replay or the retry sweep picks it up. See ADR-0023.
      */
     suspend fun onRowsRecorded(recorded: RecordedHooks) {
         logShed(recorded.shed)
-        for (id in recorded.ids) {
-            val hook =
-                try {
-                    repository.get(id)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logger.error("Hook lookup for row {} failed: {}", id, e.message, e)
-                    null
-                }
-            if (hook != null) fireSafely(hook)
-        }
+        for (hook in recorded.rows) fireSafely(hook)
     }
 
     /**

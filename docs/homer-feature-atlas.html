@@ -2055,7 +2055,8 @@ homer-inbox</code></pre>
           <p>An agent declares which agent to start when <em>a run of its own</em> reaches a status — any of the six,
             including <code>KILLED</code> and <code>UNKNOWN</code>, so cleanup and restart triage stop needing a
             command that may never run. Recorded with the status write and fired from every start path (cron, HTTP,
-            MCP, console retry, sub-run), exactly once across a restart, and owned by the triggering run. The target
+            MCP, console retry, sub-run), exactly once across a restart, and owned by the triggering run's
+            owner. The target
             is re-checked at fire time and must not form a cycle; chains are bounded by
             <code>server.hooks.maxChainDepth</code>.</p>
           <pre><code>hooks:

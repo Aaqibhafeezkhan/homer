@@ -3884,7 +3884,8 @@ a continuation — and for statuses a run cannot execute its way into:
 
 Delivery is **exactly once**: the record is durable, claimed before the target
 starts, and replayed at boot. A start refused for a transient reason (cooldown,
-the run cap, the cost cap, a full queue, the shutdown drain) is retried with a
+the run cap, the cost cap, a full queue, a full lock-wait queue, the shutdown
+drain) is retried with a
 doubling back-off, up to 8 attempts, and then recorded as failed. A refusal that
 cannot change — a target that no longer exists, an owner who may not start it —
 settles the hook immediately and starts nothing.
@@ -3907,7 +3908,7 @@ must not form a hook cycle: if the hook graph lets an agent reach itself, direct
 or through other agents, the **declaring** agent is skipped at load with the
 reason reported in the reload diff. A chain of hook-started runs is additionally
 bounded at run time by `server.hooks.maxChainDepth` (see
-[SERVER.md](SERVER.md#hooks)), because a cycle can also appear when a hook target
+[SERVER.md](SERVER.md#status-hooks)), because a cycle can also appear when a hook target
 is reloaded after the declaring agent loaded.
 
 ### Bounds

@@ -138,7 +138,7 @@ object EnvConstants {
     /**
      * How many hook hops deep the run carrying this param is: 1 for a run a hook started
      * from an ordinary run, one more per further hop. Bounded by `server.hooks.maxChainDepth`.
-     * Internal — not part of the documented agent-facing contract. See ADR-0107.
+     * Documented for agents in AGENT.md § Workspace Environment Variables. See ADR-0107.
      */
     const val HOOK_DEPTH = "HMR_HOOK_DEPTH"
 

@@ -1,13 +1,7 @@
 package homer.app.services
 
 import homer.app.EnvConstants
-import homer.app.exceptions.CooldownActiveException
-import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.HomerException
-import homer.app.exceptions.MaxLockWaitersExceededException
-import homer.app.exceptions.MaxQueuedRunsExceededException
-import homer.app.exceptions.ProcessManagerAtCapacityException
-import homer.app.exceptions.ServerDrainingException
 import homer.app.infra.AgentInputResolver
 import homer.app.infra.hookControlParams
 import homer.app.models.Agent
@@ -15,7 +9,6 @@ import homer.app.models.ProcessInfo
 import homer.app.services.persistence.HookRepository
 import kotlinx.coroutines.CancellationException
 import org.slf4j.Logger
-import kotlin.math.min
 
 /** Longest `HMR_HOOK_TAGS` value Homer will build; tags past it are dropped, never truncated mid-tag. */
 internal const val MAX_HOOK_TAGS_CHARS = 1024
@@ -66,7 +59,7 @@ internal class HookFireService(
         // starts is one deeper. Read from the row, not kept in memory, so a restart between a
         // hook's start and its own transition cannot reset the bound. See ADR-0107.
         val run = runOrNull(hook.processId)
-        val depth = hookDepthOf(run?.inputParams.orEmpty()) + 1
+        val depth = nextDepthOrDrop(hook, run, now) ?: return
         if (depth > maxChainDepth) {
             // Shed, never retried: the chain bound is a property of the declarations, so the
             // next attempt would be refused for the same reason. See ADR-0107.
@@ -118,12 +111,17 @@ internal class HookFireService(
                     // [information_disclosure / CWE-200] The fired run is attributed to the
                     // triggering run's owner, so the flow root it inherits is gated on that
                     // owner's visibility — a foreign root id reaches no row, env or span. §12.
+                    // The root derives from the row already read (`run`): a run with no root of
+                    // its own is the flow root, an invisible derived root is dropped — never
+                    // replaced by the run's id (ADR-0058). No second read of the triggering row.
                     rootProcessId =
-                        processManager.visibleOriginRootProcessId(
-                            hook.processId,
-                            hook.owner,
-                            authorizer,
-                        ),
+                        run?.let { info ->
+                            if (info.rootProcessId == null) {
+                                info.id
+                            } else {
+                                processManager.visibleRootProcessId(hook.owner, authorizer, info.rootProcessId)
+                            }
+                        },
                     // The origin link is server-derived, so a hook fired while its run is still
                     // CREATED/WORKING is admitted rather than parked. ADR-0092.
                     serverDerivedParent = true,
@@ -163,9 +161,9 @@ internal class HookFireService(
     ) {
         val msg = e.message ?: "Hook fire failed"
         val attempts = hook.fireAttempts + 1
-        if (!isTransient(e) || attempts >= ContinuationFireService.MAX_FIRE_ATTEMPTS) {
+        if (!ContinuationFireService.isTransientFireFailure(e) || attempts >= ContinuationFireService.MAX_FIRE_ATTEMPTS) {
             val reason =
-                if (isTransient(e)) {
+                if (ContinuationFireService.isTransientFireFailure(e)) {
                     "$msg (gave up after $attempts attempts)"
                 } else {
                     msg
@@ -173,12 +171,7 @@ internal class HookFireService(
             settle(hook, reason, now)
             return
         }
-        val delaySec =
-            min(
-                ContinuationFireService.RETRY_MAX_DELAY_SEC,
-                ContinuationFireService.RETRY_BASE_DELAY_SEC shl
-                    (attempts - 1).coerceAtMost(ContinuationFireService.BACKOFF_SHIFT_CAP),
-            )
+        val delaySec = ContinuationFireService.retryDelaySec(attempts)
         repository.releaseForRetry(hook.id, msg, attempts, now + delaySec)
         logger.info(
             "Hook {} fire deferred (attempt {}/{}, retry in {}s): {}",
@@ -200,17 +193,46 @@ internal class HookFireService(
         logger.warn("Hook {} failed: {}", hook.id, reason)
     }
 
-    /** True for start-time rejections that reflect momentary server/agent state, not this hook. */
-    private fun isTransient(e: HomerException): Boolean =
-        e is CooldownActiveException ||
-            e is CostCapExceededException ||
-            e is ProcessManagerAtCapacityException ||
-            e is MaxQueuedRunsExceededException ||
-            e is MaxLockWaitersExceededException ||
-            // A fire refused because the drain started is released for the next boot's sweep
-            // rather than settled FAILED: the status transition already happened and its hook
-            // must not be lost. See ADR-0102.
-            e is ServerDrainingException
+    /**
+     * How deep the run this fire starts will be: one more than the [EnvConstants.HOOK_DEPTH]
+     * the triggering run's row stores. Fails closed — drops [hook] and returns null — when
+     * the bound cannot be read off that row: the run is unreadable (purged, evicted, a read
+     * error), or its stored depth is present but not a number. The stored depth is what
+     * carries the chain bound across a restart, so a fire that cannot read it must not
+     * restart the chain at depth 1: a chain whose middle run was purged would spawn without
+     * limit. Neither state heals on a retry, so the hook is dropped, not deferred. Only a
+     * readable run with no depth key counts as depth 0. See ADR-0107, §12 (CWE-400, CWE-755).
+     */
+    private suspend fun nextDepthOrDrop(
+        hook: PendingHook,
+        run: ProcessInfo?,
+        now: Long,
+    ): Int? {
+        if (run == null) {
+            return dropOverUnreadableDepth(
+                hook,
+                "the triggering run is no longer readable, so its hook-chain depth cannot be checked",
+                now,
+            )
+        }
+        val stored = run.inputParams[EnvConstants.HOOK_DEPTH] ?: return 1
+        val current = stored.toIntOrNull()
+        if (current == null) {
+            return dropOverUnreadableDepth(hook, "the triggering run's stored hook-chain depth is not a number", now)
+        }
+        return current + 1
+    }
+
+    /** Marks [hook] dropped because its chain depth cannot be checked, logs it, and returns null. */
+    private suspend fun dropOverUnreadableDepth(
+        hook: PendingHook,
+        reason: String,
+        now: Long,
+    ): Int? {
+        repository.markDropped(hook.id, reason, now)
+        logger.warn("Hook {} dropped: {}", hook.id, reason)
+        return null
+    }
 
     /**
      * The `HMR_HOOK_*` metadata of the run [hook] was recorded from. Only Homer-recorded
@@ -234,9 +256,6 @@ internal class HookFireService(
         }
 }
 
-/** [EnvConstants.HOOK_DEPTH] of [inputParams]: how many hook hops the run carrying them already is. */
-internal fun hookDepthOf(inputParams: Map<String, String>): Int = inputParams[EnvConstants.HOOK_DEPTH]?.toIntOrNull() ?: 0
-
 /**
  * The run's subject tags joined for [EnvConstants.HOOK_TAGS], or null when there is nothing to
  * send. Control characters are dropped and the whole value is capped at [MAX_HOOK_TAGS_CHARS]
@@ -250,9 +269,12 @@ internal fun hookTagsParam(tags: List<String>): String? {
     for (tag in tags) {
         val clean = tag.filterNot { it.isISOControl() }
         if (clean.isEmpty()) continue
-        if (length + clean.length + 1 > MAX_HOOK_TAGS_CHARS) break
+        // The separator is charged from the second tag on: the first tag may use the whole
+        // cap, since a lone tag joins to a value with no separator in it.
+        val sep = if (kept.isEmpty()) 0 else 1
+        if (length + sep + clean.length > MAX_HOOK_TAGS_CHARS) break
         kept += clean
-        length += clean.length + 1
+        length += sep + clean.length
     }
     return kept.takeIf { it.isNotEmpty() }?.joinToString(",")
 }

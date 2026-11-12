@@ -21,9 +21,14 @@ import homer.app.services.persistence.ProcessRepository
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.koin.core.Koin
+import org.koin.core.qualifier.named
 import org.koin.dsl.koinApplication
 import org.koin.dsl.module
 import org.slf4j.LoggerFactory
@@ -48,7 +53,7 @@ class ProcessWiringTest {
         )
 
     /** The two modules under test over the mocks the boot's own graph supplies from the app module. */
-    private fun koin(): Koin {
+    private fun koin(hookFireScope: CoroutineScope): Koin {
         val db = PersistenceTestSupport.tempDatabase()
         val registry = ProcessJobRegistry()
         val runStarter = mockk<AgentRunStarter>()
@@ -77,6 +82,7 @@ class ProcessWiringTest {
                     single<TextCompiler> { DefaultTextCompiler() }
                     single { db }
                     single { registry }
+                    single<CoroutineScope>(named("applicationScope")) { hookFireScope }
                     single { ProcessRepository(db, registry) }
                     single { ProcessEventBroadcaster() }
                     single { mockk<QuestionsService>(relaxed = true) }
@@ -99,11 +105,17 @@ class ProcessWiringTest {
     @Test
     fun `a status write through the wired graph fires the hook its declaring agent declared`() =
         runTest {
-            val manager = koin().get<ProcessManager>()
+            // The wiring launches the fire on the application scope, so the test owns that scope
+            // and joins what the status write launched before asserting.
+            val hookFireScope = CoroutineScope(Job())
+            val manager = koin(hookFireScope).get<ProcessManager>()
 
             val id = manager.obtainProcessId("declarer", owner = "alice")
             manager.setProcessStatus(id, ProcessStatus.WORKING)
             manager.compareAndSetStatus(id, setOf(ProcessStatus.WORKING), ProcessStatus.FINISHED)
+            hookFireScope.coroutineContext.job.children
+                .toList()
+                .joinAll()
 
             assertEquals(listOf("notifier"), started)
         }

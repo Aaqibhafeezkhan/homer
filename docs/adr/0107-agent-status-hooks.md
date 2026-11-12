@@ -132,8 +132,12 @@ transaction), **A** (`AgentRunStarter`), **A** (the depth read back from the tri
   hooks twice for one run. The lookup reads no database, so it is
   safe inside the write lock, and resolving it per transition is what makes an agent reload
   take effect for runs already in flight.
-- **Delivery.** After the commit, the ids go to `HookService.onRowsRecorded`, which loads each
-  row and hands it to `HookFireService`. Every call into that service is isolated per row: a
+- **Delivery.** After the commit, the recorded ids are handed to
+  `HookService.onRowsRecorded` **on the application scope, not on the committing caller's
+  coroutine** — one fire runs row reads, a grant check and a complete nested start, and a
+  start or kill response must not wait on the chain its run fans out to. The service loads
+  each row and hands it to `HookFireService`. Every call into that service is isolated per
+  row: a
   failure anywhere in a fire — the claim, the settle, the start — is caught and logged, never
   propagated into the status write that triggered it or into the rows behind it in the sweep,
   and the row it left unsettled is picked up by the retry sweep or the next boot (ADR-0023). A

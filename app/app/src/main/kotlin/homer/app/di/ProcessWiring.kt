@@ -5,7 +5,10 @@ import homer.app.models.AppConfig
 import homer.app.services.HookService
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import org.koin.core.parameter.parametersOf
+import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import kotlin.io.path.Path
 
@@ -31,7 +34,18 @@ internal val processModule =
                 // ProcessManager → HookService → AgentRunStarter → ProcessExecutor →
                 // ProcessManager. See ADR-0107.
                 hookRecording = { get<HookService>().recording() },
-                onHooksRecorded = { recorded -> get<HookService>().onRowsRecorded(recorded) },
+                // Launched on the application scope, never awaited on the committing caller's
+                // coroutine: one fire runs row reads, a grant check and a complete nested
+                // start, and a start or kill response must not wait on the chain its run fans
+                // out to — under the maintenance gate a CREATED hook's start would park the
+                // response for the whole queue wait, then settle FAILED. The rows are durable
+                // and claim-gated, so a fire this launch never reaches (a shutdown) is
+                // replayed at boot. See ADR-0107.
+                onHooksRecorded = { recorded ->
+                    get<CoroutineScope>(named("applicationScope")).launch {
+                        get<HookService>().onRowsRecorded(recorded)
+                    }
+                },
             )
         }
     }

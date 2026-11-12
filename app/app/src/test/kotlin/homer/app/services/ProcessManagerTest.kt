@@ -1529,8 +1529,21 @@ class ProcessManagerTest {
             val id = manager.obtainProcessId("declarer", owner = "alice")
 
             // The CREATED write recorded exactly one row, and its id is what the callback got.
-            assertEquals(1, handed.single().ids.size)
-            assertTrue(handed.single().ids.single() > 0)
+            assertEquals(
+                1,
+                handed
+                    .single()
+                    .rows
+                    .map { it.id }
+                    .size,
+            )
+            assertTrue(
+                handed
+                    .single()
+                    .rows
+                    .map { it.id }
+                    .single() > 0,
+            )
             assertEquals(ProcessStatus.CREATED, manager.getProcessStatus(id))
         }
 
@@ -1549,7 +1562,7 @@ class ProcessManagerTest {
             manager.setProcessStatus(id, ProcessStatus.FINISHED)
 
             // One hand-over per transition, in order; only the FINISHED write recorded a row.
-            assertEquals(listOf(0, 0, 1), handed.map { it.ids.size })
+            assertEquals(listOf(0, 0, 1), handed.map { it.rows.map { it.id }.size })
         }
 
     @Test
@@ -1577,7 +1590,7 @@ class ProcessManagerTest {
                 listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
                 handed.single().shed,
             )
-            assertEquals(emptyList(), handed.single().ids)
+            assertEquals(emptyList(), handed.single().rows.map { it.id })
         }
 
     @Test
@@ -1594,7 +1607,14 @@ class ProcessManagerTest {
 
             manager.killProcess(id, "operator kill")
 
-            assertEquals(1, handed.last().ids.size)
+            assertEquals(
+                1,
+                handed
+                    .last()
+                    .rows
+                    .map { it.id }
+                    .size,
+            )
         }
 
     @Test

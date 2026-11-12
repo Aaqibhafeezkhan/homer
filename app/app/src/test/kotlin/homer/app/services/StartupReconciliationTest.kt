@@ -269,7 +269,7 @@ class StartupReconciliationTest {
             val hookService = TestFixtures.mockHookService()
             val processRepository = mockk<ProcessRepository>(relaxed = true)
             coEvery { processRepository.markInterruptedAsUnknown(any(), any()) } returns
-                InterruptedResult(listOf(7), RecordedHooks(listOf(11, 12)))
+                InterruptedResult(listOf(7), RecordedHooks(rows = listOf(hookRow(11), hookRow(12))))
             StartupReconciliation(
                 processRepository,
                 mockk(relaxed = true),
@@ -283,10 +283,28 @@ class StartupReconciliationTest {
 
             coVerifyOrder {
                 hookService.failOrphanedDispatching()
-                hookService.onRowsRecorded(RecordedHooks(listOf(11, 12)))
+                hookService.onRowsRecorded(RecordedHooks(rows = listOf(hookRow(11), hookRow(12))))
                 hookService.refirePending()
             }
         }
+
+    /** A PENDING row as the insert hands it back, at [id] — what `onRowsRecorded` fires. */
+    private fun hookRow(id: Int) =
+        PendingHook(
+            id = id,
+            processId = 7,
+            declaringAgent = "declarer",
+            triggeringStatus = ProcessStatus.FINISHED,
+            targetAgentName = "notifier",
+            owner = null,
+            status = HookStatus.PENDING,
+            fireAttempts = 0,
+            nextAttemptAt = null,
+            firedProcessId = null,
+            firedAt = null,
+            error = null,
+            createdAt = 1,
+        )
 
     @Test
     fun `a run interrupted by the restart fires its UNKNOWN hook once, and a second boot fires nothing`() =

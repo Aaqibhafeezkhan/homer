@@ -389,7 +389,7 @@ class ProcessRepository(
             // UNKNOWN hook rows ride that write: no other transition will ever fire for
             // these runs. See ADR-0107.
             val recorded = rows.map { (id, agent, owner) -> hookRecording.record(id, agent, ProcessStatus.UNKNOWN, owner, nowSec) }
-            InterruptedResult(rows.map { it.first }, RecordedHooks(recorded.flatMap { it.ids }, recorded.flatMap { it.shed }))
+            InterruptedResult(rows.map { it.first }, RecordedHooks(recorded.flatMap { it.rows }, recorded.flatMap { it.shed }))
         }
 
     /**

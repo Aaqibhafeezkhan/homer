@@ -47,7 +47,7 @@ class HookRepositoryTest {
     private suspend fun record(
         vararg hooks: NewPendingHook,
         maxPending: Int = 100,
-    ): List<Int> = recordResult(*hooks, maxPending = maxPending).ids
+    ): List<Int> = recordResult(*hooks, maxPending = maxPending).rows.map { it.id }
 
     /** The whole outcome of that write: the ids it wrote and the entries the cap shed. */
     private suspend fun recordResult(
@@ -98,7 +98,7 @@ class HookRepositoryTest {
             // caller logs after the commit. §12 rule 4.
             val recorded = recordResult(hook(target = "a"), hook(target = "b"), hook(target = "c"), maxPending = 2)
 
-            assertEquals(2, recorded.ids.size)
+            assertEquals(2, recorded.rows.map { it.id }.size)
             assertEquals(listOf("a", "b"), repo.list(HookStatus.PENDING).map { it.targetAgentName })
             assertEquals(
                 listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.FINISHED)),
@@ -119,7 +119,7 @@ class HookRepositoryTest {
 
             val blocked = recordResult(hook(target = "c"), maxPending = 2)
 
-            assertEquals(emptyList(), blocked.ids)
+            assertEquals(emptyList(), blocked.rows.map { it.id })
             assertEquals(1, blocked.shed.single().count)
             assertEquals(2, repo.list(HookStatus.PENDING).size)
         }

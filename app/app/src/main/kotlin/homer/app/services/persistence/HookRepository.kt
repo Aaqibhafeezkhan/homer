@@ -40,11 +40,13 @@ data class ShedHooks(
 )
 
 /**
- * What one status write recorded: the hook row [ids] to fire once it commits, and the entries
+ * What one status write recorded: the hook [rows] to fire once it commits, and the entries
  * the PENDING cap [shed] instead of queueing. Both empty for a write that matched no entry.
+ * The rows come out of the insert that wrote them, so the delivery path never re-reads what
+ * it just wrote (SQLite rule 4).
  */
 data class RecordedHooks(
-    val ids: List<Int> = emptyList(),
+    val rows: List<PendingHook> = emptyList(),
     val shed: List<ShedHooks> = emptyList(),
 )
 
@@ -112,7 +114,10 @@ internal fun insertPendingHooksTx(
             .toInt()
     val room = (maxPending - pending).coerceAtLeast(0)
     val accepted = hooks.take(room)
-    val ids =
+    // The rows come back as they were written — the fire after the commit reads these, not a
+    // second SELECT per row (SQLite rule 4). batchInsert returns one generated id per row, in
+    // submission order.
+    val rows =
         if (accepted.isEmpty()) {
             emptyList()
         } else {
@@ -125,7 +130,24 @@ internal fun insertPendingHooksTx(
                     this[PendingHooks.owner] = hook.owner
                     this[PendingHooks.createdAt] = hook.createdAt
                     this[PendingHooks.triggeringStatus] = hook.triggeringStatus.name
-                }.map { it[PendingHooks.id] }
+                }.mapIndexed { i, generated ->
+                    val hook = accepted[i]
+                    PendingHook(
+                        id = generated[PendingHooks.id],
+                        processId = hook.processId,
+                        declaringAgent = hook.declaringAgent,
+                        triggeringStatus = hook.triggeringStatus,
+                        targetAgentName = hook.targetAgentName,
+                        owner = hook.owner,
+                        status = HookStatus.PENDING,
+                        fireAttempts = 0,
+                        nextAttemptAt = null,
+                        firedProcessId = null,
+                        firedAt = null,
+                        error = null,
+                        createdAt = hook.createdAt,
+                    )
+                }
         }
     // One shed entry per declaring agent and status, so the log line can name both. A caller
     // passes one transition's entries, but grouping keeps the report right whatever it passes.
@@ -133,8 +155,8 @@ internal fun insertPendingHooksTx(
         hooks
             .drop(accepted.size)
             .groupBy { it.declaringAgent to it.triggeringStatus }
-            .map { (declaring, rows) -> ShedHooks(rows.size, declaring.first, declaring.second) }
-    return RecordedHooks(ids = ids, shed = shed)
+            .map { (declaring, group) -> ShedHooks(group.size, declaring.first, declaring.second) }
+    return RecordedHooks(rows = rows, shed = shed)
 }
 
 /**

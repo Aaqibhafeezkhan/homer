@@ -25,16 +25,19 @@ data class AgentHook(
     val agent: String,
 ) {
     init {
-        // The charset `AgentDirs` enforces on an agent name, restated here because `models`
-        // cannot depend on `infra`: a hook target that can never name a loaded agent is a
-        // definition error, caught at decode rather than at the cross-agent pass.
-        require(HOOK_TARGET_PATTERN.matches(agent)) {
+        require(AGENT_NAME_PATTERN.matches(agent)) {
             "hook target '$agent' is not a valid agent name: only letters, digits, '-', '_' allowed"
         }
     }
 }
 
-private val HOOK_TARGET_PATTERN = Regex("^[a-zA-Z0-9_-]+$")
+/**
+ * The agent-name charset (AGENT.md § Agent Fields, `name` row), defined here in the kernel and
+ * aliased by `AgentDirs`: a hook target and an agent directory are the same contract, so they
+ * read one pattern — a widening that reaches one reaches both. The JSON schema's `pattern` is
+ * the only other copy, as a contract surface.
+ */
+internal val AGENT_NAME_PATTERN = Regex("^[a-zA-Z0-9_-]+$")
 
 /**
  * Reads and writes the one-key `{STATUS: agentName}` wire form of an [AgentHook].

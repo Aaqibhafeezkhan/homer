@@ -1,0 +1,7 @@
+name: hook-declarer
+description: Declares a FINISHED hook at hook-echo; its own run just ends FINISHED
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo declarer-done'"
+hooks:
+  - FINISHED: hook-echo

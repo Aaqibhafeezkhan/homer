@@ -4,6 +4,11 @@ import homer.app.fixtures.AgentFixtures
 import homer.app.models.Agent
 import homer.app.models.AgentHook
 import homer.app.models.ProcessStatus
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.element
+import io.kotest.property.arbitrary.list
+import io.kotest.property.checkAll
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -133,5 +138,60 @@ class AgentHookValidationTest {
             listOf("hook target 'ghost' is not a loaded agent", "hook target 'phantom' is not a loaded agent"),
             rejected["declarer"],
         )
+    }
+
+    @Test
+    fun `any hook graph converges to survivors that are cycle-free and fully loaded`() =
+        runTest {
+            // The examples pin who is rejected; the property pins the post-conditions on every
+            // graph: survivors declare only survivors, none reaches itself, every removal has a
+            // reason, and a second pass finds nothing left to remove.
+            checkAll(
+                Arb.list(Arb.element(POOL_NAMES), 1..5),
+                Arb.list(Arb.list(Arb.element(POOL_NAMES + "ghost"), 0..3), POOL_NAMES.size..POOL_NAMES.size),
+                Arb.list(Arb.list(Arb.element(ProcessStatus.entries), 0..3), POOL_NAMES.size..POOL_NAMES.size),
+            ) { chosen, targetsPerName, statusesPerName ->
+                // `Agent` rejects a hook naming its declarer (Agent.kt), so a self-target is
+                // filtered out of the slot; `apply` never sees one from a load either.
+                val agents =
+                    chosen.distinct().map { name ->
+                        val slot = POOL_NAMES.indexOf(name)
+                        agent(
+                            name,
+                            targetsPerName[slot]
+                                .zip(statusesPerName[slot]) { target, status -> AgentHook(status, target) }
+                                .filter { it.agent != name },
+                        )
+                    }
+                val catalog = agents.associateBy { it.name }.toMutableMap()
+                val rejected = AgentHookValidation.apply(catalog)
+
+                assertTrue(rejected.keys.intersect(catalog.keys).isEmpty(), "kept and rejected overlap: $rejected")
+                assertTrue(rejected.values.all { it.isNotEmpty() }, "a rejection without a reason: $rejected")
+                for ((name, keptAgent) in catalog) {
+                    assertTrue(keptAgent.hooks.all { it.agent in catalog }, "$name targets an agent that is gone")
+                    assertTrue(!reaches(catalog, name), "$name reaches itself")
+                }
+                assertEquals(emptyMap(), AgentHookValidation.apply(catalog.toMutableMap()))
+            }
+        }
+
+    /** Whether [name] reaches itself through the kept graph's hooks. */
+    private fun reaches(
+        kept: Map<String, Agent>,
+        name: String,
+    ): Boolean {
+        val seen = mutableSetOf(name)
+        val queue = ArrayDeque(kept.getValue(name).hooks.map { it.agent })
+        while (queue.isNotEmpty()) {
+            val next = queue.removeFirst()
+            if (next == name) return true
+            if (seen.add(next)) kept[next]?.hooks?.forEach { queue.add(it.agent) }
+        }
+        return false
+    }
+
+    private companion object {
+        val POOL_NAMES = listOf("a", "b", "c", "d", "e", "f")
     }
 }

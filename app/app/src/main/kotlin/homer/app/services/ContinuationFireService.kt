@@ -319,13 +319,13 @@ internal class ContinuationFireService(
     ) {
         val msg = e.message ?: fallbackMessage
         val attempts = continuation.fireAttempts + 1
-        if (!isTransient(e) || attempts >= MAX_FIRE_ATTEMPTS) {
-            val reason = if (isTransient(e)) "$msg (gave up after $attempts attempts)" else msg
+        if (!isTransientFireFailure(e) || attempts >= MAX_FIRE_ATTEMPTS) {
+            val reason = if (isTransientFireFailure(e)) "$msg (gave up after $attempts attempts)" else msg
             repository.markFailed(continuation.id, reason, now)
             logger.warn("Continuation {} failed to fire: {}", continuation.id, reason)
             return
         }
-        val delaySec = min(RETRY_MAX_DELAY_SEC, RETRY_BASE_DELAY_SEC shl (attempts - 1).coerceAtMost(BACKOFF_SHIFT_CAP))
+        val delaySec = retryDelaySec(attempts)
         repository.releaseForRetry(continuation.id, msg, attempts, now + delaySec)
         logger.info(
             "Continuation {} fire deferred (attempt {}/{}, retry in {}s): {}",
@@ -336,17 +336,6 @@ internal class ContinuationFireService(
             msg,
         )
     }
-
-    /** True for start-time rejections that reflect momentary server/agent state, not this continuation. */
-    private fun isTransient(e: HomerException): Boolean =
-        e is CooldownActiveException ||
-            e is CostCapExceededException ||
-            e is ProcessManagerAtCapacityException ||
-            e is MaxQueuedRunsExceededException ||
-            e is MaxLockWaitersExceededException ||
-            // A fire refused because the drain started is released for the next boot's sweep
-            // rather than settled FAILED: the origin ended and its resume must not be lost.
-            e is ServerDrainingException
 
     internal companion object {
         // Inline results over this size resume by reference (result = null) rather than
@@ -361,5 +350,27 @@ internal class ContinuationFireService(
         const val RETRY_BASE_DELAY_SEC = 60L
         const val RETRY_MAX_DELAY_SEC = 3600L
         const val BACKOFF_SHIFT_CAP = 30
+
+        /**
+         * The one retryability policy a fire failure is judged by — shared by
+         * [ContinuationFireService] and [HookFireService], so a transient exception or a
+         * back-off change cannot land in one and not the other: hooks and continuations
+         * would silently disagree on what is retried. True for start-time rejections that
+         * reflect momentary server/agent state, not this fire.
+         */
+        internal fun isTransientFireFailure(e: HomerException): Boolean =
+            e is CooldownActiveException ||
+                e is CostCapExceededException ||
+                e is ProcessManagerAtCapacityException ||
+                e is MaxQueuedRunsExceededException ||
+                e is MaxLockWaitersExceededException ||
+                // A fire refused because the drain started is released for the next boot's
+                // sweep rather than settled FAILED: the trigger already happened and its fire
+                // must not be lost. See ADR-0102.
+                e is ServerDrainingException
+
+        /** The doubling back-off delay before a transient fire failure's attempt number [attempts] (1-based). */
+        internal fun retryDelaySec(attempts: Int): Long =
+            min(RETRY_MAX_DELAY_SEC, RETRY_BASE_DELAY_SEC shl (attempts - 1).coerceAtMost(BACKOFF_SHIFT_CAP))
     }
 }

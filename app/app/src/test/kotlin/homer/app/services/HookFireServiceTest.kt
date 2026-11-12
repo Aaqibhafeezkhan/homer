@@ -10,14 +10,20 @@ import homer.app.models.Agent
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.services.persistence.HookRepository
+import io.kotest.property.Arb
+import io.kotest.property.arbitrary.element
+import io.kotest.property.arbitrary.list
+import io.kotest.property.checkAll
 import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.slf4j.LoggerFactory
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -233,28 +239,98 @@ class HookFireServiceTest {
         }
 
     @Test
-    fun `a run that is no longer readable fires at depth one, with no failure reason and no tags`() =
+    fun `a triggering run that is its own flow root passes its own id as the root`() =
         runTest {
-            // The row is durable and can outlive the run it was recorded from (eviction, record
-            // purge): what is gone takes the depth and the metadata with it, and the hook still
-            // fires. See ADR-0107.
-            val resolve = startSucceeds(run = null)
+            // The root comes from the row already read: a run with no root of its own IS the
+            // flow root, so its id — the owner's own run — is the child's root, unguarded by
+            // the visibility check the derived-root case runs. ADR-0058.
+            startSucceeds(run(rootProcessId = null))
 
             fires.fire(hook())
 
-            assertEquals("1", resolve.captured.invoke()[EnvConstants.HOOK_DEPTH])
-            assertNull(resolve.captured.invoke()[EnvConstants.HOOK_FAILURE_REASON])
-            assertNull(resolve.captured.invoke()[EnvConstants.HOOK_TAGS])
+            coVerify {
+                runStarter.start(
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    eq(42),
+                    any(),
+                    any(),
+                )
+            }
         }
 
     @Test
-    fun `a run whose stored depth is unreadable fires at depth one`() =
+    fun `a run that is no longer readable is dropped instead of fired`() =
         runTest {
-            val resolve = startSucceeds(run(inputParams = mapOf(EnvConstants.HOOK_DEPTH to "not-a-number")))
+            // The row is durable and can outlive the run it was recorded from (eviction, record
+            // purge). The stored HMR_HOOK_DEPTH is what carries the chain bound across a
+            // restart, so a fire that cannot read it fails closed instead of restarting the
+            // chain at depth 1. §12, ADR-0107.
+            startSucceeds(run = null)
 
             fires.fire(hook())
 
-            assertEquals("1", resolve.captured.invoke()[EnvConstants.HOOK_DEPTH])
+            noStart()
+            coVerify {
+                repo.markDropped(
+                    5,
+                    "the triggering run is no longer readable, so its hook-chain depth cannot be checked",
+                    1000L,
+                )
+            }
+        }
+
+    @Test
+    fun `a run whose stored depth is unreadable is dropped instead of fired`() =
+        runTest {
+            startSucceeds(run(inputParams = mapOf(EnvConstants.HOOK_DEPTH to "not-a-number")))
+
+            fires.fire(hook())
+
+            noStart()
+            coVerify {
+                repo.markDropped(5, "the triggering run's stored hook-chain depth is not a number", 1000L)
+            }
+        }
+
+    @Test
+    fun `a cancelling row lookup propagates instead of settling the hook`() =
+        runTest {
+            // A cancellation is a shutdown in flight, not this hook's failure: settling it
+            // FAILED would record a delivery the boot replay never replays. The rethrow is what
+            // ADR-0102's drain rule relies on.
+            every { agents.agents } returns mapOf("notifier" to target)
+            coEvery { repo.claim(any()) } returns true
+            coEvery { processManager.getProcessInfo(42) } throws CancellationException("shutting down")
+
+            assertThrows<CancellationException> { fires.fire(hook()) }
+
+            coVerify(exactly = 0) { repo.markFailed(any(), any(), any()) }
+            coVerify(exactly = 0) { repo.markDropped(any(), any(), any()) }
+            coVerify(exactly = 0) { repo.markDispatched(any(), any(), any()) }
+        }
+
+    @Test
+    fun `a cancelling start propagates instead of settling the hook`() =
+        runTest {
+            // The row stays DISPATCHING for the boot's failOrphanedDispatching, never settled
+            // by a cancelled fire.
+            startSucceeds()
+            coEvery {
+                runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            } throws CancellationException("shutting down")
+
+            assertThrows<CancellationException> { fires.fire(hook()) }
+
+            coVerify(exactly = 0) { repo.markFailed(any(), any(), any()) }
+            coVerify(exactly = 0) { repo.releaseForRetry(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { repo.markDispatched(any(), any(), any()) }
         }
 
     @Test
@@ -439,8 +515,51 @@ class HookFireServiceTest {
         assertTrue(value!!.length <= MAX_HOOK_TAGS_CHARS, value.length.toString())
     }
 
+    @Test
+    fun `hookTagsParam lets a lone tag use the full tag budget`() {
+        // The separator is charged from the second tag on: a single tag of exactly the cap
+        // length joins to a value that fits the documented cap exactly.
+        val exact = "a".repeat(MAX_HOOK_TAGS_CHARS)
+        assertEquals(exact, hookTagsParam(listOf(exact)))
+        // A second tag after it no longer fits, so it is left out whole.
+        assertEquals(exact, hookTagsParam(listOf(exact, "b")))
+    }
+
+    @Test
+    fun `hookTagsParam keeps every value it emits under the cap with no tag cut in half`() =
+        runTest {
+            // Tags are subject metadata an agent can influence, so the examples cannot stand
+            // alone: the cap and the no-cut rule hold for any list. §6, §12 rule 4.
+            checkAll(Arb.list(Arb.list(Arb.element(TAG_CHARS), 0..12), 0..8)) { rawTags ->
+                val tags = rawTags.map { it.joinToString("") }
+                val cleaned = tags.map { it.filterNot { ch -> ch.isISOControl() } }.filter { it.isNotEmpty() }
+                val value = hookTagsParam(tags)
+
+                if (value != null) {
+                    assertTrue(value.length <= MAX_HOOK_TAGS_CHARS, "length ${value.length} of '$value'")
+                    // A kept set is a prefix of the cleaned tags, comma-joined: nothing after
+                    // the first tag that does not fit survives, and no tag is cut in half.
+                    assertEquals(cleaned.joinToString(",").take(value.length), value)
+                }
+            }
+        }
+
+    @Test
+    fun `a lone tag joins to itself exactly when it fits the cap`() =
+        runTest {
+            // One tag pays no separator, so its cleaned form is the value whole, or null.
+            checkAll(Arb.list(Arb.element(TAG_CHARS), 0..MAX_HOOK_TAGS_CHARS + 4)) { chars ->
+                val tag = chars.joinToString("")
+                assertEquals(
+                    tag.filterNot { it.isISOControl() }.takeIf { it.isNotEmpty() && it.length <= MAX_HOOK_TAGS_CHARS },
+                    hookTagsParam(listOf(tag)),
+                )
+            }
+        }
+
     private companion object {
         const val MAX_CHAIN_DEPTH = 8
         const val ROOT_ID = 7
+        val TAG_CHARS = listOf('a', 'B', '9', '-', '_', ':', ',', ' ', '\t', '\n', '\u0007', '\u0000')
     }
 }
