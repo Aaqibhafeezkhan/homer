@@ -227,15 +227,29 @@ class ExternalRunnerSessionTest {
     fun `passing the output cap cancels the cmd and fails with OutputCapExceededException`() =
         runTest {
             val s = openSession()
-            val result = async { runCatching { s.shell.cmd(listOf("yes"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds) } }
+            val out = tmp.resolve("o")
+            val err = tmp.resolve("e")
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("yes"), out, err, timeout = 30.seconds, stdOutFilter = OutputLineFilter { true })
+                    }
+                }
             runCurrent()
             val op = s.mailbox.next(1.seconds)!!
-            s.sink(op.opId)!!.append("stdout", 0, ByteArray(65))
+            val sink = assertNotNull(s.sink(op.opId))
+            // A line still missing its newline sits in the filter's buffer: only closing the
+            // sink flushes it, so the file says whether the failed cmd released its streams.
+            sink.append("stdout", 0, "partial".toByteArray())
+            sink.append("stdout", 1, ByteArray(65))
             runCurrent()
 
             assertTrue(result.await().exceptionOrNull() is OutputCapExceededException)
             val cancel = s.mailbox.next(1.seconds)
             assertTrue(cancel is RunnerOp.Cancel && cancel.opId == op.opId, "$cancel")
+            assertTrue(err.readText().contains("[HOMER] Output cap exceeded (64 bytes)"), err.readText())
+            assertNull(s.sink(op.opId), "the sink is released with the op")
+            assertEquals("partial", out.readText(), "the sink was closed, flushing its buffered tail")
         }
 
     @Test
@@ -261,19 +275,78 @@ class ExternalRunnerSessionTest {
     fun `a cap trip that races behind a clean result still fails with OutputCapExceededException`() =
         runTest {
             val s = openSession()
-            val result = async { runCatching { s.shell.cmd(listOf("yes"), tmp.resolve("o"), tmp.resolve("e"), timeout = 30.seconds) } }
+            val out = tmp.resolve("o")
+            val err = tmp.resolve("e")
+            val result =
+                async {
+                    runCatching {
+                        s.shell.cmd(listOf("yes"), out, err, timeout = 30.seconds, stdOutFilter = OutputLineFilter { true })
+                    }
+                }
             runCurrent()
             val op = s.mailbox.next(1.seconds)!!
+            val sink = assertNotNull(s.sink(op.opId))
             // Both the cap trip and a clean result are posted before the coroutine is
             // rescheduled, so `select` sees both clauses ready; registration order alone
             // (deferred before capTripped) must not let a truncated result look clean.
-            s.sink(op.opId)!!.append("stdout", 0, ByteArray(65))
+            sink.append("stdout", 0, "partial".toByteArray())
+            sink.append("stdout", 1, ByteArray(65))
             s.mailbox.complete(OpResult(op.opId, exitCode = 0))
             runCurrent()
 
             assertTrue(result.await().exceptionOrNull() is OutputCapExceededException)
             val cancel = s.mailbox.next(1.seconds)
             assertTrue(cancel is RunnerOp.Cancel && cancel.opId == op.opId, "$cancel")
+            assertTrue(err.readText().contains("[HOMER] Output cap exceeded (64 bytes)"), err.readText())
+            assertNull(s.sink(op.opId), "the sink is released with the op")
+            assertEquals("partial", out.readText(), "the sink was closed, flushing its buffered tail")
+        }
+
+    @Test
+    fun `a cap trip that lands before a timed-out result is still reported as the cap error`() =
+        runTest {
+            val s = openSession()
+            val err = tmp.resolve("e")
+            val result = async { runCatching { s.shell.cmd(listOf("yes"), tmp.resolve("o"), err, timeout = 30.seconds) } }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = assertNotNull(s.sink(op.opId))
+            // The result is posted first, so `select` takes the Done clause; the chunk that crosses
+            // the cap lands before the coroutine is rescheduled. The cap trip must be reported as
+            // the cap error, not as the timeout the racing result also reports.
+            s.mailbox.complete(OpResult(op.opId, exitCode = 137, timedOut = true))
+            sink.append("stdout", 0, ByteArray(65))
+            runCurrent()
+
+            assertTrue(result.await().exceptionOrNull() is OutputCapExceededException)
+            assertTrue(sink.capTripped.isCompleted, "the crossing chunk trips the cap")
+            assertTrue(err.readText().contains("[HOMER] Output cap exceeded (64 bytes)"), err.readText())
+        }
+
+    @Test
+    fun `a clean exit unregisters and closes the sink, flushing its buffered tail`() =
+        runTest {
+            val s = openSession()
+            val out = tmp.resolve("o")
+            val result =
+                async {
+                    s.shell.cmd(
+                        listOf("sh", "-c", "x"),
+                        out,
+                        tmp.resolve("e"),
+                        timeout = 30.seconds,
+                        stdOutFilter = OutputLineFilter { true },
+                    )
+                }
+            runCurrent()
+            val op = s.mailbox.next(1.seconds)!!
+            val sink = assertNotNull(s.sink(op.opId))
+            sink.append("stdout", 0, "tail".toByteArray())
+            s.mailbox.complete(OpResult(op.opId, exitCode = 0))
+
+            assertEquals(0, result.await().exitCode)
+            assertNull(s.sink(op.opId), "the sink is released with the op")
+            assertEquals("tail", out.readText(), "the sink was closed, flushing its buffered tail")
         }
 
     @Test

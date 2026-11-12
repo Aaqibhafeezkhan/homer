@@ -6,6 +6,7 @@ import homer.app.fixtures.TestFixtures
 import homer.app.models.RunnerAffinity
 import homer.app.models.RunnerConfig
 import homer.app.models.RunnerFilter
+import homer.app.models.RunnerTagValidation
 import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
 import homer.app.runners.queue.RunnerAffinityMemory
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -68,7 +70,11 @@ class ExternalRunnerDomainTest {
     fun `register rejects a tag outside allowedTags, a bad tag shape and an oversized concurrency`() {
         val d = domain(RunnerConfig.External(token = "t", allowedTags = listOf("linux"), maxConcurrencyPerInstance = 4))
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("gpu"))) }
-        assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("bad tag"))) }
+        val badShape = assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(tags = listOf("bad tag"))) }
+        assertTrue(
+            badShape.message!!.contains("runner tag 'bad tag' does not match ${RunnerTagValidation.PATTERN}"),
+            "a tag-shape rejection carries the validator's own message, not a stand-in: ${badShape.message}",
+        )
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 5)) }
         assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 0)) }
         assertTrue(queue.consumers().isEmpty(), "a rejected registration leaves no consumer")
@@ -193,6 +199,60 @@ class ExternalRunnerDomainTest {
             assertEquals(chatty, d.instance(chatty.id))
             assertEquals(listOf<Any>(chatty), queue.consumers())
         }
+
+    @Test
+    fun `sweepExpired keeps an instance exactly at the heartbeat deadline and drops one a millisecond past it`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val past = d.register(RegisterInstanceRequest(name = "past"))
+            now += 1
+            val onDeadline = d.register(RegisterInstanceRequest(name = "on-deadline"))
+            now += 60_000
+
+            // deadline = now - 60 s = onDeadline.lastSeenAt: the timeout is the silence an
+            // instance may accumulate, so missing it by exactly that much is still alive.
+            assertEquals(listOf(past), d.sweepExpired())
+            assertEquals(onDeadline, d.instance(onDeadline.id))
+            assertNull(d.instance(past.id))
+            assertEquals(listOf<Any>(onDeadline), queue.consumers())
+        }
+
+    @Test
+    fun `a closed session stays addressable for exactly the heartbeat timeout and is then forgotten`() =
+        runTest {
+            val d = domain(RunnerConfig.External(token = "t", heartbeatTimeoutSec = 60))
+            val session = d.openSession(d.register(RegisterInstanceRequest(name = "host-1")), params(1))
+            session.close()
+            val closedAt = assertNotNull(session.closedAt)
+
+            // The instance has the whole timeout to poll the Close op off the closed session.
+            now = closedAt + 60_000
+            d.touch(session.instance)
+            d.sweepExpired()
+            assertEquals(session, d.session(session.id), "closed exactly at the deadline, still collectable")
+
+            now += 1
+            d.touch(session.instance)
+            d.sweepExpired()
+            assertNull(d.session(session.id), "a millisecond past the deadline the closed session is forgotten")
+            assertNotNull(d.instance(session.instance.id), "the live instance itself is untouched")
+        }
+
+    @Test
+    fun `register accepts the concurrency bounds exactly and rejects one past each`() {
+        val d = domain(RunnerConfig.External(token = "t", maxConcurrencyPerInstance = 4))
+        assertEquals(1, d.register(RegisterInstanceRequest(concurrency = 1)).concurrency)
+        assertEquals(4, d.register(RegisterInstanceRequest(concurrency = 4)).concurrency)
+        assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 0)) }
+        assertThrows<RunnerRegistrationRejectedException> { d.register(RegisterInstanceRequest(concurrency = 5)) }
+    }
+
+    @Test
+    fun `register accepts a tag set exactly equal to allowedTags`() {
+        val d = domain(RunnerConfig.External(token = "t", allowedTags = listOf("linux", "gpu")))
+        val inst = d.register(RegisterInstanceRequest(tags = listOf("linux", "gpu")))
+        assertEquals(setOf("linux", "gpu"), inst.tags)
+    }
 
     @Test
     fun `couldServe follows allowedTags and instanceTagSets follows registrations`() {

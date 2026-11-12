@@ -12,8 +12,10 @@ import io.mockk.verify
 import io.opentelemetry.context.Context
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -274,6 +276,85 @@ class RunnerClaimQueueTest {
 
             val session = mockk<RunnerSession>(relaxed = true)
             assertFalse(taken.complete(session))
+        }
+
+    @Test
+    fun `a session the consumer opens after the first deadline still reaches the run`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 10)
+            val session = mockk<RunnerSession>(relaxed = true)
+            val run = async { queue.awaitClaim(params(1), RunnerFilter.Alias("local"), 30.seconds) }
+            runCurrent()
+            val taken = queue.take(Consumer("local"))
+
+            // The claim TTL bounds the wait for a claim, not the open: a consumer that took the
+            // request inside the first window may still be connecting when it expires.
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertTrue(taken.complete(session))
+
+            assertSame(session, run.await(), "the session opened late is the one the run receives")
+        }
+
+    @Test
+    fun `a session delivered as the second deadline expires is closed by the run that gave up`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 10)
+            val session = mockk<RunnerSession>(relaxed = true)
+            val run = async { runCatching { queue.awaitClaim(params(1), RunnerFilter.Alias("local"), 30.seconds) } }
+            runCurrent()
+            val taken = queue.take(Consumer("local"))
+
+            // The first deadline passes with the request already claimed, so the run waits a
+            // second TTL for the consumer to finish opening the session.
+            advanceTimeBy(30_000)
+            runCurrent()
+            // The session lands in the very instant that second TTL expires: the timeout resumes
+            // the run before it can read the value, so nobody else owns the session and the run
+            // that gave up must close it instead of leaving it open on a runner it walked away from.
+            launch {
+                delay(30_000)
+                taken.complete(session)
+            }
+            advanceUntilIdle()
+
+            val failure = run.await().exceptionOrNull()
+            assertIs<RunnerClaimTimeoutException>(failure)
+            assertTrue(failure.message!!.endsWith("claimed but no session was delivered"), failure.message)
+            verify { session.close() }
+        }
+
+    @Test
+    fun `settled requests free the bound, so cancelling a run admits the next one`() =
+        runTest {
+            val queue = RunnerClaimQueue(maxPending = 2)
+            val first = async { queue.awaitClaim(params(1), RunnerFilter.Alias("local"), 300.seconds) }
+            runCurrent()
+            val second = async { queue.awaitClaim(params(2), RunnerFilter.Alias("local"), 300.seconds) }
+            runCurrent()
+            assertThrows<ClaimQueueFullException> { queue.awaitClaim(params(3), RunnerFilter.Alias("local"), 300.seconds) }
+
+            // A settled request must not keep its slot in the deque: both runs stop waiting, and
+            // the same bound must admit two fresh runs — and offer them the fresh requests.
+            first.cancel()
+            second.cancel()
+            runCurrent()
+            val third = async { queue.awaitClaim(params(3), RunnerFilter.Alias("local"), 300.seconds) }
+            runCurrent()
+            val fourth = async { queue.awaitClaim(params(4), RunnerFilter.Alias("local"), 300.seconds) }
+            runCurrent()
+
+            assertEquals(2, queue.pendingCount())
+            queue.take(Consumer("local")).also {
+                assertEquals(3, it.params.processId)
+                assertTrue(it.complete(mockk(relaxed = true)))
+            }
+            third.await()
+            queue.take(Consumer("local")).also {
+                assertEquals(4, it.params.processId)
+                assertTrue(it.complete(mockk(relaxed = true)))
+            }
+            fourth.await()
         }
 
     @Test
@@ -791,6 +872,40 @@ class RunnerClaimQueueTest {
             assertTrue(taken.complete(mockk(relaxed = true)))
             run.await()
             assertEquals(0, queue.waiterCount())
+        }
+
+    @Test
+    fun `unregistering the preferred instance lifts only the waiters its own request held back`() =
+        runTest {
+            val memory = memory().also { it.record(1, "gpu", "dom:X") }
+            val queue = affinityQueue(memory)
+            val x = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:X").also { queue.registerConsumer(it) }
+            val y = Consumer("dom", tags = setOf("gpu"), affinityInstance = "dom:Y").also { queue.registerConsumer(it) }
+            val other = Consumer("other", affinityInstance = "dom:Z").also { queue.registerConsumer(it) }
+
+            val run =
+                async {
+                    queue.awaitClaim(params(1, rootProcessId = 1), gpuFilter(), 300.seconds, RunnerAffinity("gpu", 600))
+                }
+            runCurrent()
+            val takeY = async { queue.take(y) }
+            runCurrent()
+            // Parked on an empty queue for its own alias: it never matches the request above, so
+            // nothing about that request may release it.
+            val takeOther = async { queue.take(other) }
+            runCurrent()
+            assertEquals(2, queue.waiterCount())
+
+            queue.unregisterConsumer(x)
+            runCurrent()
+            assertTrue(takeY.isCompleted, "the waiter the departing instance's request held back is lifted")
+            assertTrue(takeOther.isActive, "a waiter for another filter stays parked")
+
+            val taken = takeY.await()
+            assertEquals(1, taken.params.processId)
+            assertTrue(taken.complete(mockk(relaxed = true)))
+            run.await()
+            takeOther.cancel()
         }
 
     @Test
