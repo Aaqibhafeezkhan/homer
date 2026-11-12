@@ -63,6 +63,7 @@ import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
+import kotlin.io.path.deleteIfExists
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
@@ -391,6 +392,80 @@ class LlmHarnessExecutorTest {
             coVerify(exactly = 1) {
                 telemetry.process(match { stream -> stream.malformed == 2L }, any(), any(), any(), any(), any())
             }
+        }
+
+    /** A harness whose inspection deletes the stdout file it just judged, so nothing can re-read it. */
+    private class TrashStdOutOnInspect(
+        terminalExit: Int? = null,
+        terminalStopConfigured: Boolean = false,
+        private val trash: () -> Unit,
+    ) : FakeHarness(terminalExit = terminalExit, terminalStopConfigured = terminalStopConfigured) {
+        override fun inspect(
+            events: List<LlmEvent>,
+            raw: List<JsonObject>,
+            command: Command.Claude,
+        ): Inspection {
+            val inspection = super.inspect(events, raw, command)
+            trash()
+            return inspection
+        }
+    }
+
+    // ========== the telemetry hand-off reuses the stream the inspection read ==========
+    // Every returned outcome carries the stream its inspection parsed, and the hand-off must
+    // give telemetry that stream as-is: a second parse of the stdout file (up to the lenient
+    // bounds again) is the regression the carries exist to prevent. The harness above deletes
+    // the file once it is judged, so a re-read can only fail — and must never set telemetry.error.
+
+    @Test
+    fun `an OtherFailure hands the stream the inspection read to telemetry, not a re-read of stdout`() =
+        runTest {
+            // Opted-in harness, a non-terminal verdict on a non-zero exit: the failure carries the
+            // stream the inspection read even though the file is gone by the time the hand-off runs.
+            stdOut.writeText("""{"t":"end","ok":false}""")
+            stubShellExit(1)
+
+            val result =
+                newExecutor(TrashStdOutOnInspect(terminalStopConfigured = true, trash = { stdOut.deleteIfExists() }))
+                    .execute(claude(), context, span)
+
+            assertEquals(1, result.exitCode)
+            coVerify(exactly = 1) {
+                telemetry.process(match { stream -> stream.events.any { it is LlmEvent.TurnEnd } }, any(), any(), any(), any(), any())
+            }
+            verify(exactly = 0) { span.setAttribute("telemetry.error", any<String>()) }
+        }
+
+    @Test
+    fun `a CappedStop hands the stream the inspection read to telemetry, not a re-read of stdout`() =
+        runTest {
+            stdOut.writeText("""{"t":"stop"}""")
+            stubShellExit(1)
+
+            val result =
+                newExecutor(
+                    TrashStdOutOnInspect(terminalExit = 9, terminalStopConfigured = true, trash = { stdOut.deleteIfExists() }),
+                ).execute(claude(), context, span)
+
+            assertEquals(9, result.exitCode)
+            coVerify(exactly = 1) {
+                telemetry.process(match { stream -> stream.events.any { it is LlmEvent.TurnEnd } }, any(), any(), any(), any(), any())
+            }
+            verify(exactly = 0) { span.setAttribute("telemetry.error", any<String>()) }
+        }
+
+    @Test
+    fun `a Success hands the stream the inspection read to telemetry, not a re-read of stdout`() =
+        runTest {
+            stubShellExit(0)
+
+            val result = newExecutor(TrashStdOutOnInspect(trash = { stdOut.deleteIfExists() })).execute(claude(), context, span)
+
+            assertEquals(0, result.exitCode)
+            coVerify(exactly = 1) {
+                telemetry.process(match { stream -> stream.events.any { it is LlmEvent.TurnEnd } }, any(), any(), any(), any(), any())
+            }
+            verify(exactly = 0) { span.setAttribute("telemetry.error", any<String>()) }
         }
 
     /** Stands in for an adapter's operator-misconfiguration abort (Claude's version pin). */

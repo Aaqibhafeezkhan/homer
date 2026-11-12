@@ -162,6 +162,34 @@ class LlmAttemptOutputTest {
     }
 
     @Test
+    fun `an unreadable stdout on the opted-in non-zero path stays the failure its exit code is`(
+        @TempDir dir: Path,
+    ) {
+        // Denial path (§12 rule 8): stdout that cannot be opened at all — deleted, or replaced
+        // with a directory — must not throw out of the failed attempt: the outcome is the exit's
+        // own failure, and no stream is carried (the telemetry hand-off does its own read).
+        val unreadable =
+            listOf(
+                dir.resolve("missing") to "a deleted stdout file",
+                dir.resolve("out-dir").also { it.toFile().mkdir() } to "a stdout path that is a directory",
+            )
+
+        for ((out, what) in unreadable) {
+            val result = TestFixtures.mockCommandResult(exitCode = 1, stdOut = out)
+
+            val failure =
+                assertIs<RetryOutcome.OtherFailure>(
+                    claudeOutput.nonZeroOutcome(cappedCommand, result, accounting, out, TestFixtures.mockSpan()),
+                    what,
+                )
+
+            assertEquals(1, failure.result.exitCode, what)
+            assertEquals(accounting, failure.result.llmAccounting, what)
+            assertNull(failure.stream, what)
+        }
+    }
+
+    @Test
     fun `a non-zero exit is not judged by the version pin a success carries`(
         @TempDir dir: Path,
     ) {
