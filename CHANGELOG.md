@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **BREAKING: LLM generation span attributes renamed to `langfuse.observation.*`** — A `!<claude>` / `!<codex>` / `!<opencode>` generation's `prompt` / `output` are now `langfuse.observation.input` / `langfuse.observation.output`, the pair Langfuse reads before any framework fallback, so its Output renders and a dashboard or filter on the old names must move.
 - **Added: `retries` and `infra_retries` on `homer_fanout`** — A LangGraph fan-out node re-dispatches a sub that failed, up to a bounded number of attempts and with a separate budget for infrastructure outcomes, instead of resuming with the same failed payload forever. See [ADR-0105](docs/adr/0105-langgraph-fanout-retries-are-client-side.md).
 - **Fixed: recovering a LangGraph thread whose node raised** — A thread whose latest checkpoint still holds a failed task is re-entered instead of being reported finished with an empty final state.
 - **Fixed: a lost Kubernetes exec channel names itself** — A step whose exec channel into a still-running pod closes without a status now fails with the cause in its error, the run's `runner.termination` names the loss, and the leftover command is killed before the step fails. See [ADR-0103](docs/adr/0103-a-lost-exec-channel-kills-and-fails-without-reattach.md).
