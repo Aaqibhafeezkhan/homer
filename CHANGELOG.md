@@ -20,6 +20,7 @@
 - **Added: `cooldown.key` on the agent definition** — Counts an agent's `minInterval` and `afterFailure` windows per rendered subject, so a reviewer paced per merge request is no longer held back by another request's run; a key that cannot be rendered fails the start with `400`. See [ADR-0106](docs/adr/0106-cooldown-key-scopes-windows-per-subject.md).
 - **Changed: a run waiting for a lock no longer holds a `maxParallelRuns` slot** — A run takes its lock before its slot, so one busy subject no longer starves the agent's other subjects; `SKIP_CURRENT` now refuses before any slot wait, `KILL_OLD_RUN_CURRENT` kills the old run only once the new one holds a slot, and runs waiting for a lock are bounded by `maxQueuedRuns`, else by `maxParallelRuns`. See [ADR-0104](docs/adr/0104-lock-before-slot-admission-order.md).
 - **BREAKING: a `lockStrategy.key` placeholder with no value fails the run before it starts** — It used to stay literal, so every run of that agent rendered the same key and unrelated runs were skipped, queued behind or killed by each other; the run now ends `FAILED` with a `failureReason` naming the placeholder, taking no lock, slot or workspace. See [ADR-0098](docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md).
+- **Fixed: a `!<claude>` step stopped at `maxTurns` honours `maxTurnsExitCode` when the CLI exits non-zero** — The stop is no longer taken for a crash, so the step returns the configured exit code and a later step can tell it from a failure.
 
 ## [1.41.0] - 2026-11-06
 

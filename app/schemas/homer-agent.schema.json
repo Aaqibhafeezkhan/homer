@@ -401,7 +401,7 @@
     "LlmRetry": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Retry policy for an LLM command (claude, codex or opencode). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException). Other exceptions propagate immediately.",
+      "description": "Retry policy for an LLM command (claude, codex or opencode). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException); a terminal cap stop the command opted into (Claude's maxTurnsExitCode) is never retried. Other exceptions propagate immediately.",
       "properties": {
         "attempts": {
           "type": "integer",

@@ -57,6 +57,11 @@ class OpencodeHarnessTest {
         assertFalse(harness.countsModelCalls)
     }
 
+    @Test
+    fun `opencode configures no terminal stop, so a non-zero exit stays the failure it is`() {
+        assertFalse(harness.terminalStopConfigured(command))
+    }
+
     // ========== argv ==========
 
     private fun argv(
