@@ -123,6 +123,16 @@ class PreStartFailureReasonTest {
     }
 
     @Test
+    fun `a denial naming one over-long placeholder stays bounded and still names it`() {
+        // The exception bounds each name, not only their count, so the sentence names the
+        // placeholder instead of being cut inside it (ADR-0098).
+        val failure = PreStartFailureReason.of(UnresolvedLockKeyPlaceholderException(listOf("N".repeat(1000))))!!
+
+        assertTrue(failure.reason.length <= MAX_FAILURE_REASON_LENGTH, "reason=${failure.reason}")
+        assertTrue(failure.reason.contains("{{NNN"), "reason=${failure.reason}")
+    }
+
+    @Test
     fun `a reason carrying control characters is stored as one line`() {
         val failure = PreStartFailureReason.of(MaxParallelRunsExceededException("demo\nagent\tx", 2))!!
 

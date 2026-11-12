@@ -77,27 +77,41 @@ class AnotherProcessStillActive(
 ) : HomerException("The process $activeProcessId is still active, stopping current")
 
 /**
- * Raised when a lock key template names a `{{NAME}}` the run's env does not hold.
- * [DefaultTextCompiler][homer.app.infra.DefaultTextCompiler] would leave that name as its
- * literal text, so every run of that agent computes the same key and unrelated subjects
- * collide: one caller's run is skipped, queued behind or killed by an unrelated one (ADR-0047).
- * The run is denied before it takes a slot, a lock or a workspace.
+ * Raised when a lock key template names a `{{NAME}}` the run's env does not hold; the run is
+ * denied before it takes a slot, a lock or a workspace. See ADR-0098 for why the denial fails
+ * closed (ADR-0047 for the cross-subject collision it prevents).
  *
  * [placeholders] carries the unresolved names only — never the rendered key, which may hold an
- * input value, and never any value. See ADR-0098.
+ * input value, and never any value.
  */
 class UnresolvedLockKeyPlaceholderException(
     names: Collection<String>,
-) : HomerException("Lock key placeholder(s) ${namedPlaceholders(names).joinToString(", ") { "{{$it}}" }} has no value") {
-    /** The unresolved placeholder names, distinct and sorted, bounded to what a denial may name. */
+) : HomerException(denialMessage(namedPlaceholders(names))) {
+    /** The unresolved placeholder names, distinct, sorted and bounded, as the denial names them. */
     val placeholders: List<String> = namedPlaceholders(names)
 }
 
 /** Bounds how many names a denial echoes: a key with more is still denied, just not fully named. */
 private const val MAX_NAMED_PLACEHOLDERS = 5
 
-/** The distinct placeholder names a denial names, in a stable order. */
-private fun namedPlaceholders(names: Collection<String>): List<String> = names.distinct().sorted().take(MAX_NAMED_PLACEHOLDERS)
+/** Bounds each name, so the echoed sentence stays short whatever a template's placeholder is called. */
+private const val MAX_PLACEHOLDER_NAME_LENGTH = 50
+
+/** The distinct placeholder names a denial names, in a stable order, each cut to [MAX_PLACEHOLDER_NAME_LENGTH]. */
+private fun namedPlaceholders(names: Collection<String>): List<String> =
+    names
+        .distinct()
+        .sorted()
+        .take(MAX_NAMED_PLACEHOLDERS)
+        .map { it.take(MAX_PLACEHOLDER_NAME_LENGTH) }
+
+/** The denial's log sentence: singular for one name, plural for several. */
+private fun denialMessage(names: List<String>): String =
+    if (names.size == 1) {
+        "Lock key placeholder {{${names.single()}}} has no value"
+    } else {
+        "Lock key placeholders ${names.joinToString(", ") { "{{$it}}" }} have no value"
+    }
 
 class MaxParallelRunsExceededException(
     val agentName: String,

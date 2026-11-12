@@ -210,10 +210,9 @@ class WorkspaceConfigFactory(
 
 /**
  * Renders a templated key over [env], refusing one whose `{{NAME}}` placeholders the env cannot
- * resolve: `replaceArguments` leaves an unknown name as its literal text, so every run of the
- * agent computes the same key and unrelated subjects collide — one run skipped, queued behind or
- * killed by another (ADR-0047). The check reads the template's placeholder names, never the
- * rendered text: a param value that itself holds `{{X}}` is data, not a placeholder.
+ * resolve — every run of the agent would otherwise compute the same literal key (ADR-0098). The
+ * check reads the template's placeholder names, never the rendered text: a param value that
+ * itself holds `{{X}}` is data, not a placeholder.
  */
 internal fun renderTemplatedKey(
     template: String,

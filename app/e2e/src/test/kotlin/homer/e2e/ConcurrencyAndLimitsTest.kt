@@ -110,6 +110,28 @@ class ConcurrencyAndLimitsTest : E2eTestBase() {
         }
 
     @Test
+    fun `an unresolved lock key placeholder fails the run before it starts`() =
+        runBlocking {
+            // The placeholder denial happens inside the async execution, like the other
+            // pre-start causes: HTTP was 200, the run ends FAILED without ever running
+            // its command and without touching the lock.
+            val id = HomerApi.startRun("lock-unresolved-placeholder")
+
+            val terminal = Awaits.awaitTerminal(id)
+            assertEquals("FAILED", terminal.status)
+            assertTrue(terminal.executions.isEmpty(), "denied run must not execute commands: ${terminal.executions}")
+            // Awaited, not read off the terminal poll: the reason write trails the FAILED status.
+            val reason =
+                Awaits.awaitNotNull("the denied run's failure reason") {
+                    Awaits.awaitTerminal(id).failureReason
+                }
+            assertTrue(
+                reason.contains("{{UNRESOLVED_VAR}}"),
+                "denied run must name the placeholder: $reason",
+            )
+        }
+
+    @Test
     fun `a SKIP_CURRENT skip does not arm the afterFailure cooldown`() =
         runBlocking {
             // A duplicate correctly dropped by the lock ends FAILED without ever running,

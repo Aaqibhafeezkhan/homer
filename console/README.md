@@ -204,7 +204,8 @@ active tag appears as a removable badge in the filter row, cleared
 individually or via **Clear**.
 
 A run that **failed before it started** — a claim timeout, a `SKIP_CURRENT` lock
-collision, a parallel-run cap or a full queue — shows a short reason beside its
+collision, a parallel-run cap, a full queue or an unresolved `lockStrategy.key`
+placeholder — shows a short reason beside its
 failed status icon, so the list says why without opening the run. The row truncates
 it; hover for the full sentence, which the run's own page shows in full.
 
@@ -228,7 +229,8 @@ it; hover for the full sentence, which the run's own page shows in full.
 - **Failed before it started**: A run that ended `FAILED` without running a
   single command shows a **Failed before it started** box under the header with
   the stored reason — a claim timeout, a `SKIP_CURRENT` lock collision, a
-  parallel-run cap or a full queue. The box appears only when the server stored
+  parallel-run cap, a full queue or an unresolved `lockStrategy.key` placeholder.
+  The box appears only when the server stored
   a reason, so a run that failed while it was running shows none
 - The run's cost carries a source label — `proxy` when priced by the
   server's `llmPrice.sessionSpend` endpoint, `CLI estimate` when it is
