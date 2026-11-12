@@ -125,7 +125,7 @@ class ProcessRepository(
                     // Rendered by the caller before this transaction opened, and written here
                     // so it is valid the instant the row is — the cooldown reads below and
                     // every later read of this row see the same subject. Never re-derived:
-                    // the agent definition (and `HMR_PROCESS_ID`) may differ by then. ADR-0103.
+                    // the agent definition (and `HMR_PROCESS_ID`) may differ by then. ADR-0105.
                     it[Processes.cooldownKey] = cooldownKey
                     // Captured now, not looked up later: the agent's `secret` flags can
                     // change while this record is retained. Null when the caller did not
@@ -157,7 +157,7 @@ class ProcessRepository(
      * [nowSec], evaluated against rows read in the caller's transaction. Each window's lookup
      * runs only when that window is configured. [cooldownKey] scopes both lookups to the
      * subject of the start being inserted; null counts the agent's rows whatever key they
-     * carry. See ADR-0051, ADR-0103.
+     * carry. See ADR-0051, ADR-0105.
      */
     private fun enforceCooldownTx(
         agentName: String,
@@ -266,7 +266,7 @@ class ProcessRepository(
      * Null for rows migrated in from before v13, which predate the cooldown feature.
      *
      * [cooldownKey] selects the subject the read is scoped to; null counts every row of
-     * the agent. See ADR-0103.
+     * the agent. See ADR-0105.
      */
     suspend fun latestRunStartedAt(
         agentName: String,
@@ -279,7 +279,7 @@ class ProcessRepository(
      * is not a failure of the agent's work, so it does not arm the window. See ADR-0098.
      *
      * [cooldownKey] narrows the read to one subject, exactly as [latestRunStartedAt] does.
-     * See ADR-0103.
+     * See ADR-0105.
      */
     suspend fun latestFailureEndedAt(
         agentName: String,

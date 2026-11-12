@@ -205,7 +205,7 @@ data class RunnerAffinity(
  *
  * Both windows are optional but at least one must be set — an empty block would
  * silently do nothing, which is worse than a load error. [key] narrows both windows
- * from the whole agent to one subject. See ADR-0103.
+ * from the whole agent to one subject. See ADR-0105.
  */
 @Serializable
 data class Cooldown(
@@ -223,7 +223,7 @@ data class Cooldown(
      * resolved inputs. Null = one window for the whole agent, as before. A placeholder
      * that does not resolve fails the run before it is created, never as a shared
      * literal; the rendered key is length- and charset-capped and must not name a
-     * `secret: true` input. See ADR-0103.
+     * `secret: true` input. See ADR-0105.
      */
     val key: String? = null,
 ) {
@@ -239,7 +239,7 @@ data class Cooldown(
                 "cooldown.key must be at most $MAX_COOLDOWN_KEY_TEMPLATE_LENGTH characters, got ${template.length}"
             }
             // A `{{` the placeholder pattern cannot match would survive rendering as a
-            // literal, giving every subject the same key. See ADR-0103.
+            // literal, giving every subject the same key. See ADR-0105.
             require(!COOLDOWN_KEY_PLACEHOLDER.replace(template, "").contains("{{")) {
                 "cooldown.key has a malformed placeholder: use {{NAME}} with a name of letters, digits or underscore"
             }

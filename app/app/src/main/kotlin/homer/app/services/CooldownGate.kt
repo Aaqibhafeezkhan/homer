@@ -39,7 +39,7 @@ internal class CooldownGate(
      * check runs inside `ProcessRepository.obtainProcessId`'s transaction, atomic
      * with the INSERT. Keep both — this one preserves the caller-facing exception
      * ordering (cost cap → cooldown → input validation) and avoids resolving
-     * inputs for a start that is going to be refused. See ADR-0051, ADR-0103.
+     * inputs for a start that is going to be refused. See ADR-0051, ADR-0105.
      */
     suspend fun check(
         agent: Agent,
@@ -68,7 +68,7 @@ internal class CooldownGate(
  * `Cooldown`'s `init` rejects a value with neither window set. A `key` rides
  * `minInterval` for the same reason: a keyed `minInterval` is still pacing, and it
  * scopes the surviving window to its subject. Retry, resume and debug all start
- * through this, so the rule is stated once. See ADR-0051, ADR-0103.
+ * through this, so the rule is stated once. See ADR-0051, ADR-0105.
  */
 internal fun Agent.withoutFailureBackoff(): Agent =
     cooldown
@@ -87,7 +87,7 @@ internal fun Agent.withoutFailureBackoff(): Agent =
  *
  * `cooldown.key` deliberately does not appear here: scoping a window to one subject is
  * which rows the two lookups return, not how a window is measured, so both callers pass
- * the rendered key to their reads and the arithmetic stays one copy. See ADR-0103.
+ * the rendered key to their reads and the arithmetic stays one copy. See ADR-0105.
  */
 internal object CooldownDecision {
     /** The refusal to throw, or null when the start is allowed. */

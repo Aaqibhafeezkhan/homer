@@ -301,7 +301,7 @@ class ProcessExecutorTest {
                     any(),
                     cooldown = cooldown,
                     // The rendered key rides with the window it scopes: dropping this wiring
-                    // would count the window per agent again, silently. See ADR-0103.
+                    // would count the window per agent again, silently. See ADR-0105.
                     cooldownKey = "mr-1",
                     secretInputKeys = any(),
                     parentProcessId = any(),

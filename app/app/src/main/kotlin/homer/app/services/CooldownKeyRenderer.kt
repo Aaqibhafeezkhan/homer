@@ -13,7 +13,7 @@ import homer.app.models.Agent
  * inputs, and the result is stored on the process row inside the INSERT's transaction
  * — the same shape as the v13/v14 timestamps, and for the same reason: re-deriving it
  * later would read a definition that may have changed, or a `HMR_PROCESS_ID` that did
- * not exist when the row was created. See ADR-0051, ADR-0103.
+ * not exist when the row was created. See ADR-0051, ADR-0105.
  *
  * Every refusal here fails the run **before** any process row exists, so a key that
  * cannot be rendered never widens the bound to every subject.
@@ -79,6 +79,6 @@ internal object CooldownKeyRenderer {
  *
  * Renders from `agent.env + inputs`: those are the two layers a key may name, and both
  * are in place before the process row exists. `HMR_AGENT_DIR` rides `agent.env`, so it
- * resolves here; `HMR_PROCESS_ID` does not exist yet and does not. See ADR-0103.
+ * resolves here; `HMR_PROCESS_ID` does not exist yet and does not. See ADR-0105.
  */
 internal fun Agent.renderCooldownKey(inputs: Map<String, String>): String? = CooldownKeyRenderer.render(this, env + inputs)

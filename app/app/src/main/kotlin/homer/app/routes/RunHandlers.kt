@@ -170,7 +170,7 @@ internal suspend fun handleAgentDebug(
         // Rendered from the debug agent's env — this request's overrides included — so a keyed
         // `minInterval` scopes the window to the subject a normal start of these inputs would
         // use. `afterFailure` is already gone above. Fails the request before any row exists.
-        // See ADR-0103.
+        // See ADR-0105.
         val cooldownKey = debugAgent.renderCooldownKey(resolvedQueryParams)
         val result =
             processExecutor.execute(
@@ -254,7 +254,7 @@ internal suspend fun handleRetry(
         // the clear. Stamped before `execute` so the run's own spans inherit it. See ADR-0052.
         span.stampLangfuseTrace(agent, listOf("retry") + langfuseTraceTags(agent, retryParams, retrySecretEnvNames))
         // A replay carries the source run's subject, so a keyed `minInterval` still paces it
-        // against that subject's other starts. See ADR-0103.
+        // against that subject's other starts. See ADR-0105.
         val retryCooldownKey = agent.renderCooldownKey(retryParams)
 
         val result =
@@ -327,7 +327,7 @@ internal suspend fun handleResume(
         // Same as retry: the stored inputs carry the source run's secrecy, and the stamp has to
         // land before `execute` for the run's own spans to inherit it.
         span.stampLangfuseTrace(agent, listOf("resume") + langfuseTraceTags(agent, resumeParams, resumeSecretEnvNames))
-        // Same as retry: the resumed segment keeps the source run's subject. See ADR-0103.
+        // Same as retry: the resumed segment keeps the source run's subject. See ADR-0105.
         val resumeCooldownKey = agent.renderCooldownKey(resumeParams)
 
         val result =

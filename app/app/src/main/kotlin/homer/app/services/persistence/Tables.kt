@@ -85,7 +85,7 @@ internal object Processes : Table("processes") {
     // transaction so it is valid the instant the row is. Null when the agent sets no key,
     // and on every row from before v31 (no backfill — a pre-v31 run was counted per agent
     // and cannot be attributed to a subject). A keyed cooldown ignores null rows; a keyless
-    // one counts every row of the agent, null included. See ADR-0103.
+    // one counts every row of the agent, null included. See ADR-0105.
     val cooldownKey = text("cooldown_key").nullable()
 
     // envNames of the inputs this agent declared `secret: true` AT THE TIME OF THE
