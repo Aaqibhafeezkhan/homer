@@ -122,10 +122,12 @@ step that validates it is gated with `when: '[ -z "$HMR_LG_THREAD" ]'`.
 
 ## Details that matter
 
-- **Where the lock sits in a run's start.** A run takes its parallel-run slot
-  first, then the lock, then waits in the
-  [runner claim queue](../../app/SERVER.md#runner-claim-queue). A run
-  waiting on the lock stays `CREATED`, so it shows up in
+- **Where the lock sits in a run's start.** A run takes its subject lock
+  first, then a parallel-run slot, then waits in the
+  [runner claim queue](../../app/SERVER.md#runner-claim-queue) (ADR-0103).
+  Waiting on the lock holds no parallel-run slot — lock waiters are bounded
+  by `maxQueuedRuns`, else `maxParallelRuns` — and a run waiting on the
+  lock stays `CREATED`, so it shows up in
   `GET /api/v1/status/all?types=CREATED` and nowhere else.
 - **A `WAIT` lock has no timeout of its own.** The run waits until the holder
   ends. The claim TTL (`runnerClaimTimeoutSec`) starts only after the lock is
