@@ -109,7 +109,7 @@ class HookServiceTest {
         runTest {
             // The drop is the only outcome with no row to look at: without this line an operator
             // sees a hook that never fired and no reason for it. The cap is named, so the fix is
-            // the config key rather than a code hunt. See ADR-0106.
+            // the config key rather than a code hunt. See ADR-0107.
             val logger = TestFixtures.mockLogger()
 
             serviceOver(logger, config = HookConfig(maxPending = 200))

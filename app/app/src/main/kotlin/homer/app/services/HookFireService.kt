@@ -27,7 +27,7 @@ internal const val MAX_HOOK_TAGS_CHARS = 1024
  * target with the triggering run's `HMR_HOOK_*` metadata, and settles the row DISPATCHED,
  * deferred for a retry, or FAILED. The start's own failures are contained here; the row
  * writes around it are not, so [HookService] isolates every call into this service from the
- * status write that triggered it. See ADR-0106, ADR-0023.
+ * status write that triggered it. See ADR-0107, ADR-0023.
  */
 internal class HookFireService(
     private val repository: HookRepository,
@@ -64,12 +64,12 @@ internal class HookFireService(
         // The triggering run's row carries both the chain bound and the HMR_HOOK_* metadata:
         // its stored HMR_HOOK_DEPTH is how many hook hops it already is, so the run this row
         // starts is one deeper. Read from the row, not kept in memory, so a restart between a
-        // hook's start and its own transition cannot reset the bound. See ADR-0106.
+        // hook's start and its own transition cannot reset the bound. See ADR-0107.
         val run = runOrNull(hook.processId)
         val depth = hookDepthOf(run?.inputParams.orEmpty()) + 1
         if (depth > maxChainDepth) {
             // Shed, never retried: the chain bound is a property of the declarations, so the
-            // next attempt would be refused for the same reason. See ADR-0106.
+            // next attempt would be refused for the same reason. See ADR-0107.
             repository.markDropped(
                 hook.id,
                 "hook chain depth $depth exceeds server.hooks.maxChainDepth ($maxChainDepth)",
@@ -130,7 +130,7 @@ internal class HookFireService(
                 ) {
                     // The target's own declared defaults, plus the server-minted hook metadata
                     // merged back over them: AgentInputResolver emits only declared inputs, and
-                    // these names are reserved. See ADR-0106.
+                    // these names are reserved. See ADR-0107.
                     agentInputResolver.resolveFromParams(emptyMap(), target) + hookControlParams(params)
                 }
             repository.markDispatched(hook.id, processId, now)
@@ -217,7 +217,7 @@ internal class HookFireService(
      * fields ride it — the run id, the declaring agent, the status, the depth of the run being
      * started, the stored pre-start failure reason (already the fixed-vocabulary, redacted
      * sentence, ADR-0098) and the run's subject tags. No input value, secret or otherwise, is
-     * ever copied. See ADR-0106.
+     * ever copied. See ADR-0107.
      */
     private fun hookParams(
         hook: PendingHook,
@@ -242,7 +242,7 @@ internal fun hookDepthOf(inputParams: Map<String, String>): Int = inputParams[En
  * send. Control characters are dropped and the whole value is capped at [MAX_HOOK_TAGS_CHARS]
  * characters — a tag that does not fit is left out rather than cut in half, so every tag in the
  * value is one the run actually carried. Tags come from `tags.fromInputs` / `tags.runtime`
- * derivations, never from a raw input value. See ADR-0060, ADR-0106.
+ * derivations, never from a raw input value. See ADR-0060, ADR-0107.
  */
 internal fun hookTagsParam(tags: List<String>): String? {
     val kept = mutableListOf<String>()

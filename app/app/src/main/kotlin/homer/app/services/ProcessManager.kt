@@ -68,7 +68,7 @@ class ProcessManager(
     // The agent-level hooks a status transition records, and the cap on pending rows. Resolved
     // per transition from the current agent catalog, so a reload between a run's start and its
     // transition is honoured; the lookup reads no database, so it is safe inside the write
-    // transaction. Null = record none. See ADR-0106.
+    // transaction. Null = record none. See ADR-0107.
     private val hookRecording: () -> HookRecording? = { null },
     // Fires the hook rows a transition just recorded, and logs the entries the pending cap shed.
     // Called after the write's commit, never inside it: a fire starts a run, whose own row write
@@ -198,7 +198,7 @@ class ProcessManager(
             onProcessEvicted(evicted.id)
         }
         // After the INSERT's commit: a CREATED hook fires here, and the run it starts writes
-        // its own row in its own transaction. See ADR-0106.
+        // its own row in its own transaction. See ADR-0107.
         onHooksRecorded(result.hooks)
         return result.processId
     }
@@ -265,7 +265,7 @@ class ProcessManager(
             result.agentName?.let { broadcaster.emit(ProcessEvent.StatusChanged(processId, newStatus, it)) }
         }
         // After the status write's commit, and only for a write that applied: a guard-rejected
-        // CAS records no hook rows, so there is nothing to fire. See ADR-0106.
+        // CAS records no hook rows, so there is nothing to fire. See ADR-0107.
         onHooksRecorded(result.hooks)
         return result.updated
     }

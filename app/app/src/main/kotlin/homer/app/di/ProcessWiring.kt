@@ -29,7 +29,7 @@ internal val processModule =
                 maxProcesses = config.server.maxProcesses,
                 // Both resolved at call time, not construction, to break the cycle
                 // ProcessManager → HookService → AgentRunStarter → ProcessExecutor →
-                // ProcessManager. See ADR-0106.
+                // ProcessManager. See ADR-0107.
                 hookRecording = { get<HookService>().recording() },
                 onHooksRecorded = { recorded -> get<HookService>().onRowsRecorded(recorded) },
             )

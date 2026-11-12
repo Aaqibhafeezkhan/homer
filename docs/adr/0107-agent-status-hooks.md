@@ -5,7 +5,7 @@ deciders: Lukáš Vlk
 consulted: ADR-0008, ADR-0020, ADR-0021, ADR-0023, ADR-0037, ADR-0039, ADR-0047, ADR-0050, ADR-0051, ADR-0052, ADR-0058, ADR-0060, ADR-0092, ADR-0098, ADR-0102
 ---
 
-# ADR-0106: Agent-declared status hooks fire a target agent on every run status
+# ADR-0107: Agent-declared status hooks fire a target agent on every run status
 
 ## Context and Problem Statement
 

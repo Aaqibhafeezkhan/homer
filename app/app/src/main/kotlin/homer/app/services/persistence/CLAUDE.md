@@ -73,7 +73,7 @@ See ADR-0020.
   family: it takes the claim CAS, the PENDING cap and the settled prune from
   `FiredRecords`, but its rows are written by `ProcessRepository`'s status
   transactions through the free `insertPendingHooksTx`, so recording needs no
-  second database handle. See ADR-0106.
+  second database handle. See ADR-0107.
   `ResultTokenRepository` owns the `result_tokens` table (schema v4;
   `consumer_agent` audience column v7). See ADR-0025.
   `CostRepository` owns the append-only `cost_entries` LLM-spend ledger
@@ -156,7 +156,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
-| 31 | `pending_hooks` table (agent-level status hooks) | [0106](../../../../../../../../../docs/adr/0106-agent-status-hooks.md) |
+| 31 | `pending_hooks` table (agent-level status hooks) | [0107](../../../../../../../../../docs/adr/0107-agent-status-hooks.md) |
 
 ### Schema constraints
 
@@ -316,7 +316,7 @@ Editor-facing constraints the row's ADR does not state:
   checked with one `COUNT` per fan-out, not per row, and rows over it are **dropped**, never
   queued: a status write is not a request, so there is no caller to reject. Retention is
   `server.hooks.settledRetentionSec`, swept by the continuation sweep tick through
-  `pending_hooks_status_created`. See ADR-0106.
+  `pending_hooks_status_created`. See ADR-0107.
 
 `transitionStatus` and `killTransition` project `status`, `history`, `agent_name`
 and `owner` instead of `selectAll()`: they run under the write lock, and pulling

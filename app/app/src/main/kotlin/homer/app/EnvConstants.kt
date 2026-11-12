@@ -127,7 +127,7 @@ object EnvConstants {
      * ([HOOK_AGENT_NAME]), the status itself ([HOOK_STATUS]), the pre-start failure reason
      * when the run carries one ([HOOK_FAILURE_REASON]) and the run's `key:value` subject
      * tags ([HOOK_TAGS], comma-joined). Server-minted from the stored run only — never a
-     * secret input value, and never a caller-supplied param. See ADR-0106.
+     * secret input value, and never a caller-supplied param. See ADR-0107.
      */
     const val HOOK_PROCESS_ID = "HMR_HOOK_PROCESS_ID"
     const val HOOK_AGENT_NAME = "HMR_HOOK_AGENT_NAME"
@@ -138,7 +138,7 @@ object EnvConstants {
     /**
      * How many hook hops deep the run carrying this param is: 1 for a run a hook started
      * from an ordinary run, one more per further hop. Bounded by `server.hooks.maxChainDepth`.
-     * Internal — not part of the documented agent-facing contract. See ADR-0106.
+     * Internal — not part of the documented agent-facing contract. See ADR-0107.
      */
     const val HOOK_DEPTH = "HMR_HOOK_DEPTH"
 

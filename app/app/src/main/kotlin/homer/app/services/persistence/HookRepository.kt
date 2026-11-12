@@ -58,7 +58,7 @@ data class InterruptedResult(
  * The agent-level hooks a status transition must record, and the cap on pending rows.
  * [hooksFor] resolves the current agent catalog snapshot at call time, so a reload between a
  * run's start and its transition is honoured; it reads no database, so it is safe to call
- * inside the transition's transaction. See ADR-0106.
+ * inside the transition's transaction. See ADR-0107.
  */
 class HookRecording(
     val hooksFor: (agentName: String, status: ProcessStatus) -> List<AgentHook>,
@@ -68,7 +68,7 @@ class HookRecording(
 /**
  * Records [this] recording's hook rows for run [processId] **inside the caller's transaction**
  * and returns their ids plus the entries the cap shed; an absent recording records nothing. A
- * nullable receiver so each of the four status writes reads as one line. See ADR-0106.
+ * nullable receiver so each of the four status writes reads as one line. See ADR-0107.
  */
 internal fun HookRecording?.record(
     processId: Int,
@@ -142,7 +142,7 @@ internal fun insertPendingHooksTx(
  * transaction as the status write that caused it, claimed (PENDING→DISPATCHING) before the
  * hook run starts, and settled once. The claim CAS, the global PENDING cap, the boot
  * recovery of a row left mid-dispatch and the settled-row prune are [FiredRecords]', shared
- * with dispatches and continuations. See ADR-0106.
+ * with dispatches and continuations. See ADR-0107.
  */
 class HookRepository(
     private val db: DatabaseService,
@@ -253,7 +253,7 @@ class HookRepository(
             orphaned.map { it.copy(status = HookStatus.FAILED, error = ORPHANED_ERROR, firedAt = at) }
         }
 
-    /** Deletes settled hooks created before [cutoff], in batches. Returns the number deleted. See ADR-0106. */
+    /** Deletes settled hooks created before [cutoff], in batches. Returns the number deleted. See ADR-0107. */
     suspend fun pruneSettled(
         cutoff: Long,
         batchSize: Int = PRUNE_BATCH_SIZE,

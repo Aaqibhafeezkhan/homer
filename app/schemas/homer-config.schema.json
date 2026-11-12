@@ -347,7 +347,7 @@
     "HookConfig": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Agent-declared status hooks: a run's status transition records a durable row per matching hook entry, and Homer starts the target agent after that write commits. See ADR-0106.",
+      "description": "Agent-declared status hooks: a run's status transition records a durable row per matching hook entry, and Homer starts the target agent after that write commits. See ADR-0107.",
       "properties": {
         "maxPending": {
           "type": "integer",

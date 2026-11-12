@@ -725,7 +725,7 @@ question once its `createdAt` passes `server.dispatch.settledRetentionSec`.
 definition): a run's status transition records one durable row per matching
 hook entry, and Homer starts the target agent after that write commits. See
 [AGENT.md](AGENT.md#status-hooks) for the declaration and
-[ADR-0106](../docs/adr/0106-agent-status-hooks.md) for the delivery model.
+[ADR-0107](../docs/adr/0107-agent-status-hooks.md) for the delivery model.
 
 ```yaml
 server:

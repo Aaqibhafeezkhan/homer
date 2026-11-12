@@ -72,7 +72,7 @@ internal fun transitionRowTx(processId: Int): ResultRow? =
 // The tail both status writes share: the hook rows the transition records for [status], and the
 // result the caller gets — the run's agent name, which the caller cancels the job and broadcasts
 // on, plus what [homer.app.services.HookService] fires after the commit and what the cap shed.
-// Runs inside the caller's transaction, like the write it trails. See ADR-0106.
+// Runs inside the caller's transaction, like the write it trails. See ADR-0107.
 internal fun settledTransitionTx(
     processId: Int,
     row: ResultRow,
@@ -85,7 +85,7 @@ internal fun settledTransitionTx(
         agentName = row[Processes.agentName],
         // A write that leaves the status where it was is not a second reach of it: a run's own
         // start re-asserts CREATED right after the INSERT (ProcessExecutor's kill guard), and
-        // recording that again would fire the CREATED hooks twice for one run. See ADR-0106.
+        // recording that again would fire the CREATED hooks twice for one run. See ADR-0107.
         hooks =
             hookRecording
                 .takeIf { row[Processes.status] != status.name }

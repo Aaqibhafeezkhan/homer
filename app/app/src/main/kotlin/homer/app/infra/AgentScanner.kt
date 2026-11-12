@@ -60,7 +60,7 @@ internal class AgentScanner(
 
         // Cross-agent `hooks` checks last, so they see the whole catalog: a hook target must be
         // a loaded agent and the hook graph must be acyclic. A rejected agent's directory is
-        // still present (its files are on disk), so it stays in presentDirNames. See ADR-0106.
+        // still present (its files are on disk), so it stays in presentDirNames. See ADR-0107.
         for ((name, hookErrors) in AgentHookValidation.apply(parsed)) {
             sourceDirs.remove(name)
             for (error in hookErrors) {

@@ -3828,7 +3828,7 @@ is reloaded after the declaring agent loaded.
 A hook that is dropped or fails never changes the triggering run's own status: a
 run that finished stays finished.
 
-See [ADR-0106](../docs/adr/0106-agent-status-hooks.md) for the delivery model and
+See [ADR-0107](../docs/adr/0107-agent-status-hooks.md) for the delivery model and
 the bounds.
 
 ## Messages from the operator

@@ -14,7 +14,7 @@ import kotlin.test.assertEquals
  * write in [ProcessManager] records its hook rows inside the write's own transaction, hands them
  * to a real [HookService] after the commit, and that fires them through `HookFireService` into a
  * start. The DI wiring resolves `HookService` at call time for exactly this shape, so this is the
- * chain production runs. See ADR-0106.
+ * chain production runs. See ADR-0107.
  */
 class ProcessHookChainTest {
     private fun agent(
@@ -54,7 +54,7 @@ class ProcessHookChainTest {
         runTest {
             // What ProcessExecutor.runJob writes right after the INSERT, so a kill that landed
             // first is not reset: the same status written twice is one reach of it, so the hook
-            // entry fires exactly once. See ADR-0106.
+            // entry fires exactly once. See ADR-0107.
             val f = chain(ProcessStatus.CREATED to "notifier-created")
 
             val id = f.processManager.obtainProcessId("declarer", owner = "alice")
@@ -111,7 +111,7 @@ class ProcessHookChainTest {
     fun `a guard-rejected transition fires nothing`() =
         runTest {
             // A kill landed first: the FINISHED write is refused, and a refused write records no
-            // hook row to fire. See ADR-0106.
+            // hook row to fire. See ADR-0107.
             val f = chain(ProcessStatus.FINISHED to "notifier-finished")
 
             val id = f.processManager.obtainProcessId("declarer", owner = "alice")

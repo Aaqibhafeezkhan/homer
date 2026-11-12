@@ -8,7 +8,7 @@ import org.slf4j.Logger
  * transient-failure retry is due, prunes settled ones past `settledRetentionSec`, and reaps
  * expired read-by-reference result tokens. The same tick re-fires agent-level status hooks
  * whose transient-failure retry is due and prunes their settled rows. See ADR-0023, ADR-0025,
- * ADR-0106.
+ * ADR-0107.
  */
 internal class ContinuationSweepService(
     private val continuationService: ContinuationService,

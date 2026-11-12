@@ -224,7 +224,7 @@ class HookRepositoryTest {
     fun `a hook left dispatching by a restart is settled failed once`() =
         runTest {
             // The crash window between the run start and markDispatched: the row must not be
-            // re-fired, or the target would run twice for one status. ADR-0106.
+            // re-fired, or the target would run twice for one status. ADR-0107.
             val id = record(hook()).single()
             repo.claim(id)
 

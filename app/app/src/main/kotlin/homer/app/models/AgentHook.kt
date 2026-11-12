@@ -17,7 +17,7 @@ const val MAX_AGENT_HOOKS = 16
  * Homer starts [agent] — whatever started the run (cron, HTTP, MCP, console retry,
  * a sub-run). Declared as a one-key `{STATUS: agentName}` entry in the agent's
  * `hooks` list; several entries may name the same status, and each one starts its
- * own agent. See ADR-0106.
+ * own agent. See ADR-0107.
  */
 @Serializable(with = AgentHookSerializer::class)
 data class AgentHook(
@@ -43,7 +43,7 @@ private val HOOK_TARGET_PATTERN = Regex("^[a-zA-Z0-9_-]+$")
  * and in JSON (a list of statuses as the key is not — JSON object keys are strings).
  * A decode names only the offending key, never the value: the value is an agent name
  * an untrusted definition supplies and the error text reaches the load log and the
- * definition-write API response. See ADR-0106, root §12 rule 7.
+ * definition-write API response. See ADR-0107, root §12 rule 7.
  */
 object AgentHookSerializer : KSerializer<AgentHook> {
     private val entries = MapSerializer(String.serializer(), String.serializer())

@@ -77,7 +77,7 @@ data class Agent(
     /**
      * Agent-level status hooks: each one-key `{STATUS: agentName}` entry starts its
      * agent when a run of *this* agent reaches that status, whatever started the run.
-     * Empty = no hooks. See [AgentHook] and ADR-0106.
+     * Empty = no hooks. See [AgentHook] and ADR-0107.
      */
     val hooks: List<AgentHook> = emptyList(),
     /**

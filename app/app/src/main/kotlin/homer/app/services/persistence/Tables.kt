@@ -412,7 +412,7 @@ internal object ContinuationWatches : Table("continuation_watches") {
  * same transaction as the status write that caused it, claimed (PENDING→DISPATCHING) before
  * the run starts, and settled DISPATCHED/FAILED/DROPPED. No TTL: a hook is not a promise to
  * a caller with a deadline, so `expires_at` is always null and the settle-and-prune retention
- * is the only bound on a row's life. See ADR-0106.
+ * is the only bound on a row's life. See ADR-0107.
  */
 internal object PendingHooks : Table("pending_hooks"), FiredRecordTable {
     override val id = integer("id").autoIncrement()

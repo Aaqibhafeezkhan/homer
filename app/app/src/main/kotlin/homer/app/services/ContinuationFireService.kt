@@ -356,7 +356,7 @@ internal class ContinuationFireService(
         // A transient fire failure is retried on a doubling delay, bounded by
         // MAX_FIRE_ATTEMPTS and by the continuation's own TTL. The ceiling is an hour so a
         // cost cap on an hourly window gets at least one attempt after the window rolls.
-        // HookFireService retries a hook on the same back-off. See ADR-0106.
+        // HookFireService retries a hook on the same back-off. See ADR-0107.
         const val MAX_FIRE_ATTEMPTS = 8
         const val RETRY_BASE_DELAY_SEC = 60L
         const val RETRY_MAX_DELAY_SEC = 3600L

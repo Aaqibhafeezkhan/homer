@@ -2188,7 +2188,7 @@ class ProcessRepositoryTest {
                 assertTrue(sql.contains("processes.status"), sql)
                 assertTrue(sql.contains("processes.history"), sql)
                 assertTrue(sql.contains("processes.agent_name"), sql)
-                // The recording attributes the hook run to the owner the row carries (ADR-0106).
+                // The recording attributes the hook run to the owner the row carries (ADR-0107).
                 assertTrue(sql.contains("processes.owner"), sql)
                 assertFalse(sql.contains("processes.input_params"), sql)
                 assertFalse(sql.contains("processes.executions"), sql)
@@ -2427,7 +2427,7 @@ class ProcessRepositoryTest {
             assertNull(repo.getRunVisibility(id + 100))
         }
 
-    // ── Agent-level status hooks (ADR-0106) ──────────────────────────────────────────────
+    // ── Agent-level status hooks (ADR-0107) ──────────────────────────────────────────────
     // The hook rows a status write records ride that write's own transaction, so a restart
     // between the two loses nothing and a guard-rejected CAS records none of them.
 
@@ -2539,7 +2539,7 @@ class ProcessRepositoryTest {
     fun `a write that does not move the status records no hook`() =
         runTest {
             // ProcessExecutor re-asserts CREATED right after the INSERT (the kill guard): that is
-            // one reach of CREATED, so one hook row, not two. See ADR-0106.
+            // one reach of CREATED, so one hook row, not two. See ADR-0107.
             val db = PersistenceTestSupport.tempDatabase()
             val repo = repo(db)
             val created =
@@ -2655,7 +2655,7 @@ class ProcessRepositoryTest {
 
             assertEquals(2, result.hooks.ids.size)
             // The shed entry travels out of the transaction, so the caller can log it after the
-            // commit rather than inside the write block. See ADR-0106.
+            // commit rather than inside the write block. See ADR-0107.
             assertEquals(
                 listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
                 result.hooks.shed,
