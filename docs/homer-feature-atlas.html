@@ -829,9 +829,9 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
   timeout: 3600
   onTimeout: stop          # default: fail
   interruptGraceSeconds: 60 # default 30, 0..600
-  script: "pytest -q tests/integration"
+  content: "pytest -q tests/integration"
 onStop:
-  - !&lt;script&gt; { label: Save report, script: 'cp report.xml "$HMR_ARTIFACTS_DIR/"' }</code></pre>
+  - !&lt;script&gt; { label: Save report, content: 'cp report.xml "$HMR_ARTIFACTS_DIR/"' }</code></pre>
         </article>
 
         <article class="f">

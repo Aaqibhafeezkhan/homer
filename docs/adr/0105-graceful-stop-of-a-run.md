@@ -124,14 +124,15 @@ no new decision: `stop` already says *why*, and says it in more detail than a st
 
 ## More Information
 
-- [AGENT.md → Graceful stop](../AGENT.md#graceful-stop) — the author-facing contract, the
-  `HMR_STOP_*` variables and a complete example.
-- [SERVER.md → Kubernetes](../SERVER.md) — `gracefulStopSeconds` next to `maxRunSeconds`.
+- [`app/AGENT.md` → Graceful stop](../../app/AGENT.md#graceful-stop) — the author-facing contract,
+  the `HMR_STOP_*` variables and a complete example.
+- [`app/SERVER.md` → Kubernetes](../../app/SERVER.md) — `gracefulStopSeconds` next to
+  `maxRunSeconds`.
 - [ADR-0041](0041-process-group-reaping-on-kill.md) — the process-group kill the grace precedes;
   `interruptGroup` keeps its `pgid == pid` and never-own-group guards.
 - [ADR-0100](0100-kubernetes-job-workload-and-pod-run-limit.md) — `activeDeadlineSeconds` stays the
   hard bound; `gracefulStopSeconds` deliberately never reaches the pod spec.
 - [ADR-0047](0047-security-by-design-and-threat-model.md) — the bounds on the grace, the stop-step
   count and the exported label and session id, and the denial tests behind them.
-- [ADR-0089](0089-llm-cost-settlement-outlives-the-run.md) — the accounting an interrupted LLM
+- [ADR-0089](0089-settle-llm-cost-in-the-background.md) — the accounting an interrupted LLM
   attempt keeps, now also recorded on the step it was interrupted in.
