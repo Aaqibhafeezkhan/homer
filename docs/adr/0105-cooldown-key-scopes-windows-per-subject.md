@@ -106,7 +106,9 @@ plain text on the row and indexed, so naming a secret would put that value in th
 database and in the index (§12 rule 7). The renderer repeats the check at the point of
 use for replays of stored inputs (retry, resume, dispatch and continuation fires),
 which carry the source run's snapshot of what was secret then — a key naming such an
-input is refused with a `400` before any row exists.
+input is refused before any row exists: a `400` on retry and resume, a failed fire
+on dispatch and continuation (those two are background fires; `HomerException`
+settles the row `FAILED` with no HTTP exchange).
 
 **6. The refusal never carries the key.** The rendered value is derived from the run's
 inputs, so `CooldownActiveException` and the `400` name the agent and the window, never

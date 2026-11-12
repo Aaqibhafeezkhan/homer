@@ -108,4 +108,23 @@ class SysEnvResolverTest {
     fun `secretNamesFor returns nothing when no value references @SYSENV`() {
         assertEquals(emptySet(), resolver.secretNamesFor(mapOf("PLAIN" to "literal", "EMPTY" to "")))
     }
+
+    @Test
+    fun `secretEnvKeysFor keeps only the referencing keys, not the host variables they name`() {
+        val raw =
+            mapOf(
+                "TOKEN" to "@SYSENV:PATH",
+                "HEADER" to "Bearer @SYSENV:PATH",
+                "PLAIN" to "not-a-secret",
+            )
+
+        // The keys half of secretNamesFor: `PATH` is a referenced host variable, not a key
+        // of the map, and a template placeholder of that name resolves a non-host value.
+        assertEquals(setOf("TOKEN", "HEADER"), resolver.secretEnvKeysFor(raw))
+    }
+
+    @Test
+    fun `secretEnvKeysFor returns nothing when no value references @SYSENV`() {
+        assertEquals(emptySet(), resolver.secretEnvKeysFor(mapOf("PLAIN" to "literal", "EMPTY" to "")))
+    }
 }

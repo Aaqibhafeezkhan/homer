@@ -237,7 +237,7 @@ class CooldownGateTest {
                 Agent(
                     name = "watcher",
                     env = mapOf("TOKEN" to "@SYSENV:REPO_TOKEN"),
-                    sysEnvBackedEnvNames = setOf("TOKEN"),
+                    sysEnvBackedEnvKeys = setOf("TOKEN"),
                     commands = listOf(Command.Cmd(cmd = listOf("true"))),
                     cooldown = Cooldown(minInterval = "1m", key = "build-{{TOKEN}}"),
                 )
@@ -248,9 +248,28 @@ class CooldownGateTest {
         Agent(
             name = "watcher",
             env = mapOf("TOKEN" to "@SYSENV:REPO_TOKEN", "TEAM" to "core"),
-            sysEnvBackedEnvNames = setOf("TOKEN"),
+            sysEnvBackedEnvKeys = setOf("TOKEN"),
             commands = listOf(Command.Cmd(cmd = listOf("true"))),
             cooldown = Cooldown(minInterval = "1m", key = "build-{{TEAM}}"),
+        )
+    }
+
+    @Test
+    fun `a cooldown key naming a host variable an env value merely references is not rejected at load`() {
+        // The redaction composite (`sysEnvBackedEnvNames`) also carries the host variables
+        // an env value *references* — `GH_HEADER: "Bearer @SYSENV:REPO_TOKEN"` redacts both
+        // `GH_HEADER` and `REPO_TOKEN`. The load check reads the keys half only: here
+        // `{{REPO_TOKEN}}` resolves from the input of that name and renders the caller's
+        // value, not the host one — refusing it would make a legitimate definition fail to
+        // load and vanish from the catalog.
+        Agent(
+            name = "watcher",
+            env = mapOf("GH_HEADER" to "Bearer @SYSENV:REPO_TOKEN"),
+            sysEnvBackedEnvNames = setOf("GH_HEADER", "REPO_TOKEN"),
+            sysEnvBackedEnvKeys = setOf("GH_HEADER"),
+            inputs = listOf(Param(paramName = "REPO_TOKEN")),
+            commands = listOf(Command.Cmd(cmd = listOf("true"))),
+            cooldown = Cooldown(minInterval = "1m", key = "build-{{REPO_TOKEN}}"),
         )
     }
 

@@ -2480,7 +2480,7 @@ Artifact larger than [`server.maxArtifactBytes`](#server-fields):
 
 ### POST /api/v1/processes/{id}/retry
 
-Retry a finished process (`FINISHED`, `FAILED` or `KILLED`) by launching a new execution of the same agent with the source process's captured `inputParams`. The stored inputs are re-validated against the agent's **current** definition first, exactly as a fresh request would be. An `UNKNOWN` run (interrupted by a restart) cannot be retried — use `POST /api/v1/processes/{id}/resume` for a LangGraph run; an `UNKNOWN` run of any other agent cannot be replayed through the API.
+Retry a finished process (`FINISHED`, `FAILED` or `KILLED`) by launching a new execution of the same agent with the source process's captured `inputParams`. The stored inputs are re-validated against the agent's **current** definition first, exactly as a fresh request would be — plus one replay-specific refusal: a `cooldown.key` placeholder naming an input that was secret when the source run stored its values is refused, which no fresh request could trip over. An `UNKNOWN` run (interrupted by a restart) cannot be retried — use `POST /api/v1/processes/{id}/resume` for a LangGraph run; an `UNKNOWN` run of any other agent cannot be replayed through the API.
 
 **Authentication**: Required (when configured)
 
@@ -2519,6 +2519,11 @@ The returned `processId` identifies the newly started execution. The original so
 400 Bad Request — a stored input no longer satisfies the agent's current definition (for example a newly required input, or a value the current validation rejects):
 ```json
 { "err": 1, "msg": "Cannot retry: agent 'deploy-service' now requires input 'env' which is absent from the original run" }
+```
+
+400 Bad Request — an unusable `cooldown.key` (an unresolved placeholder, a rendered value that is empty, over 128 characters, or outside `[A-Za-z0-9._:/-]`, or a placeholder naming an input that was secret when the source run stored its values):
+```json
+{ "err": 1, "msg": "Agent 'deploy-service' has an unusable cooldown.key: placeholder {{MR}} names a secret input" }
 ```
 
 404 Not Found — unknown source process, or one the caller cannot retry (see **Authorization** below):

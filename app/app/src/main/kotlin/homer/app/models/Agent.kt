@@ -97,6 +97,18 @@ data class Agent(
      */
     @Transient
     val sysEnvBackedEnvNames: Set<String> = emptySet(),
+    /**
+     * Runtime-only: the keys half of [sysEnvBackedEnvNames] — only the `env` keys whose
+     * *raw* value referenced `@SYSENV:`, without the referenced host variable names.
+     * Not serialized; populated by AgentsService at scan time beside the composite.
+     *
+     * The `cooldown.key` load check reads this, not the redaction composite: a
+     * placeholder naming a plain env entry or an input envName that merely shares a name
+     * with a *referenced host variable* renders that non-host value, and refusing it
+     * would reject a legitimate definition. See `SysEnvResolver.secretEnvKeysFor`.
+     */
+    @Transient
+    val sysEnvBackedEnvKeys: Set<String> = emptySet(),
 ) {
     init {
         // Reads the legacy alias on purpose: an agent may set only one of the two forms.
@@ -131,11 +143,14 @@ data class Agent(
         require(secretKeyRefs.isEmpty()) {
             "Agent '$name': cooldown.key must not reference a secret input: ${secretKeyRefs.sorted().joinToString(", ")}"
         }
-        // `sysEnvBackedEnvNames` is a constructor property declared above this block, so it is
+        // `sysEnvBackedEnvKeys` is a constructor property declared above this block, so it is
         // initialized here. An env entry whose raw value referenced `@SYSENV:` is a secret by
         // construction — the host value rides the run's env — and a key naming it would store
-        // that value in the row's plain-text `cooldown_key` column and its index. See ADR-0105.
-        val sysEnvKeyRefs = cooldown?.keyRefs.orEmpty() intersect sysEnvBackedEnvNames
+        // that value in the row's plain-text `cooldown_key` column and its index. The keys
+        // half only: the composite's host-variable half would also refuse a placeholder that
+        // shares a name with a referenced host variable and renders a non-host value.
+        // See ADR-0105.
+        val sysEnvKeyRefs = cooldown?.keyRefs.orEmpty() intersect sysEnvBackedEnvKeys
         require(sysEnvKeyRefs.isEmpty()) {
             "Agent '$name': cooldown.key must not reference an @SYSENV-backed env value: ${sysEnvKeyRefs.sorted().joinToString(", ")}"
         }

@@ -2881,7 +2881,9 @@ Rules:
   whose value is sourced from the host with `@SYSENV:` (a load error — that
   value is a secret by construction), and, on a replay of stored inputs (retry,
   resume, dispatch and continuation fires), an input that was secret when the
-  source run stored its values (a `400` before any run is created).
+  source run stored its values. That last refusal lands before any run is
+  created — a `400` on retry and resume, a failed fire on dispatch and
+  continuation.
 - **The key is not part of the API surface.** It is not returned by the status
   or process APIs and is never logged; a `429` refusal names the agent and the
   window, not the key.

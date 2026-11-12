@@ -28,6 +28,7 @@ import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -45,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * The denial test for the cooldown bound on the three manual-recovery endpoints
@@ -415,5 +417,53 @@ class CooldownEndpointTest {
             )
             // `-1` is the empty-table sentinel of the id high-water read: no row was inserted.
             assertEquals(-1, deps.processCount(), "a refused key must not create a run")
+        }
+
+    // ===== the stored-secret snapshot refuses a key naming a secret input (CWE-312) =====
+
+    /**
+     * A source run whose snapshot marks `MR` secret although the current definition does
+     * not: what was secret when the inputs were stored stays secret for the replay
+     * (ADR-0052), so a key templated over it must be refused — not rendered into the
+     * indexed `processes.cooldown_key` column.
+     */
+    private fun storedSecretSource() = failedSource().copy(inputParams = mapOf("MR" to "s3cret-mr-value"), secretInputKeys = setOf("MR"))
+
+    @Test
+    fun `retry with a key naming a stored-secret input is refused with 400 and launches nothing`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = storedSecretSource(),
+            mount = { deps -> mountRetry(deps) },
+        ) { deps ->
+            val response = postRetry()
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                response.status,
+                "the stored-secret snapshot must refuse a key naming a secret input",
+            )
+            assertEquals(-1, deps.processCount(), "the refused retry must not create a run")
+            val body = response.bodyAsText()
+            assertFalse(body.contains("s3cret-mr-value"), "the 400 must not carry the stored input value")
+            assertFalse(body.contains("mr-s3cret-mr-value"), "the 400 must not carry the rendered key")
+        }
+
+    @Test
+    fun `resume with a key naming a stored-secret input is refused with 400 and launches nothing`() =
+        scenario(
+            agent = keyed(Cooldown(minInterval = "1m", key = "mr-{{MR}}")),
+            source = storedSecretSource(),
+            mount = { deps -> mountResume(deps) },
+        ) { deps ->
+            val response = postResume()
+            assertEquals(
+                HttpStatusCode.BadRequest,
+                response.status,
+                "the stored-secret snapshot must refuse a key naming a secret input",
+            )
+            assertEquals(-1, deps.processCount(), "the refused resume must not create a run")
+            val body = response.bodyAsText()
+            assertFalse(body.contains("s3cret-mr-value"), "the 400 must not carry the stored input value")
+            assertFalse(body.contains("mr-s3cret-mr-value"), "the 400 must not carry the rendered key")
         }
 }
