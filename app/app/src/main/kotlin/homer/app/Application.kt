@@ -5,6 +5,8 @@ import homer.app.auth.CsrfProtection
 import homer.app.config.logLevelSystemProps
 import homer.app.config.resolveLlmPrice
 import homer.app.di.appModule
+import homer.app.di.hookModule
+import homer.app.di.processModule
 import homer.app.executors.ProcessExecutor
 import homer.app.infra.PasswordVerifier
 import homer.app.infra.SysEnvResolver
@@ -335,6 +337,8 @@ private fun Application.installKoin(config: AppConfig) {
             },
             // Application modules
             appModule,
+            processModule,
+            hookModule,
         )
     }
 }

@@ -52,6 +52,15 @@ class AgentDirsTest {
     private fun relativeWalk(): List<String> = AgentDirs.walkAgentDirs(root).map { it.invariantSeparatorsPathString }.sorted()
 
     @Test
+    fun `the scanner's agent-name pattern is the kernel pattern, not a copy`() {
+        // One charset for a directory name and a hook target: a widening that reaches one
+        // must reach both, so AgentDirs aliases the pattern defined in models.
+        val kernel = homer.app.models.AGENT_NAME_PATTERN
+        assertEquals(kernel, AgentDirs.AGENT_NAME_PATTERN)
+        assertTrue(AgentDirs.AGENT_NAME_PATTERN === kernel)
+    }
+
+    @Test
     fun `walk yields definition directories and skips plain ones`() {
         writeAgent(root.resolve("one"), "one")
         writeAgent(root.resolve("two"), "two")

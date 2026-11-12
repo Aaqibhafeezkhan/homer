@@ -2052,6 +2052,21 @@ homer-inbox</code></pre>
         </article>
 
         <article class="f">
+          <h3>Status hooks <span class="where">agent.yaml</span></h3>
+          <p>An agent declares which agent to start when <em>a run of its own</em> reaches a status — any of the six,
+            including <code>KILLED</code> and <code>UNKNOWN</code>, so cleanup and restart triage stop needing a
+            command that may never run. Recorded with the status write and fired from every start path (cron, HTTP,
+            MCP, console retry, sub-run), exactly once across a restart, and owned by the triggering run's
+            owner. The target
+            is re-checked at fire time and must not form a cycle; chains are bounded by
+            <code>server.hooks.maxChainDepth</code>.</p>
+          <pre><code>hooks:
+  - FINISHED: collect_artifacts
+  - FAILED: notify_oncall
+  - KILLED: cleanup_workspace</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Parallel fan-out join <span class="where">shell</span></h3>
           <p><code>homer-join</code> starts N subs at once and resumes the parent <em>once</em>, after the last finishes,
             with every result keyed by interrupt id. Body on stdin. Validation runs before any sub starts; a failure

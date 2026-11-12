@@ -9,13 +9,19 @@ import org.junit.jupiter.api.Test
 
 class ContinuationSweepServiceTest {
     private val continuationService = mockk<ContinuationService>(relaxed = true)
+    private val hookService = mockk<HookService>(relaxed = true)
     private val resultTokenService = mockk<ResultTokenService>(relaxed = true)
 
     @Test
-    fun `each tick expires, retries, prunes settled continuations, then reaps tokens`() =
+    fun `each tick expires, retries and prunes continuations, retries and prunes hooks, then reaps tokens`() =
         runTest {
-            ContinuationSweepService(continuationService, resultTokenService, intervalSec = 1, logger = TestFixtures.mockLogger())
-                .start(backgroundScope)
+            ContinuationSweepService(
+                continuationService,
+                resultTokenService,
+                hookService,
+                intervalSec = 1,
+                logger = TestFixtures.mockLogger(),
+            ).start(backgroundScope)
 
             advanceTimeBy(1_001L)
 
@@ -23,6 +29,8 @@ class ContinuationSweepServiceTest {
                 continuationService.sweepExpired()
                 continuationService.sweepRetries()
                 continuationService.pruneSettled()
+                hookService.sweepRetries()
+                hookService.pruneSettled()
                 resultTokenService.sweepExpired()
             }
         }

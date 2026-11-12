@@ -60,4 +60,40 @@ class AgentDefinitionWriteGateTest {
             denial,
         )
     }
+
+    @Test
+    fun `a definition whose hook names something that is not a run status is schema-invalid`() {
+        val denial =
+            gate.denial(
+                "agent.yaml",
+                "agent.yaml",
+                AgentFixtures.validAgentYaml() + "\nhooks:\n  - STARTED: notifier\n",
+            ) { true }
+
+        assertIs<FileOpResult.SchemaInvalid>(denial)
+    }
+
+    @Test
+    fun `a definition whose hook targets the declaring agent is schema-invalid`() {
+        val denial =
+            gate.denial(
+                "agent.yaml",
+                "agent.yaml",
+                AgentFixtures.validAgentYaml() + "\nhooks:\n  - FINISHED: test_agent_yaml\n",
+            ) { true }
+
+        assertIs<FileOpResult.SchemaInvalid>(denial)
+    }
+
+    @Test
+    fun `a definition with a valid hook passes`() {
+        val denial =
+            gate.denial(
+                "agent.yaml",
+                "agent.yaml",
+                AgentFixtures.validAgentYaml() + "\nhooks:\n  - FINISHED: notifier\n",
+            ) { true }
+
+        assertNull(denial)
+    }
 }

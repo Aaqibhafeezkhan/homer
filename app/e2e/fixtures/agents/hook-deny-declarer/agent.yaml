@@ -1,0 +1,7 @@
+name: hook-deny-declarer
+description: Declares a FINISHED hook at hook-echo-deny, which its scoped owner has no grant for
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo declarer-done'"
+hooks:
+  - FINISHED: hook-echo-deny

@@ -9,6 +9,7 @@ import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.services.CooldownDecision
 import org.jetbrains.exposed.v1.core.LongColumnType
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
@@ -50,6 +51,7 @@ class ProcessRepository(
     data class ObtainResult(
         val processId: Int,
         val evicted: EvictedProcess?,
+        val hooks: RecordedHooks = RecordedHooks(),
     )
 
     /** The terminal row evicted to make room, with enough detail for the caller to log it and purge its workspace. */
@@ -60,10 +62,11 @@ class ProcessRepository(
         val artifactsDir: java.nio.file.Path?,
     )
 
-    /** Outcome of a guarded status write: whether it applied, and the row's agent name. */
+    /** Outcome of a guarded status write: whether it applied, the row's agent name and its hook rows. */
     data class TransitionResult(
         val updated: Boolean,
         val agentName: String?,
+        val hooks: RecordedHooks = RecordedHooks(),
     )
 
     /**
@@ -104,6 +107,7 @@ class ProcessRepository(
         parentProcessId: Int? = null,
         rootProcessId: Int? = null,
         tags: List<String> = emptyList(),
+        hookRecording: HookRecording? = null,
         nowSec: Long = System.currentTimeMillis() / 1000,
     ): ObtainResult =
         db.query {
@@ -149,7 +153,9 @@ class ProcessRepository(
                 this[ProcessTags.processId] = newId
                 this[ProcessTags.tag] = tag
             }
-            ObtainResult(newId, evicted)
+            // CREATED hooks ride the INSERT's own transaction: a restart between the row and
+            // the fire loses nothing. See ADR-0107.
+            ObtainResult(newId, evicted, hookRecording.record(newId, agentName, ProcessStatus.CREATED, owner, nowSec))
         }
 
     /**
@@ -185,6 +191,47 @@ class ProcessRepository(
                 ?: ProcessStatus.UNKNOWN
         }
 
+    /** One transaction: [accepts] judges the current status, then writes [newStatus] and records hooks; a rejection records none. */
+    private suspend fun guardedTransition(
+        processId: Int,
+        newStatus: ProcessStatus,
+        nowSec: Long,
+        hookRecording: HookRecording?,
+        clearCommand: Boolean,
+        reportAgentOnReject: Boolean,
+        accepts: (ProcessStatus) -> Boolean,
+    ): TransitionResult =
+        db.query {
+            val row = transitionRowTx(processId) ?: return@query TransitionResult(updated = false, agentName = null)
+            if (!accepts(ProcessStatus.valueOf(row[Processes.status]))) {
+                return@query TransitionResult(updated = false, agentName = if (reportAgentOnReject) row[Processes.agentName] else null)
+            }
+            writeStatusTx(processId, row, newStatus, nowSec, clearCommand)
+            settledTransitionTx(processId, row, newStatus, hookRecording, nowSec)
+        }
+
+    /** Appends [newStatus] to history and writes status (`endedAt` when terminal) in the caller's transaction. */
+    private fun writeStatusTx(
+        processId: Int,
+        row: ResultRow,
+        newStatus: ProcessStatus,
+        nowSec: Long,
+        clearCommand: Boolean,
+    ) {
+        val newHistory = decodeHistory(row[Processes.history]) + (nowSec to newStatus)
+        Processes.update({ Processes.id eq processId }) {
+            it[status] = newStatus.name
+            it[history] = encodeHistory(newHistory)
+            if (clearCommand) {
+                it[currentCommand] = null
+                it[currentCommandStart] = null
+            }
+            // Same UPDATE that sets the status, so the terminal time can never
+            // disagree with it. See ADR-0051.
+            if (newStatus.name in TERMINAL_STATUS_NAMES) it[endedAt] = nowSec
+        }
+    }
+
     /**
      * Appends [newStatus] to history and writes it when the row exists and
      * [guard] accepts its current status (null guard = unconditional). The
@@ -196,61 +243,24 @@ class ProcessRepository(
         newStatus: ProcessStatus,
         nowSec: Long,
         guard: Set<ProcessStatus>?,
+        hookRecording: HookRecording? = null,
     ): TransitionResult =
-        db.query {
-            // Projected, not selectAll(): this runs under the write lock, and reading the
-            // history/executions blobs of the row just to write them back is pure cost.
-            // See ADR-0020 (2026-09-29 amendment).
-            val row =
-                Processes
-                    .select(Processes.status, Processes.history, Processes.agentName)
-                    .where { Processes.id eq processId }
-                    .singleOrNull()
-                    ?: return@query TransitionResult(updated = false, agentName = null)
-            val current = ProcessStatus.valueOf(row[Processes.status])
-            if (guard != null && current !in guard) {
-                return@query TransitionResult(updated = false, agentName = row[Processes.agentName])
-            }
-            val newHistory = decodeHistory(row[Processes.history]) + (nowSec to newStatus)
-            Processes.update({ Processes.id eq processId }) {
-                it[status] = newStatus.name
-                it[history] = encodeHistory(newHistory)
-                // Same UPDATE that sets the status, so the terminal time can never
-                // disagree with it. See ADR-0051.
-                if (newStatus.name in TERMINAL_STATUS_NAMES) it[endedAt] = nowSec
-            }
-            TransitionResult(updated = true, agentName = row[Processes.agentName])
+        guardedTransition(processId, newStatus, nowSec, hookRecording, clearCommand = false, reportAgentOnReject = true) {
+            guard == null || it in guard
         }
 
     /**
      * Transitions a CREATED/WORKING process to KILLED, clearing the current
-     * command. Returns the agent name when it actually transitioned (so the
-     * caller can cancel the job and broadcast), or null otherwise.
+     * command. Its agent name is set when it actually transitioned (so the caller
+     * can cancel the job and broadcast), and null otherwise.
      */
     suspend fun killTransition(
         processId: Int,
         nowSec: Long,
-    ): String? =
-        db.query {
-            // Projected like transitionStatus: status for the guard, history to append to,
-            // agent_name for the caller's broadcast. See ADR-0020 (2026-09-29 amendment).
-            val row =
-                Processes
-                    .select(Processes.status, Processes.history, Processes.agentName)
-                    .where { Processes.id eq processId }
-                    .singleOrNull()
-                    ?: return@query null
-            val current = ProcessStatus.valueOf(row[Processes.status])
-            if (current != ProcessStatus.WORKING && current != ProcessStatus.CREATED) return@query null
-            val newHistory = decodeHistory(row[Processes.history]) + (nowSec to ProcessStatus.KILLED)
-            Processes.update({ Processes.id eq processId }) {
-                it[status] = ProcessStatus.KILLED.name
-                it[history] = encodeHistory(newHistory)
-                it[currentCommand] = null
-                it[currentCommandStart] = null
-                it[endedAt] = nowSec
-            }
-            row[Processes.agentName]
+        hookRecording: HookRecording? = null,
+    ): TransitionResult =
+        guardedTransition(processId, ProcessStatus.KILLED, nowSec, hookRecording, clearCommand = true, reportAgentOnReject = false) {
+            it == ProcessStatus.WORKING || it == ProcessStatus.CREATED
         }
 
     /**
@@ -351,14 +361,17 @@ class ProcessRepository(
      * history entry and returns their ids. Called once on boot — the coroutines
      * that drove them are gone. See `StartupReconciliation`.
      */
-    suspend fun markInterruptedAsUnknown(nowSec: Long): List<Int> =
+    suspend fun markInterruptedAsUnknown(
+        nowSec: Long,
+        hookRecording: HookRecording? = null,
+    ): InterruptedResult =
         db.query {
-            val ids =
+            val rows =
                 Processes
-                    .select(Processes.id)
+                    .select(Processes.id, Processes.agentName, Processes.owner)
                     .where { Processes.status inList ACTIVE_STATUS_NAMES }
-                    .map { it[Processes.id] }
-            if (ids.isNotEmpty()) {
+                    .map { Triple(it[Processes.id], it[Processes.agentName], it[Processes.owner]) }
+            if (rows.isNotEmpty()) {
                 // One bulk UPDATE regardless of row count: SQLite's json_insert
                 // appends the (nowSec, UNKNOWN) entry to each row's history array
                 // (`$[#]` = append). The element is encoded by the same serializer
@@ -373,7 +386,10 @@ class ProcessRepository(
                     listOf(TextColumnType() to element, LongColumnType() to nowSec),
                 )
             }
-            ids
+            // UNKNOWN hook rows ride that write: no other transition will ever fire for
+            // these runs. See ADR-0107.
+            val recorded = rows.map { (id, agent, owner) -> hookRecording.record(id, agent, ProcessStatus.UNKNOWN, owner, nowSec) }
+            InterruptedResult(rows.map { it.first }, RecordedHooks(recorded.flatMap { it.rows }, recorded.flatMap { it.shed }))
         }
 
     /**

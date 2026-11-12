@@ -25,7 +25,7 @@ auto-loads when you read files in its package (root §9 lists each as canonical 
 
 ```
 HTTP API     Application.kt + its configureXxx files + routes (Ktor + bearer auth)
-Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · ContinuationService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
+Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · ContinuationService · HookService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
 Execution    ProcessExecutor · AgentExecutor · CommandExecutorFactory · RunnerRegistry · RunnerClaimQueue · ExternalRunnerDomain · ExternalRunnerInstance · RunnerStatusReport · LockManager · ParallelRunsManager
 Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness · OpencodeHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
 Infra        ShellExecutor · Workspace · FileOperations · ResultToEnvMapper · SysEnvResolver · TelemetryService · LangfuseClient
@@ -125,14 +125,14 @@ marked `Constraint:`.
   every start path runs through, `AgentRunStarter.start` and the direct-build starts in
   `routes/RunHandlers.kt` alike; `CronSchedulerService` reads the flag to skip its tick. Nearly
   every entry point converges on `AgentRunStarter.start`, so this one gate covers HTTP, MCP,
-  `!<agent>` hops, dispatches and continuations; retry, resume and debug build their process
-  directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`), so a
-  fourth start path must not be added without one. An **admitted** start (`admitted = true`)
+  `!<agent>` hops, dispatches, continuations and hook fires; retry, resume and debug build their
+  process directly and take the gate in `respondStartedUnderRootSpan` (`routes/RunHandlers.kt`),
+  so a fourth start path must not be added without one. An **admitted** start (`admitted = true`)
   skips the queue: it is part of a run the window already let in — a `!<agent>` hop, a dispatch,
-  a continuation fire — and parking it would leave that run unable to finish. Only the paths
-  that derive the parent themselves (`AgentSubRunStarter`, `DispatchService`,
-  `ContinuationFireService`) pass the flag; every other start, parentless or with a
-  caller-supplied parent, parks. See ADR-0092.
+  a continuation fire, a hook fire — and parking it would leave that run unable to finish. Only
+  the paths that derive the parent themselves (`AgentSubRunStarter`, `DispatchService`,
+  `ContinuationFireService`, `HookFireService`) pass the flag; every other start, parentless or
+  with a caller-supplied parent, parks. See ADR-0092.
   - **The shutdown drain reuses this gate.** The same `admitted` rule covers the drain window
     (the flag reaches the service as an injected `isDraining()`, ADR-0083): an admitted start
     whose parent is still `WORKING` runs, and an unadmitted one is **refused with
@@ -159,7 +159,8 @@ marked `Constraint:`.
     not constants; a shed or expired start leaves no process row and names no input value.
 - **`StartupReconciliation`** — runs once before traffic: interrupted runs to `UNKNOWN`, their
   questions expired, queued run messages of every ended run undelivered, purge times stamped,
-  and dispatches and continuations left mid-fire settled
+  and dispatches, continuations and hooks left mid-fire settled, then the PENDING ones whose
+  trigger already happened fired
   (see [`services/persistence/CLAUDE.md`](app/src/main/kotlin/homer/app/services/persistence/CLAUDE.md)).
 - **`LockManager`** — the three `onCollision` strategies (`WAIT`,
   `SKIP_CURRENT`, `KILL_OLD_RUN_CURRENT`). `Process` takes the lock **before** the
@@ -223,6 +224,16 @@ marked `Constraint:`.
   **SQLite-backed via `ContinuationRepository`**; dispatch's claim-CAS / fire /
   sweep / boot-reconciliation model, with a distinct `EXPIRED` state; the fire
   itself (claim, resume payload, start, retry or fail) is `ContinuationFireService`. ADR-0023.
+- **`HookService`** — agent-declared status hooks: a target agent fired when a run of the
+  *declaring* agent reaches a status, from every start path. **SQLite-backed via
+  `HookRepository`** (schema v31); the rows are written by `ProcessManager`'s status
+  transitions and handed here after commit, and the fire itself (claim, target and grant
+  re-check, start, bounded retry or drop) is `HookFireService`. The run belongs to the
+  triggering run's owner. ADR-0107.
+  - **Constraint:** the rows are INSERTed inside the status write's transaction and fired
+    **after** it commits — a fire starts a run, whose own row write must not nest in the
+    triggering transaction (SQLite rule 3). A hook failure is logged and settled on the row;
+    it never reaches the status write.
 - **`QuestionsWorkspaceSetup`** — materializes the question tooling into each
   workspace before commands run (`Process.execute`): the `homer-ask` and `homer-inbox` helpers at
   `{projectRoot}/.homer/bin`, and a `.homer/mcp.json` when `server.mcp.enabled`.

@@ -54,8 +54,16 @@ internal class FiredRecords<T>(
     // leading column lets <table>_status_created seek instead of scanning.
     private val settledStatuses = statuses - setOf(PENDING, DISPATCHING)
 
+    /** How many PENDING rows exist right now, in the caller's transaction. */
+    fun pendingCountTx(): Int =
+        table
+            .selectAll()
+            .where { table.status eq PENDING }
+            .count()
+            .toInt()
+
     /** Whether [maxPending] PENDING rows already exist: the registration cap, in the INSERT's transaction. */
-    fun pendingCapReachedTx(maxPending: Int): Boolean = table.selectAll().where { table.status eq PENDING }.count() >= maxPending.toLong()
+    fun pendingCapReachedTx(maxPending: Int): Boolean = pendingCountTx() >= maxPending
 
     /** A PENDING row whose TTL has run out at [now]: an expiry sweep's pre-check and write share it. */
     fun lapsedAt(now: Long): Op<Boolean> =

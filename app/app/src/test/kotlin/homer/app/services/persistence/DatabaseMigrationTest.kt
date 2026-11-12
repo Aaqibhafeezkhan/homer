@@ -1153,6 +1153,139 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun `v30 database gains the pending_hooks table and its indexes`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("v30.db").toString()
+        val names =
+            listOf(
+                "pending_hooks_status_next_attempt",
+                "pending_hooks_process_id",
+                "pending_hooks_status_created",
+            )
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        val fresh =
+            DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c -> c.createStatement().use { indexDefinitions(it, names) } }
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                st.execute("DROP TABLE pending_hooks")
+                st.execute("PRAGMA user_version = 30")
+            }
+        }
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                assertEquals(31, userVersion(st))
+                assertEquals(
+                    listOf(
+                        "id",
+                        "process_id",
+                        "declaring_agent",
+                        "status",
+                        "agent_name",
+                        "owner",
+                        "created_at",
+                        "expires_at",
+                        "triggering_status",
+                        "fire_attempts",
+                        "next_attempt_at",
+                        "fired_process_id",
+                        "fired_at",
+                        "error",
+                    ),
+                    columnNames(st, "pending_hooks"),
+                )
+                assertEquals(fresh, indexDefinitions(st, names))
+            }
+        }
+    }
+
+    @Test
+    fun `v31 database stamped by the cooldown release gains the pending_hooks table and its indexes`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("v31-cooldown.db").toString()
+        val names =
+            listOf(
+                "pending_hooks_status_next_attempt",
+                "pending_hooks_process_id",
+                "pending_hooks_status_created",
+            )
+        // The definitions a fresh database ends up with, so the upgrade's schema bootstrap can
+        // be compared against what `Tables.kt` declares.
+        val freshPath = dir.resolve("fresh.db").toString()
+        DatabaseService(freshPath, logger).also { it.migrate() }.close()
+        val freshIndexes =
+            DriverManager.getConnection("jdbc:sqlite:$freshPath").use { c ->
+                c.createStatement().use { indexDefinitions(it, names) }
+            }
+        // Simulate a database the cooldown release stamped: v31 with the cooldown key column
+        // and its two indexes, but no pending_hooks — that release folded both features into
+        // one v31 step, so its migrate() skipped everything at user_version = 31 and only
+        // `SchemaUtils.create` above can add the missing table. Regression coverage for the
+        // fold: the hook queue and its three indexes must arrive from the schema bootstrap
+        // alone, or a production database upgraded through the cooldown release never gets
+        // them and every hook query fails.
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                st.execute(
+                    "CREATE TABLE processes (id INTEGER PRIMARY KEY AUTOINCREMENT, status VARCHAR(16) NOT NULL, " +
+                        "agent_name VARCHAR(255) NOT NULL, current_command TEXT, current_command_start BIGINT, " +
+                        "purge_at BIGINT, record_purge_at BIGINT, cost_usd DOUBLE PRECISION DEFAULT 0.0 NOT NULL, " +
+                        "cost_source VARCHAR(16) DEFAULT 'cli' NOT NULL, artifacts_dir TEXT, history TEXT NOT NULL, " +
+                        "executions TEXT NOT NULL, runner_state TEXT, owner TEXT, trace_id VARCHAR(32), " +
+                        "parent_process_id INT, root_process_id INT, created_at BIGINT, ended_at BIGINT, " +
+                        "secret_input_keys TEXT, retain_artifacts TEXT, workspace_purged_at BIGINT, " +
+                        "retained_truncated BOOLEAN, failure_reason TEXT, failure_reason_run_id INT, " +
+                        "cooldown_key TEXT)",
+                )
+                st.execute("CREATE INDEX processes_agent_cooldown_key ON processes (agent_name, cooldown_key)")
+                st.execute(
+                    "CREATE INDEX processes_agent_cooldown_status_ended " +
+                        "ON processes (agent_name, cooldown_key, status, ended_at)",
+                )
+                st.execute(
+                    "INSERT INTO processes (status, agent_name, history, executions, created_at, ended_at, cooldown_key) " +
+                        "VALUES ('FINISHED', 'demo', '[]', '[]', 100, 200, 'mr:15')",
+                )
+                st.execute("PRAGMA user_version = 31")
+            }
+        }
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                assertEquals(31, userVersion(st))
+                assertEquals(
+                    listOf(
+                        "id",
+                        "process_id",
+                        "declaring_agent",
+                        "status",
+                        "agent_name",
+                        "owner",
+                        "created_at",
+                        "expires_at",
+                        "triggering_status",
+                        "fire_attempts",
+                        "next_attempt_at",
+                        "fired_process_id",
+                        "fired_at",
+                        "error",
+                    ),
+                    columnNames(st, "pending_hooks"),
+                )
+                assertEquals(freshIndexes, indexDefinitions(st, names))
+                // The cooldown release's own column and indexes are untouched by the upgrade.
+                assertTrue("cooldown_key" in columnNames(st, "processes"))
+                for (name in listOf("processes_agent_cooldown_key", "processes_agent_cooldown_status_ended")) {
+                    assertTrue(name in indexNames(st, "processes"), name)
+                }
+                assertEquals(listOf("FINISHED"), processStatuses(st))
+            }
+        }
+    }
+
+    @Test
     fun `every question page shape stays on an index with no sort at 150k rows, with and without statistics`(
         @TempDir dir: Path,
     ) = runTest {
@@ -2626,6 +2759,27 @@ class DatabaseMigrationTest {
             ),
             columnStep("processes.failure_reason", 1, 30, Processes, "failure_reason", "TEXT", "failure_reason_run_id"),
             columnStep("processes.cooldown_key", 1, 31, Processes, "cooldown_key", "TEXT"),
+            sqlStep(
+                "v31 pending_hooks_status_next_attempt",
+                1,
+                31,
+                PendingHooks,
+                "CREATE INDEX IF NOT EXISTS pending_hooks_status_next_attempt ON pending_hooks (status, next_attempt_at)",
+            ),
+            sqlStep(
+                "v31 pending_hooks_process_id",
+                1,
+                31,
+                PendingHooks,
+                "CREATE INDEX IF NOT EXISTS pending_hooks_process_id ON pending_hooks (process_id)",
+            ),
+            sqlStep(
+                "v31 pending_hooks_status_created",
+                1,
+                31,
+                PendingHooks,
+                "CREATE INDEX IF NOT EXISTS pending_hooks_status_created ON pending_hooks (status, created_at)",
+            ),
         )
 
     /** The shape a table had one version before a step: the model's columns minus the ones it adds. */
