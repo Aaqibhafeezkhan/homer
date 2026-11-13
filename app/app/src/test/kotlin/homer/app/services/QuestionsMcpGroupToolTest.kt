@@ -1,5 +1,6 @@
 package homer.app.services
 
+import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.DispatchGroupTooLargeException
 import homer.app.fixtures.TestFixtures.firstText
 import io.mockk.coEvery
@@ -132,6 +133,21 @@ class QuestionsMcpGroupToolTest {
 
             assertTrue(result.isError == true)
             assertTrue(firstText(result).contains("8"))
+        }
+
+    // An unknown (or unauthorized) target reaches the agent as a tool error, exactly as the
+    // single-question tool reports it: `runTool` turns the service's exception into an isError
+    // result rather than failing the MCP call.
+    @Test
+    fun `ask_and_dispatch_group reports an unknown agent as a tool error`() =
+        runTest {
+            coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } throws
+                DispatchAgentNotFoundException("nope")
+
+            val result = call(args(agent = "nope"))
+
+            assertTrue(result.isError == true)
+            assertTrue(firstText(result).contains("nope"))
         }
 
     @Test

@@ -877,6 +877,30 @@ class CallbackRoutesTest {
             assertEquals(HttpStatusCode.BadRequest, response.status)
         }
 
+    // A target that exists but never opted in is refused as 403, distinct from the 404 an
+    // unknown or unauthorized one gets — the same mapping the single-dispatch callback has.
+    @Test
+    fun `dispatch group to a non-dispatchable agent responds 403`() =
+        testApplication {
+            val service = newService()
+            val token = runBlocking { service.registerProcess(1, "agent-a") }
+            mountCallbackRoutes {
+                every { questionsService } returns service
+                coEvery { dispatchGroupService.create(any(), any(), any(), any(), any(), any()) } throws
+                    AgentNotDispatchableException("target")
+            }
+
+            val response =
+                client.post("/api/v1/callback/dispatch-groups") {
+                    header(HttpHeaders.Authorization, "Bearer $token")
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"questions":[{"text":"q"}],"agent":"target"}""")
+                }
+
+            assertEquals(HttpStatusCode.Forbidden, response.status)
+            assertContains(response.bodyAsText(), "not an allowed dispatch target")
+        }
+
     @Test
     fun `dispatch group past the pending cap responds 429 and to an unknown agent 404`() =
         testApplication {

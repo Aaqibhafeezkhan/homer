@@ -1136,6 +1136,33 @@ class DatabaseMigrationTest {
     }
 
     @Test
+    fun `v30 database gains the dispatch_group_questions member index`(
+        @TempDir dir: Path,
+    ) = runTest {
+        val dbPath = dir.resolve("v30.db").toString()
+        val names = listOf("dispatch_group_questions_question_id")
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        val fresh = DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c -> c.createStatement().use { indexDefinitions(it, names) } }
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                // The index alone: SchemaUtils.create only indexes a table it creates, so on a
+                // database whose member table already exists the v31 step's raw DDL is the only
+                // thing that can bring the index back — which is what makes this a check on the
+                // migration's own SQL against the Tables.kt declaration.
+                st.execute("DROP INDEX dispatch_group_questions_question_id")
+                st.execute("PRAGMA user_version = 30")
+            }
+        }
+        DatabaseService(dbPath, logger).also { it.migrate() }.close()
+        DriverManager.getConnection("jdbc:sqlite:$dbPath").use { c ->
+            c.createStatement().use { st ->
+                assertEquals(31, userVersion(st))
+                assertEquals(fresh, indexDefinitions(st, names))
+            }
+        }
+    }
+
+    @Test
     fun `every question page shape stays on an index with no sort at 150k rows, with and without statistics`(
         @TempDir dir: Path,
     ) = runTest {

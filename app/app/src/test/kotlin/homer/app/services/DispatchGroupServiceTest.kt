@@ -24,13 +24,24 @@ import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
-import org.slf4j.LoggerFactory
+import org.slf4j.Logger
+import java.lang.reflect.Proxy
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DispatchGroupServiceTest {
+    /** Every log call the service makes, so a test can assert a value never reaches one. */
+    private val loggedCalls = mutableListOf<String>()
+    private val logger: Logger =
+        Proxy.newProxyInstance(javaClass.classLoader, arrayOf(Logger::class.java)) { _, method, args ->
+            loggedCalls +=
+                method.name + " " + (args ?: emptyArray()).joinToString { a -> if (a is Array<*>) a.joinToString() else a.toString() }
+            if (method.returnType == Boolean::class.javaPrimitiveType) true else null
+        } as Logger
+
     private val repo = mockk<DispatchRepository>(relaxed = true)
     private val questions = mockk<QuestionsService>(relaxed = true)
     private val agents = mockk<AgentsService>()
@@ -53,7 +64,7 @@ class DispatchGroupServiceTest {
         inputResolver,
         processManager,
         broadcaster,
-        LoggerFactory.getLogger("t"),
+        logger,
         config,
         questionsConfig,
     ) { 1000L }
@@ -150,6 +161,20 @@ class DispatchGroupServiceTest {
             liveOrigin()
             every { questions.validateQuestionInput(any(), any()) } throws
                 ValidationException("question input refused", "options")
+
+            assertFailsWith<ValidationException> { create(service(), specs(2)) }
+            coVerify(exactly = 0) { repo.createGroup(any(), any(), any(), any()) }
+        }
+
+    // The target's inputs are gated exactly as a single dispatch's: a required input neither the
+    // caller's params nor the answer nor the origin run's stored inputs can supply refuses the
+    // whole group before any row exists. ADR-0101.
+    @Test
+    fun `create refuses a target whose required inputs cannot be satisfied`() =
+        runTest {
+            liveOrigin()
+            every { inputResolver.validateSatisfiable(any(), any()) } throws
+                ValidationException("Required input 'ticket' (input) has no value", "params")
 
             assertFailsWith<ValidationException> { create(service(), specs(2)) }
             coVerify(exactly = 0) { repo.createGroup(any(), any(), any(), any()) }
@@ -335,4 +360,49 @@ class DispatchGroupServiceTest {
 
             assertEquals(DispatchGroupService.MAX_ANSWER_BYTES, service().aggregateAnswers(5)!!.length)
         }
+
+    // ── secrets ───────────────────────────────────────────────────────────────────────
+
+    // The two values a group carries — a secret `params` entry and the operator's answers — are
+    // stored and delivered by name, never echoed: not in a log line, not in a refusal message, and
+    // not in the failure the group settles with, which `markFailed` stores and the dispatch API
+    // serves. The param name is snapshotted with the row so the fire path can redact the value it
+    // delivers. §12 rule 7, ADR-0052.
+    @Test
+    fun `a secret param value and a secret answer reach no log line or failure message`() =
+        runTest {
+            val agent = mockk<Agent>(relaxed = true)
+            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { agent.secretParamNames } returns setOf("token")
+            every { agents.agents } returns mapOf("h" to agent)
+            every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
+            val dispatchSlot = slot<Dispatch>()
+            coEvery { repo.createGroup(any(), capture(dispatchSlot), any(), any()) } returns GroupCreateOutcome.Created(5)
+
+            create(service(), specs(2), params = mapOf("token" to PARAM_SECRET))
+
+            assertEquals(setOf("token"), dispatchSlot.captured.secretParamNames)
+
+            coEvery { repo.groupMembers(5) } returns
+                listOf(
+                    DispatchRepository.GroupMember("q1", ANSWER_SECRET + "x".repeat(DispatchGroupService.MAX_ANSWER_BYTES)),
+                    DispatchRepository.GroupMember("q2", ANSWER_SECRET),
+                )
+            val refused = assertFailsWith<DispatchGroupAnswersTooLargeException> { service().aggregateAnswers(5) }
+
+            // The refusal names the bound, which is what the agent needs to act on.
+            assertTrue(refused.message!!.contains(DispatchGroupService.MAX_ANSWER_BYTES.toString()))
+            assertTrue(loggedCalls.isNotEmpty(), "the create path must log something for this to mean anything")
+            assertTrue(
+                loggedCalls.none { it.contains(PARAM_SECRET) || it.contains(ANSWER_SECRET) },
+                loggedCalls.toString(),
+            )
+            assertFalse(refused.message!!.contains(PARAM_SECRET))
+            assertFalse(refused.message!!.contains(ANSWER_SECRET))
+        }
+
+    private companion object {
+        const val PARAM_SECRET = "s3cr3t-param-value"
+        const val ANSWER_SECRET = "s3cr3t-answer"
+    }
 }
