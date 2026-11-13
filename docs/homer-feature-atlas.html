@@ -2057,7 +2057,7 @@ homer-inbox</code></pre>
         <article class="f">
           <h3>Grouped ask and dispatch <span class="where">shell · mcp</span></h3>
           <p>Registers several questions with one target agent: it starts once, after every question is answered, with
-            the answers in question order.</p>
+            the answers in question order. A group holds at most <code>maxGroupSize</code> questions (8 by default).</p>
           <pre><code>homer-ask ask-and-dispatch-group \
   --question "Which region?" --option us-east --option eu-west \
   --question "Which service?" \

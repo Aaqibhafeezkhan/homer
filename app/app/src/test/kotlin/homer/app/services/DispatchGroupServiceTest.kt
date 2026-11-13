@@ -11,7 +11,9 @@ import homer.app.exceptions.ValidationException
 import homer.app.infra.AgentInputResolver
 import homer.app.models.Agent
 import homer.app.models.AgentDispatchConfig
+import homer.app.models.Command
 import homer.app.models.DispatchConfig
+import homer.app.models.Param
 import homer.app.models.ProcessInfo
 import homer.app.models.QuestionsConfig
 import homer.app.services.persistence.DispatchRepository
@@ -371,10 +373,16 @@ class DispatchGroupServiceTest {
     @Test
     fun `a secret param value and a secret answer reach no log line or failure message`() =
         runTest {
-            val agent = mockk<Agent>(relaxed = true)
-            every { agent.dispatch } returns AgentDispatchConfig(enabled = true)
-            every { agent.secretParamNames } returns setOf("token")
-            every { agents.agents } returns mapOf("h" to agent)
+            // A real Agent, so both ADR-0052 snapshots derive from the same `secret: true`
+            // input and the group path is pinned on the envName half like the single path.
+            val target =
+                Agent(
+                    name = "h",
+                    commands = listOf(Command.Cmd(cmd = listOf("echo"))),
+                    dispatch = AgentDispatchConfig(enabled = true),
+                    inputs = listOf(Param(paramName = "token", envName = "API_TOKEN", secret = true)),
+                )
+            every { agents.agents } returns mapOf("h" to target)
             every { questions.registrationFor(7) } returns QuestionsService.Registration("asker", closed = false)
             val dispatchSlot = slot<Dispatch>()
             coEvery { repo.createGroup(any(), capture(dispatchSlot), any(), any()) } returns GroupCreateOutcome.Created(5)
@@ -382,6 +390,7 @@ class DispatchGroupServiceTest {
             create(service(), specs(2), params = mapOf("token" to PARAM_SECRET))
 
             assertEquals(setOf("token"), dispatchSlot.captured.secretParamNames)
+            assertEquals(setOf("API_TOKEN"), dispatchSlot.captured.secretInputKeys)
 
             coEvery { repo.groupMembers(5) } returns
                 listOf(
