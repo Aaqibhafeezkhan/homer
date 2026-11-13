@@ -356,4 +356,33 @@ class CmdExecutorTest {
                 )
             }
         }
+
+    @Test
+    fun `the step's capped timeout and interrupt grace reach the shell`() =
+        runTest {
+            // A stop step runs under the run's hard deadline and always under a grace, so the
+            // step's own `timeout` must not win here. See ADR-0108.
+            val command = Command.Cmd(cmd = listOf("echo", "stop"), timeout = 600)
+            val stopStepContext = executionContext.copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
+
+            every { mockFileOperations.fileSize(mockStdOutPath) } returns 0
+            every { mockFileOperations.readText(mockStdOutPath) } returns ""
+            coEvery {
+                mockShellExecutor.cmd(any(), any(), any(), any(), any(), any(), any())
+            } returns TestFixtures.mockCommandResult(exitCode = 0, stdOut = mockStdOutPath, stdErr = mockStdErrPath)
+
+            cmdExecutor.execute(command, stopStepContext, mockSpan)
+
+            coVerify {
+                mockShellExecutor.cmd(
+                    command = any(),
+                    stdOut = any(),
+                    stdErr = any(),
+                    stdIn = any(),
+                    env = any(),
+                    timeout = 5.seconds,
+                    interruptGrace = 30.seconds,
+                )
+            }
+        }
 }

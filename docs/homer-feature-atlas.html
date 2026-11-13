@@ -814,6 +814,27 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
         </article>
 
         <article class="f">
+          <h3>Graceful stop <span class="where">agent.yaml · k8s runner</span></h3>
+          <p>Opt in to letting an agent save state when a run is cut short. A step with <code>onTimeout: stop</code> has
+            its own <code>timeout</code> stop the run gracefully instead of failing it, and a Kubernetes runner with
+            <code>gracefulStopSeconds</code> stops the run that many seconds before <code>maxRunSeconds</code> — either
+            way the agent's <code>onStop:</code> steps run once, in order, under the run's remaining deadline, with
+            <code>HMR_STOP_REASON</code>, <code>HMR_STOP_STEP_INDEX</code>, <code>HMR_STOP_STEP_LABEL</code>,
+            <code>HMR_STOP_DEADLINE</code> and (for an interrupted LLM step) <code>HMR_STOP_SESSION_ID</code> telling
+            them what happened. The interrupted step gets <code>interruptGraceSeconds</code> to exit after SIGINT before
+            it is killed, and its spend is still accounted. The run ends <code>FAILED</code> with a <code>stop</code>
+            record naming the reason and how the stop steps went — no separate status.</p>
+          <pre><code>- !&lt;script&gt;
+  label: Run integration tests
+  timeout: 3600
+  onTimeout: stop          # default: fail
+  interruptGraceSeconds: 60 # default 30, 0..600
+  content: "pytest -q tests/integration"
+onStop:
+  - !&lt;script&gt; { label: Save report, content: 'cp report.xml "$HMR_ARTIFACTS_DIR/"' }</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Run ownership <span class="where">authz</span></h3>
           <p>Every run is stamped with the principal that caused it (<code>ci</code>, <code>hmac:github</code>,
             <code>session:alice</code>, <code>system:cron</code>) and inherited by sub-runs. Owners can always see and
@@ -2462,7 +2483,9 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
           <h3>Kubernetes runner <span class="where">server config</span></h3>
           <p>One ephemeral pod per run with a pod-local <code>emptyDir</code> workspace; content moves as gzip'd tar over
             the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
-            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
+            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>gracefulStopSeconds</code>
+            puts a soft deadline in front of it, interrupting the running step so the agent's <code>onStop:</code> steps can
+            save state before the pod goes; opt-in <code>workload: Job</code> runs
             the pod in a one-pod Job that waits out namespace quota and is removed by its TTL. A stalled API server fails
             the run after a fixed 30 s instead of holding it, while the exec and workspace streams stay open. An exec
             channel that closes while the pod still runs is reported as <code>ExecChannelLost</code> in the run's
@@ -2474,7 +2497,8 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
     resources: { limits: { cpu: "2", memory: 2Gi } }
     homerApiUrl: http://homer.homer.svc.cluster.local:8080
     workload: Job        # default Pod
-    maxRunSeconds: 7200</code></pre>
+    maxRunSeconds: 7200
+    gracefulStopSeconds: 300  # soft deadline 300 s earlier; needs maxRunSeconds</code></pre>
         </article>
 
         <article class="f">

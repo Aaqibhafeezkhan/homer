@@ -2759,6 +2759,7 @@ class DatabaseMigrationTest {
             ),
             columnStep("processes.failure_reason", 1, 30, Processes, "failure_reason", "TEXT", "failure_reason_run_id"),
             columnStep("processes.cooldown_key", 1, 31, Processes, "cooldown_key", "TEXT"),
+            columnStep("processes.stop", 1, 31, Processes, "stop", "TEXT"),
             sqlStep(
                 "v31 pending_hooks_status_next_attempt",
                 1,

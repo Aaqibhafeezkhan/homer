@@ -8,9 +8,3 @@ internal fun exceedsOutputCap(
     stdErr: Path,
     maxBytes: Long,
 ): Boolean = stdOut.toFile().length() > maxBytes || stdErr.toFile().length() > maxBytes
-
-/** Why a remote command was killed, for the note each shell executor appends to its stderr. */
-internal class KillCause {
-    var byTimeout = false
-    var byCap = false
-}

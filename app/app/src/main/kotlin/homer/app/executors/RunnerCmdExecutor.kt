@@ -114,7 +114,8 @@ class RunnerCmdExecutor(
                 stdErr = context.stdErr,
                 stdIn = command.execute,
                 env = targetEnv,
-                timeout = command.timeout.seconds,
+                timeout = context.timeoutFor(command),
+                interruptGrace = context.interruptGrace,
             )
 
         span.setOutputValue(context, fileOperations, target.redactor)

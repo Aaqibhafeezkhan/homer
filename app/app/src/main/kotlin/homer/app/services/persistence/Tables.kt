@@ -121,6 +121,11 @@ internal object Processes : Table("processes") {
     // keep reading after that. Served only to a caller who may see that run. See ADR-0058.
     val failureReasonRunId = integer("failure_reason_run_id").nullable()
 
+    // What a graceful stop did to the run — its cause, the step it interrupted and the stop
+    // steps' outcome — as a JSON blob, written once by the stop phase. Null for a run no
+    // graceful stop ended, and for rows from before v31. See ADR-0108.
+    val stop = text("stop").nullable()
+
     /**
      * The columns the record-level reads (the two purge sweeps and `costByTag`) use, and nothing else:
      * `history`, `executions` and `runner_state` are multi-MiB on a

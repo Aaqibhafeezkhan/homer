@@ -7,6 +7,7 @@ import homer.app.models.PodPhase
 import homer.app.models.ResourceSpec
 import homer.app.models.RunnerConfig
 import homer.app.models.RunnerState
+import homer.app.runners.RunDeadline
 import homer.app.runners.RunnerSessionParams
 import homer.app.services.ProcessManager
 import io.kubernetes.client.openapi.ApiException
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.assertThrows
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class KubernetesRunnerTest {
@@ -171,6 +173,32 @@ class KubernetesRunnerTest {
             assertEquals("k8s-dev", ready.alias)
             assertEquals(1L, ready.createdAt)
             assertEquals(1L, ready.readyAt)
+        }
+
+    @Test
+    fun `a graceful stop's deadline reaches the opened session, stamped from the pod's creation`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubCreatePod(api)
+            stubPodStatus(api, readyPod())
+            val stopping = config.copy(maxRunSeconds = 60, gracefulStopSeconds = 5)
+            val runner = KubernetesRunner("k8s-dev", stopping, api, dummyExecClient(), clock = { 1_000L })
+
+            // The pod reports no `startTime`, so the deadline falls back to the stamp Homer read
+            // when it created the pod (ADR-0108).
+            assertEquals(RunDeadline(softEpochSec = 56, hardEpochSec = 61), runner.openSession(params).runDeadline)
+        }
+
+    @Test
+    fun `without a graceful stop the opened session carries no run deadline`() =
+        runTest {
+            val api = mockk<CoreV1Api>(relaxed = true)
+            stubCreatePod(api)
+            stubPodStatus(api, readyPod())
+            val runner =
+                KubernetesRunner("k8s-dev", config.copy(maxRunSeconds = 60), api, dummyExecClient(), clock = { 1_000L })
+
+            assertNull(runner.openSession(params).runDeadline)
         }
 
     @Test

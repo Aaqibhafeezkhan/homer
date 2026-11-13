@@ -4,6 +4,7 @@ import homer.app.infra.ProcessJobRegistry
 import homer.app.models.ExecutionInfo
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
+import homer.app.models.RunStop
 import homer.app.models.RunnerState
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.PairSerializer
@@ -57,6 +58,10 @@ internal fun decodeRetainArtifacts(text: String) = columnJson.decodeFromString(s
 internal fun encodeRunnerState(value: RunnerState) = columnJson.encodeToString(RunnerState.serializer(), value)
 
 internal fun decodeRunnerState(text: String) = columnJson.decodeFromString(RunnerState.serializer(), text)
+
+internal fun encodeRunStop(value: RunStop) = columnJson.encodeToString(RunStop.serializer(), value)
+
+internal fun decodeRunStop(text: String) = columnJson.decodeFromString(RunStop.serializer(), text)
 
 // The four columns a status write needs — status for its guard, history to append to, and
 // agent_name/owner for the caller's broadcast and the hook rows it records — or null when the
@@ -204,5 +209,6 @@ internal fun ResultRow.toProcessInfo(
         tags = tags,
         failureReason = this[Processes.failureReason],
         failureReasonRunId = this[Processes.failureReasonRunId],
+        stop = getOrNull(Processes.stop)?.let(::decodeRunStop),
     )
 }

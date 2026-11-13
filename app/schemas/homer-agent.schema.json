@@ -28,6 +28,12 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/Command" }
     },
+    "onStop": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/Command" },
+      "description": "Steps run once, in order, after the run is stopped gracefully — by a step's own `timeout` with `onTimeout: stop`, or by the runner's soft run deadline. Each receives the HMR_STOP_* environment and runs under the run's remaining deadline. The first stop step that fails or times out ends the rest. At most 10 steps. See AGENT.md → Graceful stop."
+    },
     "env": {
       "type": "object",
       "description": "Per-agent environment. Values support @SYSENV:VAR_NAME references.",
@@ -296,11 +302,19 @@
         { "$ref": "#/$defs/RunnerCmd" }
       ]
     },
+    "OnTimeout": {
+      "description": "What a step's own `timeout` does when it expires. `fail` (the default) fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps first. `stop` requires `onStop:` to be declared.",
+      "type": "string",
+      "enum": ["fail", "stop"],
+      "default": "fail"
+    },
     "CommandCommonProps": {
       "type": "object",
       "properties": {
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0, "default": 60 },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "continueIfFail": { "type": "boolean", "default": false },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
@@ -361,6 +375,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -380,6 +396,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -401,6 +419,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -459,6 +479,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -531,6 +553,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -579,6 +603,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -600,6 +626,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -636,6 +664,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",

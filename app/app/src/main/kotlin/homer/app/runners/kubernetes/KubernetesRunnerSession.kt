@@ -4,6 +4,7 @@ import homer.app.infra.ShellExecutor
 import homer.app.models.ExtraUploadSpec
 import homer.app.runners.DownloadMode
 import homer.app.runners.RemotePathTranslator
+import homer.app.runners.RunDeadline
 import homer.app.runners.RunnerSession
 import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
@@ -24,6 +25,9 @@ class KubernetesRunnerSession(
     private val keepPodOnFailure: Boolean,
     private val keepPodTtlSeconds: Long,
     private val maxRunSeconds: Long? = null,
+    private val gracefulStopSeconds: Long? = null,
+    /** When Homer created the pod (`RunnerState.createdAt`); clamps a skewed `status.startTime`. */
+    private val podCreatedAtEpochSec: Long? = null,
     override val runnerAlias: String,
     private val sync: KubernetesWorkspaceSync,
     private val translator: RemotePathTranslator,
@@ -45,6 +49,13 @@ class KubernetesRunnerSession(
     private val closed = AtomicBoolean(false)
     private var failed: Boolean = false
     private val teardown = WorkloadTeardown(api, namespace, jobName, batchApi)
+
+    /**
+     * The run's soft and hard deadlines, read once here — the session is built when the pod is
+     * ready. Null unless `gracefulStopSeconds` is set, so a run without a graceful stop pays no
+     * extra Kubernetes read. See ADR-0108.
+     */
+    override val runDeadline: RunDeadline? = runDeadlineFromPod()
 
     override val metadata: Map<String, String>
         get() = mapOf("pod.name" to podName) + listOfNotNull(jobName?.let { "job.name" to it })
@@ -135,6 +146,37 @@ class KubernetesRunnerSession(
 
     private fun remotePath(relative: String): String =
         if (relative == "." || relative.isEmpty()) REMOTE_PROJECT_ROOT else "$REMOTE_PROJECT_ROOT/${relative.trimStart('/')}"
+
+    /**
+     * The run's deadlines: `maxRunSeconds` after the pod started is the hard one, `gracefulStopSeconds`
+     * before it the soft one. Null unless both bounds are configured and the pod's start is known.
+     */
+    private fun runDeadlineFromPod(): RunDeadline? {
+        val grace = gracefulStopSeconds ?: return null
+        val maxRun = maxRunSeconds ?: return null
+        val start = podStartEpochSec() ?: return null
+        val hard = start + maxRun
+        return RunDeadline(softEpochSec = hard - grace, hardEpochSec = hard)
+    }
+
+    /**
+     * The pod's `status.startTime` in epoch seconds, clamped to the EARLIER of it and the
+     * `createdAt` Homer recorded when it created the pod: the pod-reported value is outside
+     * Homer's trust boundary, so a skewed one may shorten the deadline but never extend it
+     * (§12 rule 2). One read; a failed read falls back to `createdAt`.
+     */
+    private fun podStartEpochSec(): Long? {
+        val reported =
+            runCatching {
+                api
+                    .readNamespacedPodStatus(podName, namespace)
+                    .execute()
+                    .status
+                    ?.startTime
+                    ?.toEpochSecond()
+            }.getOrNull()
+        return listOfNotNull(reported, podCreatedAtEpochSec).minOrNull()
+    }
 
     companion object {
         // Fixed in-pod workspace root; pod-per-run means no collisions (ADR-0043).

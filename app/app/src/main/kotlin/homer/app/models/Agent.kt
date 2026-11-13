@@ -21,6 +21,13 @@ data class Agent(
     val group: String? = null,
     val workspace: Workspace = Workspace(),
     val commands: List<Command>,
+    /**
+     * Steps run in the same session after a graceful stop — a step's own timeout with
+     * `onTimeout: stop`, or the runner's soft run deadline — and before the workspace
+     * syncs down and closes, so an agent can save state. Empty = no stop phase.
+     * See ADR-0108.
+     */
+    val onStop: List<Command> = emptyList(),
     val env: Map<String, String> = emptyMap(),
     val inputs: List<Param>? = null,
     @Deprecated("Use 'inputs' instead", ReplaceWith("inputs"))

@@ -2756,6 +2756,7 @@ started in-process by Homer ([ADR-0030](../docs/adr/0030-runagent-in-process-dis
 | `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. With `workload: Job`, the cluster removes a kept pod `jobTtlSecondsAfterFinished` after its Job ends; see [Job workload](#job-workload). |
 | `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in — see [Job workload](#job-workload). |
 | `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded`. Set on the pod in both modes — see [Job workload](#job-workload). |
+| `gracefulStopSeconds` | `Long?` | No | `null` | Opt-in soft deadline: this many seconds before the pod's `maxRunSeconds` hard deadline, Homer interrupts the step that is running so the agent's `onStop:` steps can save state before Kubernetes kills the pod. Requires `maxRunSeconds`, `>= 1` and smaller than it; `null` (default) = no soft deadline, and no extra Kubernetes read. The pod's `activeDeadlineSeconds` is unchanged, so a stop phase that overruns still ends with the pod. See [Job workload](#job-workload) and [AGENT.md → Graceful stop](AGENT.md#graceful-stop). |
 | `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` — see [Job workload](#job-workload). |
 | `homerApiUrl` | `String?` | No | `null` | Cluster-internal Homer URL; exposed in-pod as `HMR_API_URL` so the `homer-*` helpers and MCP question tools can reach Homer from inside the pod. |
 | `env` | `Map<String, String>` | No | `{}` | Per-runner environment variables, layered between `globalEnv` and agent `env` — the place for values describing *this* runner's host/image (`PATH` with `/opt/homebrew/bin` on a macOS ssh box, `JAVA_HOME`, `HOME` for a uid with no passwd entry). Values support `@SYSENV:VAR` (fail-fast at startup, and the resolved names join the telemetry redaction set exactly like `@SYSENV` in `globalEnv`); keys must not be blank or use the reserved `HMR_` prefix. Remote runners receive no `parentEnvAllowlist` host env, so this is also where a value the image must still see goes. Like agent `env`, values ride the per-exec `env K=V…` delivery — **visible in the remote process list (`ps`)** on multi-tenant hosts; forward credentials via `@SYSENV:` and prefer file delivery where possible. For a run that selected this runner via `runnerTags` rather than by alias, these keys are instead merged **above** agent `env` when the run is claimed — see [Runner claim queue](#runner-claim-queue). |
@@ -2877,6 +2878,18 @@ default `Pod` mode; only the object that owns the pod changes.
   quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
   not count — see
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **`gracefulStopSeconds`** is the **soft** deadline in front of that hard
+  one: `maxRunSeconds - gracefulStopSeconds` after pod start, Homer
+  interrupts the step that is running (SIGINT to its process group, then
+  `interruptGraceSeconds` before the kill) so the agent's `onStop:` steps
+  can save state. The soft deadline is measured from the pod's
+  `status.startTime`, clamped to the earlier of it and the creation time
+  Homer recorded, so a skewed pod-reported value may shorten the deadline
+  but never extend it. It needs both bounds configured, and it is
+  deliberately **not** set on the pod: `activeDeadlineSeconds` stays the
+  bound the kubelet enforces, so a stop phase that overruns the remaining
+  seconds ends exactly as it would without the feature. See
+  [AGENT.md → Graceful stop](AGENT.md#graceful-stop).
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
 - **Cleanup.** At session close, and when a startup fails or Homer's
@@ -3758,11 +3771,12 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd, interruptGraceSeconds?}` — how long the command may keep running after a SIGINT before it is killed; null or absent means the immediate kill | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
+| `interrupt` | `{opId}` of the running `cmd` | none; the instance stops it gracefully — SIGINT its process group, then kill after the grace the `cmd` carried — and reports the `cmd` result as usual. Best-effort: an interrupt for a command that has already exited, or that the instance cannot stop, still ends in the normal kill path. |
 
 Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
 result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance

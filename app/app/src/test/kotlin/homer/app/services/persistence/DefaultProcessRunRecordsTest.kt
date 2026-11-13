@@ -5,12 +5,16 @@ import homer.app.infra.ProcessJobRegistry
 import homer.app.models.CostSource
 import homer.app.models.PodPhase
 import homer.app.models.ProcessStatus
+import homer.app.models.RunStop
 import homer.app.models.RunnerState
+import homer.app.models.StopReason
+import homer.app.models.StopStepsOutcome
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DefaultProcessRunRecordsTest {
@@ -67,5 +71,18 @@ class DefaultProcessRunRecordsTest {
             val info = repository.getInfo(id)
             assertEquals("Lock skip (SKIP_CURRENT)", info?.failureReason)
             assertEquals(999, info?.failureReasonRunId)
+        }
+
+    @Test
+    fun `a stop reaches the run's row through the port`() =
+        runTest {
+            val id = repository.obtainProcessId("a", emptyMap(), 100).processId
+            val stop = RunStop(StopReason.STEP_TIMEOUT, 1, "Run tests", 1_700_000_000, StopStepsOutcome.FINISHED)
+
+            records.setStop(id, stop)
+
+            assertEquals(stop, repository.getInfo(id)?.stop)
+            // A run nobody stopped reads as not stopped, not as a stop with empty fields.
+            assertNull(repository.getInfo(repository.obtainProcessId("b", emptyMap(), 100).processId)?.stop)
         }
 }

@@ -25,7 +25,8 @@ the process record through `StepRecords.settleAccounting`; the telemetry hand-of
 Langfuse sees the settled figure. The command span is over by then (OpenTelemetry drops attribute
 writes after `end()`), so the settled figure and a hand-off failure land on the step's
 `llm_cost_settlement` child span, not on the command span — the command span keeps the preview's
-`session figure pending`. That waiting hand-off (`LlmHarnessExecutor.handOff`) is bounded locally: it
+`session figure pending`. That waiting hand-off (`LlmTelemetryHandOff.handOff`, which
+`LlmHarnessExecutor` delegates to) is bounded locally: it
 holds one of `MAX_CONCURRENT_SETTLEMENT_HANDOFFS` permits while it waits, so concurrent steps
 cannot multiply the parsed streams kept alive on the heap, and it waits at most
 `SETTLEMENT_HANDOFF_TIMEOUT_MS` for the settlement. A hand-off that finds no permit sheds rather
@@ -40,6 +41,14 @@ never runs the body, and eight leaked permits would shed every later hand-off fo
 that is cancelled or whose lookup blows up still charges the harness figure; any other failure leaves
 the attempt on its pending figure, logged. Without the endpoint, and on every abort path (timeout,
 output cap, run cancelled), accounting stays inline and uncancellable as before. See ADR-0089.
+
+A stop-interrupted attempt (the step's own timeout with `onTimeout: stop`, or the run's soft
+deadline; ADR-0108) is accounted like any abort, with two differences: a CLI `result` event the
+SIGINT interrupted output still produced is parsed and charged normally, and one that never arrived
+is charged through `accountAborted` — either way the interrupted step carries the spend. The
+attempt is never retried or escalated. The session id the harness parsed from that output is
+surfaced to the run's `onStop:` steps as `HMR_STOP_SESSION_ID`, gated by `StopContext` (dropped
+unless it matches `[A-Za-z0-9-]{1,128}`) before it reaches any environment.
 
 The executor captures the attempt's own wall-clock window (Homer server time, immediately
 before and after the shell call) and hands it to `resolve`. With the endpoint's request-window

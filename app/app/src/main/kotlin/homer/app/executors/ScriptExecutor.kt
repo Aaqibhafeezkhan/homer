@@ -27,7 +27,8 @@ class ScriptExecutor(
                 stdErr = context.stdErr,
                 stdIn = command.content,
                 env = context.workspace.config.env,
-                timeout = command.timeout.seconds,
+                timeout = context.timeoutFor(command),
+                interruptGrace = context.interruptGrace,
             )
 
         span.setOutputValue(context, fileOperations, redactor)

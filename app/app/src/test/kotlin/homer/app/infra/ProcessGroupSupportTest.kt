@@ -3,13 +3,18 @@ package homer.app.infra
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assumptions.assumeFalse
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ProcessGroupSupportTest {
     @Test
@@ -75,6 +80,64 @@ class ProcessGroupSupportTest {
         every { process.toHandle() } returns mockk()
 
         assertNull(ProcessGroupSupport.groupLeaderPgid(process) { it })
+    }
+
+    @Test
+    fun `interruptGroup delivers SIGINT to a group leader's process group`(
+        @TempDir dir: Path,
+    ) {
+        assumeTrue(ProcessGroupSupport.setsidPath != null, "interruptGroup needs setsid to form a group leader")
+        val marker = dir.resolve("interrupted")
+        // The leader traps SIGINT, records that it ran and exits, so the marker
+        // proves the signal reached the whole group (the command's own child too).
+        val process =
+            ProcessBuilder(
+                ProcessGroupSupport.launchArgv(
+                    listOf("sh", "-c", "trap 'echo int > $marker; exit 0' INT; sleep 30"),
+                ),
+            ).start()
+        try {
+            val pgid = awaitOwnProcessGroupId(process)
+            assertNotNull(pgid, "the setsid leader should report its own group id")
+            ProcessGroupSupport.interruptGroup(pgid)
+            assertTrue(
+                process.waitFor(5, TimeUnit.SECONDS),
+                "the SIGINT trap should have exited the command",
+            )
+            assertTrue(Files.exists(marker), "SIGINT should have reached the process group")
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    @Test
+    fun `interruptGroup is never reached with the JVM's own group or a pgid of one or less`() {
+        // The guard that keeps interruptGroup off the JVM's own group and off a
+        // pgid <= 1 (`kill -INT -1`/`-0` would signal every process the user owns)
+        // is ownProcessGroupId: it returns a pgid ONLY when the child leads its own
+        // group (pgid == pid), and a JVM child is never pid 1. A process sharing the
+        // JVM's group therefore yields null, so `?.let { interruptGroup(it) }` sends
+        // no SIGINT at the JVM itself.
+        val process = ProcessBuilder("sleep", "5").start()
+        try {
+            assertNull(ProcessGroupSupport.ownProcessGroupId(process))
+            // A claimed pgid of 1 (init's group) or 0 (the caller's group) is refused
+            // too: only pgid == pid is ever returned.
+            assertNull(ProcessGroupSupport.groupLeaderPgid(process) { 1L })
+            assertNull(ProcessGroupSupport.groupLeaderPgid(process) { 0L })
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    /** Polls briefly for [process]'s own group id: the setsid leader transition races the launch. */
+    private fun awaitOwnProcessGroupId(process: java.lang.Process): Long? {
+        val deadline = System.currentTimeMillis() + 3_000
+        while (System.currentTimeMillis() < deadline) {
+            ProcessGroupSupport.ownProcessGroupId(process)?.let { return it }
+            Thread.sleep(20)
+        }
+        return null
     }
 
     @Test

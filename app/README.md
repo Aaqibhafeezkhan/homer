@@ -687,7 +687,9 @@ curl "http://localhost:8080/api/v1/status/12345"
       "errMsg": null,
       "skipped": false,
       "llmAccounting": null,
-      "kind": "cmd"
+      "kind": "cmd",
+      "stoppedBy": null,
+      "onStop": false
     }
   ],
   "currentCommand": "cmd",
@@ -706,7 +708,8 @@ curl "http://localhost:8080/api/v1/status/12345"
   "rootProcessId": null,
   "retainedTruncated": null,
   "tags": [],
-  "failureReason": null
+  "failureReason": null,
+  "stop": null
 }
 ```
 
@@ -734,6 +737,7 @@ The response includes:
 - **retainedTruncated**: Whether `server.maxRetainedArtifactBytes` cut this run's `workspace.retain.artifacts` set short at the workspace purge. `null` until a retention prune has run.
 - **tags**: Subject tags on the run (`key:value` strings) from `tags.fromInputs` and runtime `POST /api/v1/callback/tags`, listed in tag order (sorted by tag, not insertion order); filter with `?tag=`. Tags carrying a value that is secret at read time are omitted.
 - **failureReason**: Why the run ended `FAILED` **before any of its commands started** — a claim timeout, a `SKIP_CURRENT` lock skip, a `REJECT` parallel-run cap, a full parallel-run wait queue, a full lock wait queue, a full claim queue, or a `lockStrategy.key` placeholder the run's environment cannot resolve. `null` for every other failure, including a failure that happened while the run was running, and for a run recorded before schema v30 (the upgrade adds the columns and does not backfill). At most 500 characters, one line, secret-redacted. When the cause names the run that blocked this one (a lock holder), that run's id is appended as `(run #123)` **only to a caller who may open it**; every other caller gets the same sentence without the id, so the existence of another principal's run is not revealed. See [ADR-0098](../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md).
+- **stop**: Present only on a run that a graceful stop ended — `{reason, stepIndex, stepLabel, at, stopSteps}`. `reason` is `step_timeout` (a step's own `timeout` expired and it declared `onTimeout: stop`) or `run_deadline` (the runner's soft deadline passed); `stepIndex`/`stepLabel` name the step the stop interrupted — or, when the soft run deadline passes between steps, the last step whose turn came (it either completed or was skipped by `when:`; see [AGENT.md → Graceful stop](AGENT.md#graceful-stop)); `at` is when the stop was detected (Unix epoch seconds), and `stopSteps` is `finished` (every `onStop:` step ran), `failed` (one failed or timed out and the rest were skipped) or `none` (the agent declares no `onStop:` steps). The run's status is `FAILED` in every case. `null` for a run no graceful stop ended, and for one recorded before schema v31. The step the record names carries `stoppedBy` (the same `step_timeout` / `run_deadline` value) on its entry — no `stoppedBy` in that between-steps case, where nothing was interrupted, whether that step completed or was skipped — and every `onStop:` step's entry carries `onStop: true`. See [AGENT.md → Graceful stop](AGENT.md#graceful-stop) and [ADR-0108](../docs/adr/0108-graceful-stop-of-a-run.md).
 
 **Get all processes with filtering:**
 ```bash

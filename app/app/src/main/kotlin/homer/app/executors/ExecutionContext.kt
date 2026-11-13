@@ -7,8 +7,12 @@ import homer.app.infra.FileOperations
 import homer.app.infra.SecretRedactor
 import homer.app.infra.ShellExecutor
 import homer.app.infra.Workspace
+import homer.app.models.Command
+import homer.app.models.LlmAccounting
 import io.opentelemetry.api.trace.Span
 import java.nio.file.Path
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Context for command execution. Carries the session-scoped shell so
@@ -44,7 +48,30 @@ data class ExecutionContext(
             cmdIndex = cmdIndex,
             envProvider = { workspace.config.env },
         ),
+    // Caps this step's own `timeout` (the run's soft deadline, and every stop step's hard
+    // deadline minus its safety margin). Null = the command's own `timeout`. See ADR-0108.
+    val timeoutOverrideSeconds: Long? = null,
+    // When set, a command stopped by its timeout is SIGINTed and given this long to exit
+    // before the SIGKILL path runs. Null = today's immediate SIGKILL. See ADR-0108.
+    val interruptGrace: Duration? = null,
+    // Whether this row is one of the agent's `onStop:` steps.
+    val onStop: Boolean = false,
+    // Facts the executors report back to the agent loop for the stop phase.
+    val facts: StepFacts = StepFacts(),
 )
+
+/**
+ * What an executor learned about a step that the agent loop needs afterwards — the CLI session
+ * id an LLM step exposed, and the accounting of an attempt the graceful stop interrupted, so the
+ * step still carries its cost. Per step, written by the executor that ran it. See ADR-0108.
+ */
+class StepFacts {
+    var cliSessionId: String? = null
+    var interruptedAccounting: LlmAccounting? = null
+}
+
+/** This step's effective timeout: the run's deadline cap when one applies, else the command's own. */
+fun ExecutionContext.timeoutFor(command: Command): Duration = (timeoutOverrideSeconds ?: command.timeout).seconds
 
 /**
  * Redactor for this run's secret values, built from the workspace env — declared

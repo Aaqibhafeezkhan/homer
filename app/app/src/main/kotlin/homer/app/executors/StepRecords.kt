@@ -4,6 +4,7 @@ import homer.app.infra.SecretRedactor
 import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
 import homer.app.models.LlmAccounting
+import homer.app.models.RunStop
 import homer.app.models.RunnerState
 import java.nio.file.Path
 
@@ -42,6 +43,12 @@ interface StepRecords {
     suspend fun setRunnerState(
         processId: Int,
         update: (RunnerState?) -> RunnerState,
+    )
+
+    /** Records what a graceful stop did to the run: its cause, the interrupted step, and the stop steps' outcome. */
+    suspend fun setStop(
+        processId: Int,
+        stop: RunStop,
     )
 
     suspend fun addCost(

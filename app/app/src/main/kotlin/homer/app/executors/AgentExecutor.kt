@@ -4,9 +4,7 @@ import homer.app.EnvConstants
 import homer.app.config.ExecutionConfig
 import homer.app.exceptions.CommandExecutionException
 import homer.app.exceptions.OutputCapExceededException
-import homer.app.infra.AgentDirs
 import homer.app.infra.DefaultTextCompiler
-import homer.app.infra.ResultToEnvMapper
 import homer.app.infra.SecretRedactor
 import homer.app.infra.TelemetryService
 import homer.app.infra.TextCompiler
@@ -16,14 +14,15 @@ import homer.app.models.Agent
 import homer.app.models.Command
 import homer.app.models.CommandResult
 import homer.app.models.ExecutionInfo
-import homer.app.models.RunnerState
+import homer.app.models.RunStop
+import homer.app.models.StopReason
+import homer.app.models.StopStepsOutcome
 import homer.app.models.kind
 import homer.app.runners.ActiveSessionsRegistry
-import homer.app.runners.DownloadMode
+import homer.app.runners.RunDeadline
 import homer.app.runners.Runner
 import homer.app.runners.RunnerSession
 import homer.app.runners.RunnerSessionParams
-import homer.app.runners.TarStreams
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.StatusCode
 import io.opentelemetry.context.Context
@@ -34,9 +33,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
-import kotlin.io.path.invariantSeparatorsPathString
-import kotlin.io.path.relativeTo
-import kotlin.system.measureTimeMillis
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -65,46 +61,82 @@ class AgentExecutor(
     @OptIn(ExperimentalTime::class)
     @Suppress("SuspendFunSwallowedCancellation") // rethrows; failsTheRun tells a kill from a failure
     suspend fun execute() {
-        val sessionParams =
-            RunnerSessionParams(
-                processId = processId,
-                agentName = agent.name,
-                workspace = workspace.config,
-                env = workspace.config.env,
-                parentContext = parentContext,
-                rootProcessId = rootProcessId,
-            )
         logger.debug("Process {}: opening session on runner '{}'", processId, runner.alias)
-        val session = runner.openSession(sessionParams)
+        val session = runner.openSession(sessionParams())
         activeSessions.add(session)
         if (session.env.isNotEmpty()) {
             workspace.appendToEnv(session.env)
         }
+        // The backend's own run deadline, read once the workspace exists (the Kubernetes session
+        // reads the pod's start time there). Null for every runner that imposes none.
+        var runDeadline: RunDeadline? = null
+        // The step in flight: a graceful stop names it and resumes its CLI session.
+        val inFlight = StepInFlight()
         try {
-            prepareBackendWorkspace(session)
-
-            val selectedIndices = commandIndices?.toSet()
-            // Materialized so a boundary can name its successor: `index + 1` is wrong when
-            // a skipped (unselected) index sits between them.
-            val steps =
-                agent.commands.withIndex().filter { (index, _) -> selectedIndices == null || index in selectedIndices }
-            var pendingStart: Long? = null
-            for ((step, indexedCommand) in steps.withIndex()) {
-                val handover = runStep(session, step, indexedCommand, steps.getOrNull(step + 1)?.value, pendingStart)
-                pendingStart = handover.nextStart
-                if (handover.finishRun) return
-            }
+            prepareBackendWorkspace(session, workspace, stepRecords, processId, logger)
+            runDeadline = session.runDeadline
+            runSteps(session, runDeadline, inFlight)
         } catch (e: Throwable) {
             // A kill is not a failure; the output-cap subclass of CancellationException is.
             // A plain CancellationException can also arrive from a child (e.g. a runner-enforced
             // timeout) without our own job being cancelled — detect a real kill by checking
             // whether our coroutine is still active, not just the exception type.
             if (failsTheRun(e)) {
+                // The run's own graceful stop: a step that timed out with `onTimeout: stop`, or the
+                // backend's soft run deadline. A kill — API, MCP, reload, lock collision — never
+                // reaches it, and neither does an ordinary step failure. See ADR-0108.
+                inFlight.step?.let { runStopPhase(session, runDeadline, it, e) }
                 runCatching { session.markFailed() }
             }
             throw e
         } finally {
-            withContext(NonCancellable) { syncDownAndClose(session) }
+            withContext(NonCancellable) {
+                syncDownAndClose(session, workspace, processId, logger, activeSessions)
+            }
+        }
+    }
+
+    /** The parameters the runner opens this run's session with. */
+    private fun sessionParams() =
+        RunnerSessionParams(
+            processId = processId,
+            agentName = agent.name,
+            workspace = workspace.config,
+            env = workspace.config.env,
+            parentContext = parentContext,
+            rootProcessId = rootProcessId,
+        )
+
+    /** Runs the agent's selected steps in order, recording the step in flight on [inFlight]. */
+    @OptIn(ExperimentalTime::class)
+    private suspend fun runSteps(
+        session: RunnerSession,
+        runDeadline: RunDeadline?,
+        inFlight: StepInFlight,
+    ) {
+        val selectedIndices = commandIndices?.toSet()
+        // Materialized so a boundary can name its successor: `index + 1` is wrong when
+        // a skipped (unselected) index sits between them.
+        val steps =
+            agent.commands.withIndex().filter { (index, _) -> selectedIndices == null || index in selectedIndices }
+        var pendingStart: Long? = null
+        for ((step, indexedCommand) in steps.withIndex()) {
+            // Past the soft deadline no unstarted step starts: the run stops instead.
+            if (stopDeadlinePassed(runDeadline)) throw RunDeadlineReached()
+            val startedAt = pendingStart ?: Clock.System.now().epochSeconds
+            val facts = StepFacts()
+            inFlight.step = InterruptedStep(indexedCommand.index, indexedCommand.value, facts)
+            val handover =
+                runStep(
+                    session = session,
+                    step = step,
+                    indexedCommand = indexedCommand,
+                    nextCommand = steps.getOrNull(step + 1)?.value,
+                    carriedStart = startedAt,
+                    plan = regularStepPlan(indexedCommand, runDeadline, startedAt, facts),
+                )
+            pendingStart = handover.nextStart
+            if (handover.finishRun) return
         }
     }
 
@@ -119,42 +151,36 @@ class AgentExecutor(
         indexedCommand: IndexedValue<Command>,
         nextCommand: Command?,
         carriedStart: Long?,
+        plan: StepPlan,
     ): StepHandover {
-        val (index, command) = indexedCommand
+        val (_, command) = indexedCommand
         val startTime = carriedStart ?: Clock.System.now().epochSeconds
-        // Only the run's first step is set here: a later step's start rides the
+        // Only a phase's first step is set here: a later step's start rides the
         // previous step's boundary transaction, so a step boundary is one write.
         if (step == 0) {
             stepRecords.setCurrentCommand(processId, command.label, startTime)
         }
-        val commandSpan = startCommandSpan(session, index, command)
+        val commandSpan = startCommandSpan(telemetryService, parentContext, session, plan.artifactIndex, command)
 
-        val (artifactNames, artifactNameFailure, stdOut, stdErr) = stepArtifacts(agent, textCompiler, workspace, index)
+        val (artifactNames, artifactNameFailure, stdOut, stdErr) =
+            stepArtifacts(agent, textCompiler, workspace, plan.artifactIndex)
         // Attempt-0 paths, so the console live tail (LogTailService) can follow this
         // command as soon as it starts; LlmHarnessExecutor's retry loop updates this per
         // attempt below.
         val executionContextRedactor = SecretRedactor.from(workspace.config.env, workspace.config.secretEnvNames)
         stepRecords.setCommandArtifacts(
             processId,
-            index,
+            plan.artifactIndex,
             CommandArtifactPaths(stdOut, stdErr, kind = command.kind, redactor = executionContextRedactor),
         )
-
-        val executionContext =
-            ExecutionContext(
-                workspace = workspace,
-                config = config,
-                shell = session.shell,
-                stdOut = stdOut,
-                stdErr = stdErr,
-                processId = processId,
-                agentName = agent.name,
-                cmdIndex = index,
-                owner = owner,
-                artifactNames = artifactNames,
-            )
+        val executionContext = commandExecutionContext(session, command, plan, artifactNames, stdOut, stdErr)
 
         workspace.appendToEnv(mapOf(EnvConstants.AGENT_NAME to agent.name))
+        // The stop context is appended for an `onStop:` step only, and only after the agent name,
+        // so a stop step sees it and no other step does. See ADR-0108.
+        if (plan.stopEnv.isNotEmpty()) {
+            workspace.appendToEnv(plan.stopEnv)
+        }
 
         // Conditional execution: evaluate `when` predicate (if any) against the
         // post-transformation env. A Skip result records its own ExecutionInfo
@@ -162,17 +188,47 @@ class AgentExecutor(
         // one the evaluator derived from a predicate timeout — is stored and
         // re-thrown inside the try/catch below so it goes through the standard
         // telemetry / ExecutionInfo path.
-        val whenResult = evaluateWhen(command, session, index)
+        val whenResult = evaluateWhen(workspace, command, session, plan.artifactIndex)
 
         if (whenResult is WhenEvaluator.Result.Skip) {
-            return StepHandover(recordSkip(command, startTime, nextCommand, executionContext, commandSpan, whenResult), finishRun = false)
+            return StepHandover(
+                recordSkip(command, startTime, nextCommand, executionContext, commandSpan, whenResult, plan.onStop),
+                finishRun = false,
+            )
         }
         return runCommand(
-            StepRun(index, command, nextCommand, startTime, commandSpan, stdOut, stdErr, executionContext),
+            StepRun(plan.artifactIndex, command, nextCommand, startTime, commandSpan, stdOut, stdErr, executionContext, plan.onStop),
             artifactNameFailure,
             whenResult,
+            plan.deadline,
         )
     }
+
+    /** The context one command runs under: where its artifacts go, its timeout, and the facts it reports. */
+    private fun commandExecutionContext(
+        session: RunnerSession,
+        command: Command,
+        plan: StepPlan,
+        artifactNames: ArtifactNameResolver,
+        stdOut: Path,
+        stdErr: Path,
+    ): ExecutionContext =
+        ExecutionContext(
+            workspace = workspace,
+            config = config,
+            shell = session.shell,
+            stdOut = stdOut,
+            stdErr = stdErr,
+            processId = processId,
+            agentName = agent.name,
+            cmdIndex = plan.artifactIndex,
+            owner = owner,
+            artifactNames = artifactNames,
+            timeoutOverrideSeconds = plan.timeoutSeconds,
+            interruptGrace = plan.interruptGrace,
+            onStop = plan.onStop,
+            facts = plan.facts,
+        )
 
     /** Records a step its `when` predicate skipped; returns the next step's start time, if one starts now. */
     @OptIn(ExperimentalTime::class)
@@ -183,6 +239,7 @@ class AgentExecutor(
         executionContext: ExecutionContext,
         commandSpan: Span,
         whenResult: WhenEvaluator.Result.Skip,
+        onStop: Boolean = false,
     ): Long? {
         var nextStart: Long? = null
         withContext(NonCancellable) {
@@ -207,6 +264,7 @@ class AgentExecutor(
                     errMsg = redactor.redact(whenResult.reason),
                     skipped = true,
                     kind = command.kind,
+                    onStop = onStop,
                 ),
                 next?.first,
                 next?.second,
@@ -225,8 +283,10 @@ class AgentExecutor(
         run: StepRun,
         artifactNameFailure: Result<Pair<Path, Path>>,
         whenResult: WhenEvaluator.Result?,
+        deadline: RunDeadline?,
     ): StepHandover {
         val (index, command, nextCommand, startTime, commandSpan, stdOut, stdErr, executionContext) = run
+        val artifactsDir = workspace.config.artifacts
         var nextStart: Long? = null
         // Failure-shaped default so an Error escaping the try can't record a success-looking ExecutionInfo.
         var outcome: CommandOutcome = CommandOutcome.Failure(errMsg = null, exitCode = -1, outputTruncated = false)
@@ -234,18 +294,15 @@ class AgentExecutor(
         // exception before executor.execute means the command never ran) — the finally
         // block falls back to the attempt-0 stdOut/stdErr above in that case.
         var executedResult: CommandResult? = null
+        // Why a graceful stop interrupted this step, decided where the step's own exception is
+        // still in hand — the row is written below, before the stop phase runs. See ADR-0108.
+        var stoppedBy: StopReason? = null
 
         try {
             artifactNameFailure.onFailure { throw it }
             val redactor = executionContext.secretRedactor()
             if (whenResult is WhenEvaluator.Result.EvalError) {
-                throw CommandExecutionException(
-                    message =
-                        "when-predicate evaluation failed for '${redactor.redact(whenResult.expression)}': " +
-                            redactor.redact(whenResult.stderrSummary),
-                    exitCode = whenResult.exitCode,
-                    command = redactor.redact(command.toString()),
-                )
+                throw evalError(command, whenResult, redactor)
             }
             // Get appropriate executor for this command type
             val executor = executorFactory.getExecutor(command)
@@ -254,17 +311,7 @@ class AgentExecutor(
 
             commandSpan.setAttribute("cmd.type", command::class.simpleName ?: "")
             commandSpan.setAttribute("output.exitCode", result.exitCode.toString())
-            val envFromResult =
-                ResultToEnvMapper(result).mapToEnv(
-                    command.resultEnvParam,
-                )
-            commandSpan.setAttribute(
-                "output.env",
-                executionContext.secretRedactor().redact(
-                    envFromResult.map { "${it.key}=${it.value}" }.joinToString(", "),
-                ),
-            )
-
+            val envFromResult = recordResultEnv(command, result, redactor, commandSpan)
             val isFinishCode = finishCodeOrThrow(command, result, redactor)
 
             workspace.appendToEnv(envFromResult)
@@ -272,169 +319,111 @@ class AgentExecutor(
             outcome = CommandOutcome.Success(exitCode = result.exitCode, isFinishCode = isFinishCode)
         } catch (e: Exception) {
             outcome = failureOutcome(e)
+            stoppedBy = stopReasonFor(e, command, deadline)
             withContext(NonCancellable) {
                 commandSpan.setStatus(StatusCode.ERROR, e.message ?: "Unknown error")
                 commandSpan.recordException(e)
             }
             throw e
         } finally {
-            withContext(NonCancellable) { nextStart = completeCommand(run, outcome, executedResult) }
+            withContext(NonCancellable) {
+                nextStart = completeCommand(run, outcome, executedResult, stoppedBy, stepRecords, processId, artifactsDir)
+            }
         }
 
         return StepHandover(nextStart, finishRun = !command.continueIfFail && outcome.isFinishCode)
     }
 
-    private fun startCommandSpan(
-        session: RunnerSession,
-        index: Int,
-        command: Command,
-    ): Span {
-        val commandSpan =
-            telemetryService.tracer
-                .spanBuilder("command_execution_${index + 1}")
-                .setParent(parentContext)
-                .startSpan()
-        commandSpan.setAttribute("runner.alias", session.runnerAlias)
-        // The step's own name, next to the index the span is named after: an LLM
-        // step's generation carries it too, a script step's span is the only place
-        // it appears.
-        commandSpan.setAttribute("command.label", command.label)
-        session.metadata.forEach { (key, value) -> commandSpan.setAttribute(key, value) }
-        return commandSpan
-    }
-
     /**
-     * Records [run]'s ExecutionInfo for [outcome] and ends its span; returns the next step's start
-     * time when one starts now.
+     * The run's graceful stop: runs the agent's `onStop:` steps once, in this same session and
+     * before the teardown, when [cause] is a stop trigger — a step that timed out with
+     * `onTimeout: stop`, or the backend's soft run deadline. Records what happened on the run and
+     * returns; the caller rethrows, so the run ends `FAILED` with its stop recorded. The remaining
+     * `commands` steps are never started, because the step loop was left by the throw. A stop
+     * detected between steps — the soft deadline passing before the next one starts — names the
+     * last step whose turn came in the record and the `HMR_STOP_STEP_*` env: it either completed
+     * or was skipped by `when:`, and nothing was in flight to interrupt. See ADR-0108.
      */
     @OptIn(ExperimentalTime::class)
-    private suspend fun completeCommand(
-        run: StepRun,
-        outcome: CommandOutcome,
-        executedResult: CommandResult?,
-    ): Long? {
-        val (index, command, nextCommand, startTime, commandSpan, stdOut, stdErr) = run
-        val endTime = Clock.System.now().epochSeconds
-        // Record the executor-returned result's actual paths when one exists —
-        // with a per-attempt artifactNameTemplate a retried Claude/Codex command's
-        // winning attempt writes to a different file than the attempt-0 paths
-        // built above. A thrown exception on the final attempt (e.g.
-        // MalformedLlmOutputException) means executedResult is never set even
-        // though the retry loop ran and wrote to later attempts' files — prefer
-        // the tracked per-attempt paths LlmHarnessExecutor kept current
-        // on StepRecords over the stale attempt-0 fallback. Only an error before
-        // the executor ever ran (e.g. an EvalError) falls through to attempt-0.
-        val recordedStdOut =
-            executedResult?.stdOut ?: stepRecords.getCommandArtifacts(processId, index)?.stdOut ?: stdOut
-        val recordedStdErr =
-            executedResult?.stdErr ?: stepRecords.getCommandArtifacts(processId, index)?.stdErr ?: stdErr
-        val executionInfo =
-            ExecutionInfo(
-                label = command.label,
-                start = startTime,
-                end = endTime,
-                resultCode = outcome.exitCode,
-                stdOut = recordedStdOut.relativeTo(workspace.config.artifacts),
-                stdErr = recordedStdErr.relativeTo(workspace.config.artifacts),
-                errMsg = (outcome as? CommandOutcome.Failure)?.errMsg,
-                outputTruncated = (outcome as? CommandOutcome.Failure)?.outputTruncated ?: false,
-                llmAccounting = executedResult?.llmAccounting,
-                kind = command.kind,
-            )
-        // The step is done, so the current command clears unless the next
-        // step starts now. Success and skip share nextBoundary, so the
-        // two paths cannot drift.
-        val next = nextBoundary(nextCommand, stop = shouldStopAfter(outcome, command))
-        stepRecords.completeStep(processId, executionInfo, next?.first, next?.second)
-        commandSpan.end()
-        return next?.second
-    }
-
-    /** Syncs the backend's artifacts (and a kept workdir) down, cleans a cleared one, and closes [session]. */
-    @Suppress("SuspendFunSwallowedCancellation") // best-effort, and only ever runs under NonCancellable
-    private suspend fun syncDownAndClose(session: RunnerSession) {
-        // Sync-down is best-effort: never fail an otherwise-successful run.
-        runCatching {
-            val elapsedMs =
-                measureTimeMillis { session.download("artifacts", workspace.config.artifacts, DownloadMode.OVERLAY) }
-            logger.debug("Process {}: artifacts sync-down took {} ms", processId, elapsedMs)
-        }.onFailure { logger.error("Sync-down of artifacts failed for process {}: {}", processId, it.message, it) }
-        if (!workspace.config.clearAfterFinish) {
-            runCatching {
-                // MIRROR: a kept workdir must reflect the remote exactly — a file the
-                // agent deleted remotely must not survive locally. See ADR-0055.
-                val elapsedMs =
-                    measureTimeMillis { session.download("workdir", workspace.config.workdir, DownloadMode.MIRROR) }
-                logger.debug("Process {}: workdir sync-down took {} ms", processId, elapsedMs)
-            }.onFailure { logger.error("Sync-down of workdir failed for process {}: {}", processId, it.message, it) }
-        } else {
-            runCatching { session.cleanWorkspace() }
-                .onFailure { logger.warn("Backend workspace cleanup failed for process {}: {}", processId, it.message) }
-        }
-        activeSessions.remove(session)
-        runCatching { session.close() }
-    }
-
-    /** The command's `when` predicate evaluated on [session] against the current env; null when it has none. */
-    private suspend fun evaluateWhen(
-        command: Command,
+    private suspend fun runStopPhase(
         session: RunnerSession,
-        index: Int,
-    ): WhenEvaluator.Result? {
-        val clause = command.whenClause ?: return null
-        return WhenEvaluator(
-            shell = session.shell,
-            artifactsDir = workspace.config.artifacts,
-        ).evaluate(clause, workspace.config.env, index)
+        deadline: RunDeadline?,
+        interrupted: InterruptedStep,
+        cause: Throwable,
+    ) {
+        val reason = stopReasonFor(cause, interrupted.command, deadline) ?: return
+        // When the stop was detected, not when the stop phase finished — the stop steps run
+        // after it, and the record's timeline must not place them before the stop itself.
+        val stoppedAt = Clock.System.now().epochSeconds
+        val stopEnv =
+            StopContext.env(
+                reason = reason,
+                stepIndex = interrupted.index,
+                stepLabel = interrupted.command.label,
+                hardDeadlineEpochSec = deadline?.hardEpochSec,
+                sessionId = interrupted.facts.cliSessionId,
+            )
+        val outcome =
+            if (agent.onStop.isEmpty()) {
+                StopStepsOutcome.NONE
+            } else {
+                runStopSteps(session, deadline, stopEnv)
+            }
+        stepRecords.setStop(
+            processId,
+            RunStop(
+                reason = reason,
+                stepIndex = interrupted.index,
+                stepLabel = interrupted.command.label,
+                at = stoppedAt,
+                stopSteps = outcome,
+            ),
+        )
     }
 
     /**
-     * Creates the backend workspace, records the serving backend, and uploads the project
-     * root, the local agent dir and the session's extra uploads to it.
+     * Runs the agent's `onStop:` steps in order, each like a regular step — `when:`,
+     * `continueIfFail` and `finishExitCode` all honoured — with the stop context in its env.
+     * The first stop step that fails or times out ends the rest.
      */
-    private suspend fun prepareBackendWorkspace(session: RunnerSession) {
-        // Must be read BEFORE createWorkspace(): its overrides rewrite
-        // HMR_AGENT_DIR to the backend-side path, but the upload source
-        // is the local agent dir.
-        val localAgentDir = workspace.config.env[EnvConstants.AGENT_DIR]
-        val workspaceOverrides = session.createWorkspace()
-        logger.debug("Process {}: backend workspace ready on '{}'", processId, session.runnerAlias)
-        // The serving backend is only known now: for a tag-filtered run the queued
-        // alias is a filter string ("tags:..."), not a backend (ADR-0066). Merge
-        // rather than replace so the Kubernetes runner's pod fields survive.
-        stepRecords.setRunnerState(processId) { prev ->
-            prev?.copy(alias = session.runnerAlias) ?: RunnerState(alias = session.runnerAlias)
-        }
-        if (workspaceOverrides.isNotEmpty()) {
-            workspace.appendToEnv(workspaceOverrides)
-        }
-        val uploadMs =
-            measureTimeMillis {
-                // projectRoot is created per run by Homer: a symlink there is tampering,
-                // so it is deliberately NOT resolved. The other two are operator-configured
-                // and may legitimately be symlinks (a symlinked agent dir, an extraUploads
-                // entry — ADR-0042); TarStreams.pack refuses a symlinked source, so resolve
-                // them here and let containment be checked against the real root.
-                session.upload(workspace.config.projectRoot, ".")
-                localAgentDir?.let { agentDir ->
-                    val source = TarStreams.resolvedPackSource(Path.of(agentDir))
-                    // A nested agent is a different agent: a parent's HMR_AGENT_DIR
-                    // upload carries none of its children's directories (ADR-0068,
-                    // ADR-0047). Leading `/` anchors each exclude to the upload root;
-                    // a bare name would match a same-named directory at any depth.
-                    val nestedExcludes =
-                        AgentDirs.nestedAgentDirsUnder(source).map { "/${it.invariantSeparatorsPathString}" }
-                    session.upload(source, ".homer/agent", nestedExcludes)
-                }
-                session.extraUploads.forEach { session.upload(TarStreams.resolvedPackSource(Path.of(it.local)), it.remote) }
+    @OptIn(ExperimentalTime::class)
+    @Suppress("SuspendFunSwallowedCancellation") // rethrows; failsTheRun tells a kill from a failure
+    private suspend fun runStopSteps(
+        session: RunnerSession,
+        deadline: RunDeadline?,
+        stopEnv: Map<String, String>,
+    ): StopStepsOutcome {
+        val steps = agent.onStop
+        for ((ordinal, command) in steps.withIndex()) {
+            // The stop steps share the run's artifact directory with the agent's own steps, so
+            // they are numbered past them rather than from zero.
+            val index = agent.commands.size + ordinal
+            val startedAt = Clock.System.now().epochSeconds
+            try {
+                val handover =
+                    runStep(
+                        session = session,
+                        step = ordinal,
+                        indexedCommand = IndexedValue(index, command),
+                        nextCommand = steps.getOrNull(ordinal + 1),
+                        carriedStart = startedAt,
+                        plan = stopStepPlan(index, command, deadline, startedAt, stopEnv),
+                    )
+                if (handover.finishRun) break
+            } catch (e: Throwable) {
+                // A kill during the stop phase ends the run as any kill does, leaving no stop
+                // record; a stop step's own failure ends the rest of them.
+                if (!failsTheRun(e)) throw e
+                logger.warn(
+                    "Process {}: stop step '{}' failed ({}); the remaining stop steps are skipped",
+                    processId,
+                    command.label,
+                    e.message,
+                )
+                return StopStepsOutcome.FAILED
             }
-        logger.debug(
-            "Process {}: workspace upload to '{}' took {} ms ({} extra uploads)",
-            processId,
-            session.runnerAlias,
-            uploadMs,
-            session.extraUploads.size,
-        )
+        }
+        return StopStepsOutcome.FINISHED
     }
 
     companion object {
@@ -442,35 +431,10 @@ class AgentExecutor(
     }
 }
 
-/**
- * The next step's current-command label and start time, or null when this
- * step ends the run or has no successor. Both the success path (via
- * [shouldStopAfter]) and the skip path share this one handover.
- */
-private fun nextBoundary(
-    nextCommand: Command?,
-    stop: Boolean,
-): Pair<String, Long>? {
-    if (stop || nextCommand == null) return null
-    return nextCommand.label to Clock.System.now().epochSeconds
+/** The step the run has in flight, shared between the step loop and the catch that stops the run. */
+private class StepInFlight {
+    var step: InterruptedStep? = null
 }
-
-/**
- * True when the step's outcome ends the run, so no later step starts and the
- * boundary clears the current command. A failure always stops: the catch block
- * rethrows unconditionally, so a Failure outcome ends the run whatever
- * `continueIfFail` says — `continueIfFail` only covers a non-zero exit code
- * reaching the outcome as Success. A `finishExitCode` match stops unless
- * `continueIfFail`.
- */
-private fun shouldStopAfter(
-    outcome: CommandOutcome,
-    command: Command,
-): Boolean =
-    when (outcome) {
-        is CommandOutcome.Failure -> true
-        is CommandOutcome.Success -> !command.continueIfFail && outcome.isFinishCode
-    }
 
 /** True when [e] ends the run as a failure rather than a kill (see the catch in [AgentExecutor.execute]). */
 private suspend fun failsTheRun(e: Throwable): Boolean =
@@ -509,7 +473,7 @@ private fun finishCodeOrThrow(
  * post-try early-finish check. Replaces the four mutable flags that previously
  * carried this state.
  */
-private sealed interface CommandOutcome {
+internal sealed interface CommandOutcome {
     val exitCode: Int
 
     data class Success(
@@ -530,8 +494,16 @@ private data class StepHandover(
     val finishRun: Boolean,
 )
 
+/** A step's artifact names, the attempt-0 render (a failure re-thrown inside the step's try), and the paths used. */
+internal data class StepArtifacts(
+    val names: ArtifactNameResolver,
+    val failure: Result<Pair<Path, Path>>,
+    val stdOut: Path,
+    val stdErr: Path,
+)
+
 /** One step's command and the per-step state built before it runs. */
-private data class StepRun(
+internal data class StepRun(
     val index: Int,
     val command: Command,
     val nextCommand: Command?,
@@ -540,56 +512,6 @@ private data class StepRun(
     val stdOut: Path,
     val stdErr: Path,
     val executionContext: ExecutionContext,
-)
-
-/** Step [index]'s artifact names and attempt-0 paths: the default stem's when [agent]'s own template fails to render. */
-private fun stepArtifacts(
-    agent: Agent,
-    textCompiler: TextCompiler,
-    workspace: Workspace,
-    index: Int,
-): StepArtifacts {
-    val artifactNames =
-        ArtifactNameResolver(
-            template = agent.artifactNameTemplate,
-            textCompiler = textCompiler,
-            artifactsDir = workspace.config.artifacts,
-            cmdIndex = index,
-            envProvider = { workspace.config.env },
-            secretEnvNames = workspace.config.secretEnvNames,
-            secretRedactor =
-                SecretRedactor.from(
-                    workspace.config.env,
-                    workspace.config.secretEnvNames,
-                    minNeedleLength = SecretRedactor.ARTIFACT_STEM_MIN_NEEDLE_LENGTH,
-                ),
-        )
-    // A rendered-stem validation failure (§12: the workspace env feeding the
-    // template is attacker-influenced) must NOT bypass per-command bookkeeping —
-    // caught here and re-thrown inside the try below, mirroring the EvalError
-    // pattern just below, so it still gets an ExecutionInfo, a closed span, and
-    // a cleared currentCommand. Placeholder attempt-0-shaped paths let
-    // ExecutionContext/ExecutionInfo be built even though nothing was written.
-    val artifactNameFailure = runCatching { artifactNames.stdOut(0) to artifactNames.stdErr(0) }
-    val (stdOut, stdErr) =
-        artifactNameFailure.getOrElse {
-            // The agent's own template failed to render — fall back to the
-            // default stem (never attacker-influenced: only HMR_CMD_INDEX).
-            val defaultStem =
-                textCompiler.replaceArguments(
-                    EnvConstants.DEFAULT_ARTIFACT_NAME_TEMPLATE,
-                    mapOf(EnvConstants.CMD_INDEX to index.toString()),
-                )
-            workspace.config.artifacts.resolve("$defaultStem.out") to
-                workspace.config.artifacts.resolve("$defaultStem.err")
-        }
-    return StepArtifacts(artifactNames, artifactNameFailure, stdOut, stdErr)
-}
-
-/** A step's artifact names, the attempt-0 render (a failure re-thrown inside the step's try), and the paths used. */
-private data class StepArtifacts(
-    val names: ArtifactNameResolver,
-    val failure: Result<Pair<Path, Path>>,
-    val stdOut: Path,
-    val stdErr: Path,
+    // Whether this row is one of the agent's `onStop:` steps. See ADR-0108.
+    val onStop: Boolean = false,
 )
