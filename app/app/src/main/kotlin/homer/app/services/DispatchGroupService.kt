@@ -159,8 +159,8 @@ internal class DispatchGroupService(
 
     /**
      * The group's aggregated answer — a JSON array of the member answers in question order —
-     * or null while any member is still OPEN. Never null for a group with no members: an empty
-     * set is not "every member answered", it is a group that can never fire.
+     * or null while any member is still OPEN. Never reports a group with no members as answered:
+     * an empty set is not "every member answered", it is a group that can never fire.
      *
      * Throws [DispatchGroupAnswersTooLargeException] when the aggregate is over
      * [MAX_ANSWER_BYTES]: `QuestionsService.answer` bounds no answer's length, so N unbounded
