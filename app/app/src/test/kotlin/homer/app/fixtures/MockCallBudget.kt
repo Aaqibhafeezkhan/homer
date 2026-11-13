@@ -14,8 +14,9 @@ import java.io.File
  * After every `:app` test: counts the calls each mock method took in the test, then clears mockk's
  * recorded calls (answers stay). mockk keeps every call it records, with its stack trace, for as long
  * as the mock is reachable, and the suite runs in one JVM: a stub that answers at once inside a
- * polling loop (a fake `waitFor` returning "not yet" without waiting) records about a million calls
- * a second and once filled the 2g test heap (#198, #200).
+ * polling loop (a fake `waitFor` returning "not yet" without waiting) calls it about 140,000 times a
+ * second, and about a million such calls kept until the suite ended once filled the 2g test heap
+ * (#198, #200).
  *
  * A method called [FAIL_CALLS] times or more fails the test: only a busy loop gets there, as the
  * busiest ordinary test calls one method a few hundred times. One called [WARN_CALLS] times or more

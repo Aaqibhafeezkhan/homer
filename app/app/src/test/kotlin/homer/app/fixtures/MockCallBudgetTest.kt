@@ -9,9 +9,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.extension.Extension
 import org.junit.jupiter.api.extension.ExtensionContext
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.ServiceLoader
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -73,9 +75,44 @@ class MockCallBudgetTest {
     }
 
     @Test
-    fun `without a report dir a method past the warning is only counted`() {
+    fun `without a report dir a method past the warning passes and one at the limit still fails`() {
+        val budget = MockCallBudget(warnAt = 10, failAt = 100, reportDir = { null })
+        val warned = polled(12)
+        budget.afterEach(context())
+        verify(exactly = 0) { warned.ready(any()) }
+        polled(100)
+        assertThrows<AssertionError> { budget.afterEach(context()) }
+    }
+
+    @Test
+    fun `the report gains one line per test past the warning, earlier lines kept`(
+        @TempDir dir: File,
+    ) {
+        val budget = MockCallBudget(warnAt = 10, failAt = 100, reportDir = { dir })
         polled(12)
-        MockCallBudget(warnAt = 10, failAt = 100, reportDir = { null }).afterEach(context())
+        budget.afterEach(context())
+        polled(13)
+        budget.afterEach(context())
+        val calls =
+            dir
+                .resolve(MockCallBudget.REPORT_FILE)
+                .readLines()
+                .map {
+                    Json
+                        .parseToJsonElement(it)
+                        .jsonObject
+                        .getValue("calls")
+                        .jsonPrimitive.int
+                }
+        assertEquals(listOf(12, 13), calls)
+    }
+
+    @Test
+    fun `the test task loads this extension and only it by autodetection, with the report dir set`() {
+        assertTrue(ServiceLoader.load(Extension::class.java).any { it is MockCallBudget }, "META-INF/services registers MockCallBudget")
+        assertEquals("true", System.getProperty("junit.jupiter.extensions.autodetection.enabled"))
+        assertEquals(MockCallBudget::class.qualifiedName, System.getProperty("junit.jupiter.extensions.autodetection.include"))
+        assertTrue(System.getProperty(MockCallBudget.DIR_PROPERTY).isNullOrBlank().not(), "the mock-calls report dir is set")
     }
 
     @Test

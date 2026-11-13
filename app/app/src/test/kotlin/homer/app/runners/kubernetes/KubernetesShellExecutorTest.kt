@@ -2,6 +2,7 @@ package homer.app.runners.kubernetes
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.PodFailedDuringExecutionException
+import homer.app.fixtures.waitUnfinished
 import homer.app.infra.OutputLineFilter
 import homer.app.models.PodTermination
 import io.kubernetes.client.openapi.ApiException
@@ -108,7 +109,10 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                    waitUnfinished(firstArg(), secondArg())
+                    false
+                }
                 every { exitValue() } returns 137
                 every { destroyForcibly() } returns this
             }
@@ -1355,7 +1359,10 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                    waitUnfinished(firstArg(), secondArg())
+                    false
+                }
             }
         val client =
             KubernetesExecClient { _, _, argv, _ ->
@@ -1418,24 +1425,15 @@ class KubernetesShellExecutorTest {
     /** True when [argv] is the executor's own signalling exec, not the command's. */
     private fun isSignalling(argv: List<String>) = argv.getOrNull(3) == "homer-signal"
 
-    /**
-     * `waitFor` of a not-exited process: it waits (capped at [STILL_RUNNING_WAIT_MS]), then answers false.
-     * An instant false busy-spins the executor's poll loop for the step's whole timeout.
-     */
-    private fun stillRunning(
-        timeout: Long,
-        unit: TimeUnit,
-    ): Boolean {
-        Thread.sleep(unit.toMillis(timeout).coerceIn(0, STILL_RUNNING_WAIT_MS))
-        return false
-    }
-
     private fun neverFinishing(): Process =
         mockk(relaxed = true) {
             every { inputStream } returns ByteArrayInputStream(ByteArray(0))
             every { errorStream } returns ByteArrayInputStream(ByteArray(0))
             every { outputStream } returns ByteArrayOutputStream()
-            every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
+            every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                waitUnfinished(firstArg(), secondArg())
+                false
+            }
             every { exitValue() } returns 137
             every { destroyForcibly() } returns this
         }
@@ -1456,8 +1454,5 @@ class KubernetesShellExecutorTest {
     private companion object {
         /** The pod-wide kill the channel-loss path runs, as the executor's killInsidePod starts it. */
         val KILL_ARGV = listOf("sh", "-c", "kill -KILL -1")
-
-        /** The longest a not-exited fake process waits per `waitFor`: short, so a test's timeout stays its length. */
-        const val STILL_RUNNING_WAIT_MS = 50L
     }
 }

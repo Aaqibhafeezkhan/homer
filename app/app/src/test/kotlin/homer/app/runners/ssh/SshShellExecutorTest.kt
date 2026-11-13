@@ -1,6 +1,7 @@
 package homer.app.runners.ssh
 
 import homer.app.exceptions.OutputCapExceededException
+import homer.app.fixtures.waitUnfinished
 import homer.app.infra.OutputLineFilter
 import io.mockk.every
 import io.mockk.mockk
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -255,9 +257,8 @@ class SshShellExecutorTest {
         val openFuture = mockk<OpenFuture>()
         every { openFuture.verify(any<Long>()) } returns openFuture
         every { channel.open() } returns openFuture
-        // It waits as a real open channel does: an instant empty answer busy-spins the executor's poll loop.
         every { channel.waitFor(any<Collection<ClientChannelEvent>>(), any<Long>()) } answers {
-            Thread.sleep(secondArg<Long>().coerceIn(0, STALLED_WAIT_MS))
+            waitUnfinished(secondArg(), TimeUnit.MILLISECONDS)
             emptySet()
         }
         val session = mockk<ClientSession>()
@@ -353,10 +354,5 @@ class SshShellExecutorTest {
             }
         }
         assertFalse(marker.exists(), "without a grace the group is SIGKILLed and the trap never runs")
-    }
-
-    private companion object {
-        /** The longest the stalled channel waits per `waitFor`: short, so a test's timeout stays its length. */
-        const val STALLED_WAIT_MS = 50L
     }
 }

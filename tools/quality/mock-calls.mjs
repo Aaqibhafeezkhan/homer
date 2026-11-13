@@ -1,8 +1,8 @@
 /**
- * mock-calls: tests during `:app:test` in which one mock method was called more often than
- * `MockCallBudget.WARN_CALLS`, the shape of a stub that answers at once inside a polling loop
- * (ADR-0082 amendment of 2026-11-13, `app/CLAUDE.md` § Testing rules). `MockCallBudget` appends one
- * JSON line per such test to the report; past `MockCallBudget.FAIL_CALLS` it also fails the test.
+ * mock-calls: tests during `:app:test` in which one mock method was called `MockCallBudget.WARN_CALLS`
+ * times or more, the shape of a stub that answers at once inside a polling loop (ADR-0082 amendment
+ * of 2026-11-13, `CLAUDE.md` §6). `MockCallBudget` appends one JSON line per such test to the report;
+ * from `MockCallBudget.FAIL_CALLS` calls it also fails the test.
  * Usage (repository root): node tools/quality/mock-calls.mjs [report dir] [out dir]
  */
 import fs from 'node:fs';

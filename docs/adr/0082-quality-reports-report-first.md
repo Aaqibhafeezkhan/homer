@@ -296,10 +296,14 @@ mutant is a finding of its own.
 *Amended (2026-11-13):* `mock-calls` joined as `warn`, with a hard limit beside it. `homer-app-tests`
 ran out of its 2g heap on main (#198) without a failing assertion: fakes of a timed wait answered "not
 yet" at once, so the executors' poll loops busy-spun for each test's timeout, and mockk recorded
-about a million calls a test with their stack traces and kept them until the suite ended (#200). The
-`MockCallBudget` extension, autodetected for the `:app` test task only (mockk-jvm's own
+about 140,000 calls in each of six tests, with their stack traces, and kept them until the suite
+ended (#200). The `MockCallBudget` extension, autodetected for the `:app` test task only (mockk-jvm's own
 `MockKExtension` is registered for autodetection too and stays opt-in), counts the calls each mock
-method took after every test and then clears the recorded calls, answers kept. A test that called
+method took after every test and then clears the recorded calls, answers kept. Every mock's calls
+are cleared, those of a mock shared across tests (a field of a per-class test instance, a companion
+object) too: a later test's `verify` sees only its own calls, by design, as no test may depend on
+another's. Clearing only what each test added was rejected: it would need a snapshot of every
+mock's calls before each test, and the suite has no test that counts calls across tests. A test that called
 one method 20,000 times or more fails; 1,000 or more is a warn-mode finding. Measured over the whole
 suite, the busiest ordinary test calls one method 454 times (99.9% stay at 204 or fewer), and a
 one-second spin calls it about 140,000 times on a developer machine: the failure limit sits 44 times
