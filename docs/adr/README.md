@@ -163,4 +163,8 @@ One of:
 | [0102](0102-shutdown-drain-waits-for-descendant-runs.md) | The shutdown drain re-reads the run jobs it joins, admits the runs they start, and stops the consumers last | proposed |
 | [0103](0103-a-lost-exec-channel-kills-and-fails-without-reattach.md) | A lost exec channel kills the leftover command and fails the step — there is no reattach | proposed |
 | [0104](0104-lock-before-slot-admission-order.md) | A run takes its lock before its parallel-run slot, and the lock-wait queue is bounded | proposed |
+| [0105](0105-langgraph-fanout-retries-are-client-side.md) | Fan-out retries are a client-side graph capability with replay-derived attempt counts | proposed |
+| [0106](0106-cooldown-key-scopes-windows-per-subject.md) | `cooldown.key` counts the cooldown windows per rendered subject | proposed |
+| [0107](0107-agent-status-hooks.md) | Agent-declared status hooks fire a target agent on every run status | proposed |
+| [0108](0108-graceful-stop-of-a-run.md) | A run can be stopped gracefully — opt-in, SIGINT before SIGKILL, and `FAILED` plus a `stop` record | proposed |
 | [0109](0109-grouped-ask-and-dispatch.md) | Grouped ask-and-dispatch — N questions, one fire | proposed |

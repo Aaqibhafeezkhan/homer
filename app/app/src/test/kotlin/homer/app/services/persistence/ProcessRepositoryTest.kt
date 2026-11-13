@@ -1,10 +1,12 @@
 package homer.app.services.persistence
 
+import homer.app.EnvConstants
 import homer.app.exceptions.CooldownActiveException
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.SqlStatementRecorder
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.ProcessJobRegistry
+import homer.app.models.AgentHook
 import homer.app.models.Cooldown
 import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
@@ -16,6 +18,7 @@ import homer.app.models.ProcessInfo
 import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
 import homer.app.models.SubRunProgress
+import homer.app.services.HookStatus
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService.Question
 import homer.app.services.QuestionsService.QuestionStatus
@@ -1346,6 +1349,32 @@ class ProcessRepositoryTest {
         }
 
     @Test
+    fun `execution stop fields round-trip and an old row without them reads as not stopped`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("a", emptyMap(), 100).processId
+            repo.completeStep(id, execution("interrupted").copy(stoppedBy = "step_timeout"), null, null)
+            repo.completeStep(id, execution("save").copy(onStop = true), null, null)
+
+            val execs = repo.getInfo(id)!!.executions
+            assertEquals("step_timeout", execs[0].stoppedBy)
+            assertEquals(false, execs[0].onStop)
+            assertNull(execs[1].stoppedBy)
+            assertEquals(true, execs[1].onStop)
+
+            // Simulate a pre-release row: raw JSON without either field (ADR-0108).
+            db.query {
+                Processes.update({ Processes.id eq id }) {
+                    it[executions] = """[{"label":"l","start":1,"end":2,"resultCode":0,"stdOut":null,"stdErr":null,"errMsg":null}]"""
+                }
+            }
+            val old = repo.getInfo(id)!!.executions.single()
+            assertNull(old.stoppedBy)
+            assertEquals(false, old.onStop)
+        }
+
+    @Test
     fun `cost_source starts as cli and stays cli for cli charges`() =
         runTest {
             val repo = repo()
@@ -1393,7 +1422,7 @@ class ProcessRepositoryTest {
 
             val reconciled = repo.markInterruptedAsUnknown(nowSec = 999)
 
-            assertEquals(setOf(created, working), reconciled.toSet())
+            assertEquals(setOf(created, working), reconciled.processIds.toSet())
             assertEquals(ProcessStatus.UNKNOWN, repo.getStatus(created))
             assertEquals(ProcessStatus.UNKNOWN, repo.getStatus(working))
             assertEquals(ProcessStatus.FINISHED, repo.getStatus(finished))
@@ -1851,6 +1880,159 @@ class ProcessRepositoryTest {
             repo.obtainProcessId("flaky", emptyMap(), 100, cooldown = cooldown, nowSec = 260)
         }
 
+    // ========== cooldown.key: the same windows, counted per subject (ADR-0106) ==========
+
+    @Test
+    fun `obtainProcessId stores the rendered key on the row`() =
+        runTest {
+            val repo = repo()
+            val keyed = repo.obtainProcessId("a", emptyMap(), 100, cooldownKey = "mr-1").processId
+            val keyless = repo.obtainProcessId("a", emptyMap(), 100).processId
+
+            assertEquals("mr-1", cooldownKeyOf(repo, keyed))
+            assertEquals(null, cooldownKeyOf(repo, keyless), "an unkeyed start stores NULL, not an empty string")
+        }
+
+    @Test
+    fun `a keyed lookup counts only that subject's rows`() =
+        runTest {
+            val repo = repo()
+            repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr-1", nowSec = 100)
+            repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr-2", nowSec = 500)
+            repo.obtainProcessId("watcher", emptyMap(), 100, nowSec = 900)
+
+            assertEquals(100, repo.latestRunStartedAt("watcher", "mr-1"))
+            assertEquals(500, repo.latestRunStartedAt("watcher", "mr-2"))
+            assertEquals(null, repo.latestRunStartedAt("watcher", "mr-3"))
+            // No key counts every row of the agent, whatever key they carry.
+            assertEquals(900, repo.latestRunStartedAt("watcher"))
+        }
+
+    @Test
+    fun `a keyed failure lookup counts only that subject's failures`() =
+        runTest {
+            val repo = repo()
+            val one = repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr-1").processId
+            val two = repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr-2").processId
+            repo.transitionStatus(one, ProcessStatus.FAILED, 200, guard = null)
+            repo.transitionStatus(two, ProcessStatus.FAILED, 400, guard = null)
+
+            assertEquals(200, repo.latestFailureEndedAt("watcher", "mr-1"))
+            assertEquals(400, repo.latestFailureEndedAt("watcher", "mr-2"))
+            assertEquals(null, repo.latestFailureEndedAt("watcher", "mr-3"))
+            assertEquals(400, repo.latestFailureEndedAt("watcher"))
+        }
+
+    @Test
+    fun `a key is compared exactly, so a wildcard in it matches nothing else`() =
+        runTest {
+            // The key comes from the run's inputs, so `%` and `_` are attacker-chosen
+            // characters. A LIKE-shaped comparison would let `%` name every subject.
+            val repo = repo()
+            repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr%1", nowSec = 100)
+            repo.obtainProcessId("watcher", emptyMap(), 100, cooldownKey = "mr_1", nowSec = 200)
+
+            assertEquals(100, repo.latestRunStartedAt("watcher", "mr%1"))
+            assertEquals(200, repo.latestRunStartedAt("watcher", "mr_1"))
+            assertEquals(null, repo.latestRunStartedAt("watcher", "mrX1"))
+        }
+
+    @Test
+    fun `a keyed start is refused inside its own subject's window and another subject starts`() =
+        runTest {
+            val repo = repo()
+            val cooldown = Cooldown(afterFailure = "1m", key = "mr-{{MR}}")
+            val failed = repo.obtainProcessId("a", emptyMap(), 100, cooldownKey = "mr-1", nowSec = 1_000).processId
+            repo.transitionStatus(failed, ProcessStatus.FAILED, 1_000, guard = null)
+
+            val e =
+                assertFailsWith<CooldownActiveException> {
+                    repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-1", nowSec = 1_030)
+                }
+
+            assertEquals("a", e.agentName)
+            assertEquals(1, repo.lastProcessId(), "a refused start leaves no row behind")
+            // Another subject's failure window is its own.
+            assertEquals(
+                2,
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-2", nowSec = 1_030).processId,
+            )
+        }
+
+    @Test
+    fun `a keyed minInterval paces one subject without pacing another`() =
+        runTest {
+            val repo = repo()
+            val cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}")
+            repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-1", nowSec = 1_000)
+
+            assertFailsWith<CooldownActiveException> {
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-1", nowSec = 1_030)
+            }
+            assertEquals(
+                2,
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-2", nowSec = 1_030).processId,
+            )
+            assertEquals(
+                3,
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-1", nowSec = 1_060).processId,
+            )
+        }
+
+    @Test
+    fun `a keyless cooldown still counts rows written by a keyed definition`() =
+        runTest {
+            // The key is a property of the START, not of the row: a definition that drops
+            // its key goes back to counting every run of the agent, keyed rows included.
+            val repo = repo()
+            repo.obtainProcessId("a", emptyMap(), 100, cooldownKey = "mr-1", nowSec = 1_000)
+
+            assertFailsWith<CooldownActiveException> {
+                repo.obtainProcessId("a", emptyMap(), 100, cooldown = Cooldown(minInterval = "1m"), nowSec = 1_030)
+            }
+        }
+
+    @Test
+    fun `concurrent keyed starts of one subject admit exactly one`() =
+        // Same race as the keyless case, now with the subject filter in the predicate:
+        // the filter has to be evaluated inside the INSERT's transaction too.
+        runBlocking {
+            val repo = repo(PersistenceTestSupport.tempDatabase(dispatcher = Dispatchers.IO))
+            val cooldown = Cooldown(minInterval = "1h", key = "mr-{{MR}}")
+            val starters = 20
+            val admitted = AtomicInteger(0)
+            val refused = AtomicInteger(0)
+
+            coroutineScope {
+                repeat(starters) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            repo.obtainProcessId("a", emptyMap(), 100, cooldown = cooldown, cooldownKey = "mr-1", nowSec = 1_000)
+                            admitted.incrementAndGet()
+                        } catch (e: CooldownActiveException) {
+                            refused.incrementAndGet()
+                        }
+                    }
+                }
+            }
+
+            assertEquals(1, admitted.get(), "exactly one start of the subject may pass the cooldown")
+            assertEquals(starters - 1, refused.get())
+            assertEquals(1, repo.lastProcessId(), "a refused start must not leave a row behind")
+        }
+
+    /** The row's `cooldown_key`, read directly — [ProcessInfo] deliberately does not carry it. */
+    private suspend fun cooldownKeyOf(
+        repo: ProcessRepository,
+        processId: Int,
+    ): String? =
+        repo.db.read {
+            Processes
+                .selectAll()
+                .where { Processes.id eq processId }
+                .single()[Processes.cooldownKey]
+        }
+
     @Test
     fun `ended_at is stamped on terminal transitions and stays null while active`() =
         runTest {
@@ -2185,6 +2367,8 @@ class ProcessRepositoryTest {
                 assertTrue(sql.contains("processes.status"), sql)
                 assertTrue(sql.contains("processes.history"), sql)
                 assertTrue(sql.contains("processes.agent_name"), sql)
+                // The recording attributes the hook run to the owner the row carries (ADR-0107).
+                assertTrue(sql.contains("processes.owner"), sql)
                 assertFalse(sql.contains("processes.input_params"), sql)
                 assertFalse(sql.contains("processes.executions"), sql)
                 assertFalse(sql.contains("processes.runner_state"), sql)
@@ -2420,5 +2604,284 @@ class ProcessRepositoryTest {
 
             assertEquals("alice" to "a", repo.getRunVisibility(id))
             assertNull(repo.getRunVisibility(id + 100))
+        }
+
+    // ── Agent-level status hooks (ADR-0107) ──────────────────────────────────────────────
+    // The hook rows a status write records ride that write's own transaction, so a restart
+    // between the two loses nothing and a guard-rejected CAS records none of them.
+
+    /** The hooks the agent catalog declares, keyed by the status that fires them. */
+    private fun recording(
+        hooks: Map<ProcessStatus, List<String>>,
+        maxPending: Int = 100,
+    ) = HookRecording(
+        hooksFor = { _, status -> hooks[status].orEmpty().map { AgentHook(status, it) } },
+        maxPending = maxPending,
+    )
+
+    @Test
+    fun `obtainProcessId records the run's CREATED hooks in the same write`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+
+            val result =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    owner = "alice",
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            val hook =
+                assertNotNull(
+                    hooks.get(
+                        result.hooks.rows
+                            .map { it.id }
+                            .single(),
+                    ),
+                )
+            assertEquals(result.processId, hook.processId)
+            assertEquals("declarer", hook.declaringAgent)
+            assertEquals(ProcessStatus.CREATED, hook.triggeringStatus)
+            assertEquals("notifier", hook.targetAgentName)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `an agent with no entry for the new status records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val created =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+            val working =
+                repo.transitionStatus(
+                    created.processId,
+                    ProcessStatus.WORKING,
+                    1000,
+                    null,
+                    hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier"))),
+                )
+
+            assertEquals(emptyList(), working.hooks.rows.map { it.id })
+            assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
+    fun `a transition records the entries of the new status and the run's owner`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+
+            val result =
+                repo.transitionStatus(
+                    id,
+                    ProcessStatus.FINISHED,
+                    1000,
+                    null,
+                    hookRecording = recording(mapOf(ProcessStatus.FINISHED to listOf("notifier", "audit"))),
+                )
+
+            assertEquals(
+                2,
+                result.hooks.rows
+                    .map { it.id }
+                    .size,
+            )
+            val recorded = hooks.list(HookStatus.PENDING)
+            assertEquals(listOf("notifier", "audit"), recorded.map { it.targetAgentName })
+            assertEquals(listOf("alice", "alice"), recorded.map { it.owner })
+            assertEquals(listOf(ProcessStatus.FINISHED, ProcessStatus.FINISHED), recorded.map { it.triggeringStatus })
+        }
+
+    @Test
+    fun `a guard-rejected transition records no hook`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100).processId
+
+            val result =
+                repo.transitionStatus(
+                    id,
+                    ProcessStatus.WORKING,
+                    1000,
+                    setOf(ProcessStatus.FINISHED),
+                    hookRecording = recording(mapOf(ProcessStatus.WORKING to listOf("notifier"))),
+                )
+
+            assertFalse(result.updated)
+            assertEquals(emptyList(), result.hooks.rows.map { it.id })
+            assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
+        }
+
+    @Test
+    fun `a write that does not move the status records no hook`() =
+        runTest {
+            // ProcessExecutor re-asserts CREATED right after the INSERT (the kill guard): that is
+            // one reach of CREATED, so one hook row, not two. See ADR-0107.
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val created =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            val reasserted =
+                repo.transitionStatus(
+                    created.processId,
+                    ProcessStatus.CREATED,
+                    1000,
+                    setOf(ProcessStatus.CREATED),
+                    hookRecording = recording(mapOf(ProcessStatus.CREATED to listOf("notifier"))),
+                )
+
+            assertTrue(reasserted.updated)
+            assertEquals(emptyList(), reasserted.hooks.rows.map { it.id })
+            assertEquals(1, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
+    fun `killTransition records the KILLED hooks and returns the killed agent`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+
+            val result =
+                repo.killTransition(
+                    id,
+                    1000,
+                    hookRecording = recording(mapOf(ProcessStatus.KILLED to listOf("notifier"))),
+                )
+
+            assertEquals("declarer", result.agentName)
+            val hook =
+                assertNotNull(
+                    hooks.get(
+                        result.hooks.rows
+                            .map { it.id }
+                            .single(),
+                    ),
+                )
+            assertEquals(ProcessStatus.KILLED, hook.triggeringStatus)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `killTransition of a run that already ended records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val id = repo.obtainProcessId("declarer", emptyMap(), 100).processId
+            repo.transitionStatus(id, ProcessStatus.FINISHED, 900, null)
+
+            val result =
+                repo.killTransition(
+                    id,
+                    1000,
+                    hookRecording = recording(mapOf(ProcessStatus.KILLED to listOf("notifier"))),
+                )
+
+            assertNull(result.agentName)
+            assertEquals(emptyList(), result.hooks.rows.map { it.id })
+        }
+
+    @Test
+    fun `markInterruptedAsUnknown records the UNKNOWN hooks of every reconciled run`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+            val hooks = HookRepository(db)
+            val first = repo.obtainProcessId("declarer", emptyMap(), 100, owner = "alice").processId
+            val second = repo.obtainProcessId("other", emptyMap(), 100).processId
+            repo.transitionStatus(second, ProcessStatus.FINISHED, 900, null)
+
+            val result =
+                repo.markInterruptedAsUnknown(
+                    1000,
+                    hookRecording =
+                        recording(
+                            mapOf(
+                                ProcessStatus.UNKNOWN to listOf("notifier"),
+                                ProcessStatus.FINISHED to listOf("audit"),
+                            ),
+                        ),
+                )
+
+            // Only the run the reconciliation actually moved to UNKNOWN records its hook.
+            assertEquals(listOf(first), result.processIds)
+            val hook =
+                assertNotNull(
+                    hooks.get(
+                        result.hooks.rows
+                            .map { it.id }
+                            .single(),
+                    ),
+                )
+            assertEquals(first, hook.processId)
+            assertEquals("declarer", hook.declaringAgent)
+            assertEquals(ProcessStatus.UNKNOWN, hook.triggeringStatus)
+            assertEquals("alice", hook.owner)
+        }
+
+    @Test
+    fun `the pending cap sheds the hooks over it instead of failing the write`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val result =
+                repo.obtainProcessId(
+                    "declarer",
+                    emptyMap(),
+                    100,
+                    hookRecording =
+                        recording(
+                            mapOf(ProcessStatus.CREATED to listOf("a", "b", "c")),
+                            maxPending = 2,
+                        ),
+                )
+
+            assertEquals(
+                2,
+                result.hooks.rows
+                    .map { it.id }
+                    .size,
+            )
+            // The shed entry travels out of the transaction, so the caller can log it after the
+            // commit rather than inside the write block. See ADR-0107.
+            assertEquals(
+                listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
+                result.hooks.shed,
+            )
+            assertEquals(2, HookRepository(db).list(HookStatus.PENDING).size)
+        }
+
+    @Test
+    fun `a write with no hook recording records nothing`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val repo = repo(db)
+
+            val result = repo.obtainProcessId("declarer", emptyMap(), 100)
+
+            assertEquals(emptyList(), result.hooks.rows.map { it.id })
+            assertEquals(emptyList(), HookRepository(db).list(HookStatus.PENDING))
         }
 }

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.io.path.writeText
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 class RemoteCommandBuilderTest {
@@ -82,6 +83,21 @@ class RemoteCommandBuilderTest {
         )
     }
 
+    @Test
+    fun `buildReapInterrupt sends SIGINT then SIGKILL after the grace`() {
+        assertEquals(
+            "p=\$(cat '/w/.homer/reap/cmd-1.pgid' 2>/dev/null); case \"\$p\" in ''|*[!0-9]*) exit 0;; esac; " +
+                "[ \"\$p\" -gt 1 ] && { kill -INT -\"\$p\" 2>/dev/null; sleep 3; kill -KILL -\"\$p\" 2>/dev/null; }",
+            RemoteCommandBuilder.buildReapInterrupt("/w/.homer/reap/cmd-1.pgid", 3L),
+        )
+    }
+
+    @Test
+    fun `buildReapInterrupt clamps a negative grace to zero`() {
+        val cmd = RemoteCommandBuilder.buildReapInterrupt("/w/.homer/reap/cmd-1.pgid", -5L)
+        assertContains(cmd, "sleep 0; kill -KILL")
+    }
+
     /**
      * Runs the real buildReapKill command with `kill` shadowed by a shell
      * function so nothing is actually signalled, and asserts the numeric guard
@@ -109,5 +125,34 @@ class RemoteCommandBuilderTest {
         assertEquals("", decision("abc"))
         assertEquals("", decision(""))
         assertEquals("", decision("1; touch /tmp/pwned")) // non-numeric -> guarded out
+    }
+
+    /**
+     * Same shadowed-`kill` harness as the buildReapKill guard test, for the graceful
+     * reaper: the shared guard lets only a plain integer > 1 through, so a forged
+     * side-file (`0`, `1`, `-1`, non-numeric) sends neither the SIGINT nor the SIGKILL.
+     */
+    @Test
+    fun `buildReapInterrupt signals nothing for a forged pgid file`(
+        @TempDir tmp: Path,
+    ) {
+        assumeFalse(System.getProperty("os.name").lowercase().contains("win"))
+
+        fun decision(pgidContent: String): String {
+            val f = tmp.resolve("pgid").also { it.writeText(pgidContent) }
+            // grace 0 so the valid case does not sleep.
+            val cmd = "kill() { echo \"WOULDKILL \$*\"; }; " + RemoteCommandBuilder.buildReapInterrupt(f.toString(), 0L)
+            val p = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(true).start()
+            return p.inputStream
+                .readBytes()
+                .decodeToString()
+                .trim()
+        }
+        assertEquals("WOULDKILL -INT -12345\nWOULDKILL -KILL -12345", decision("12345"))
+        assertEquals("", decision(""))
+        assertEquals("", decision("0"))
+        assertEquals("", decision("1"))
+        assertEquals("", decision("-1"))
+        assertEquals("", decision("abc"))
     }
 }

@@ -258,6 +258,7 @@ class ProcessExecutorTest {
                     any(),
                     owner = "ci",
                     cooldown = any(),
+                    cooldownKey = any(),
                     secretInputKeys = any(),
                     parentProcessId = any(),
                     rootProcessId = any(),
@@ -274,6 +275,7 @@ class ProcessExecutorTest {
                     any(),
                     owner = "ci",
                     cooldown = any(),
+                    cooldownKey = any(),
                     secretInputKeys = any(),
                     parentProcessId = any(),
                     rootProcessId = any(),
@@ -287,10 +289,11 @@ class ProcessExecutorTest {
             // The bound is enforced inside obtainProcessId's transaction, atomic with the
             // INSERT — AgentRunStarter's pre-flight check cannot hold it on its own. If this
             // wiring is dropped the cooldown silently stops binding. See ADR-0051.
-            val cooldown = Cooldown(minInterval = "1m")
+            val cooldown = Cooldown(minInterval = "1m", key = "mr-{{MR}}")
             coEvery { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), any()) } returns 1
             coEvery { mockProcess.execute(any(), any()) } just Runs
             every { mockProcess.cooldown } returns cooldown
+            every { mockProcess.cooldownKey } returns "mr-1"
 
             processExecutor.execute(mockProcess, testContext)
 
@@ -300,6 +303,9 @@ class ProcessExecutorTest {
                     any(),
                     any(),
                     cooldown = cooldown,
+                    // The rendered key rides with the window it scopes: dropping this wiring
+                    // would count the window per agent again, silently. See ADR-0106.
+                    cooldownKey = "mr-1",
                     secretInputKeys = any(),
                     parentProcessId = any(),
                     rootProcessId = any(),
@@ -315,7 +321,9 @@ class ProcessExecutorTest {
 
             processExecutor.execute(mockProcess, testContext)
 
-            coVerify { mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), parentProcessId = 7) }
+            coVerify {
+                mockProcessManager.obtainProcessId(any(), any(), any(), any(), any(), any(), parentProcessId = 7)
+            }
         }
 
     // ========== Job Management Tests ==========

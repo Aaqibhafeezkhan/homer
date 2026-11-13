@@ -2,6 +2,8 @@ package homer.app.runners.ssh
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.infra.OutputLineFilter
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
@@ -11,6 +13,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.apache.sshd.client.SshClient
+import org.apache.sshd.client.channel.ChannelExec
+import org.apache.sshd.client.channel.ClientChannelEvent
+import org.apache.sshd.client.future.OpenFuture
+import org.apache.sshd.client.session.ClientSession
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
@@ -25,6 +31,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class SshShellExecutorTest {
@@ -231,5 +238,116 @@ class SshShellExecutorTest {
         }
         Thread.sleep(4_000) // past the child's 3s timer
         assertFalse(marker.exists(), "backgrounded remote child was not reaped with its process group")
+    }
+
+    /**
+     * A mocked session whose exec channel never reports CLOSED, so a short timeout always
+     * takes the kill path. Every command string handed to `createExecChannel` is recorded:
+     * the second one is the reaper script, which the interrupt tests assert on without
+     * needing a remote `setsid -w` (the reaping integration tests skip where the target's
+     * `setsid` cannot form a group).
+     */
+    private fun stalledSession(): Pair<ClientSession, MutableList<String>> {
+        val commands = mutableListOf<String>()
+        val channel = mockk<ChannelExec>(relaxed = true)
+        // A relaxed OpenFuture cannot answer `verify`: its generated subclass returns Object
+        // where the executor expects an OpenFuture back, so stub the one call the open does.
+        val openFuture = mockk<OpenFuture>()
+        every { openFuture.verify(any<Long>()) } returns openFuture
+        every { channel.open() } returns openFuture
+        every { channel.waitFor(any<Collection<ClientChannelEvent>>(), any<Long>()) } returns emptySet()
+        val session = mockk<ClientSession>()
+        every { session.createExecChannel(capture(commands)) } returns channel
+        return session to commands
+    }
+
+    private fun mockedReapingExecutor(session: ClientSession) =
+        SshShellExecutor(
+            session = session,
+            remoteWorkdir = workdir.toString(),
+            reapProcessGroup = true,
+            reapDir = workdir.resolve(".homer/reap").toString(),
+        )
+
+    @Test
+    fun `a timeout with an interrupt grace reaps the remote group with SIGINT before the kill`(
+        @TempDir local: Path,
+    ) = runTest {
+        val (session, commands) = stalledSession()
+        assertThrows<CancellationException> {
+            mockedReapingExecutor(session).cmd(
+                listOf("sleep", "30"),
+                local.resolve("o"),
+                local.resolve("e"),
+                null,
+                emptyMap(),
+                50.milliseconds,
+                interruptGrace = 2.seconds,
+            )
+        }
+        val reaper = commands.last()
+        assertContains(reaper, "kill -INT")
+        assertContains(reaper, "sleep 2;")
+        assertContains(reaper, "kill -KILL")
+    }
+
+    @Test
+    fun `a timeout without an interrupt grace reaps the remote group with the immediate kill`(
+        @TempDir local: Path,
+    ) = runTest {
+        val (session, commands) = stalledSession()
+        assertThrows<CancellationException> {
+            mockedReapingExecutor(session).cmd(
+                listOf("sleep", "30"),
+                local.resolve("o"),
+                local.resolve("e"),
+                null,
+                emptyMap(),
+                50.milliseconds,
+            )
+        }
+        val reaper = commands.last()
+        assertFalse(reaper.contains("kill -INT"), "without a grace no SIGINT is sent")
+        assertContains(reaper, "kill -KILL")
+    }
+
+    @Test
+    fun `a timeout with an interrupt grace lets the remote group exit on SIGINT`(
+        @TempDir local: Path,
+    ) {
+        assumeTrue(setsidAvailable())
+        // The remote command traps SIGINT, records that the trap ran and exits, so the
+        // marker proves the graceful reaper SIGINTed the group (a SIGKILL runs no trap).
+        val marker = workdir.resolve("interrupt-marker")
+        val script = "trap 'echo int > $marker; exit 0' INT; sleep 30"
+        runBlocking {
+            assertThrows<CancellationException> {
+                reapingExecutor().cmd(
+                    listOf("sh", "-c", script),
+                    local.resolve("o"),
+                    local.resolve("e"),
+                    null,
+                    emptyMap(),
+                    1.seconds,
+                    interruptGrace = 2.seconds,
+                )
+            }
+        }
+        assertTrue(marker.exists(), "with a grace the remote group gets SIGINT and its trap runs")
+    }
+
+    @Test
+    fun `a timeout without an interrupt grace SIGKILLs the remote group immediately`(
+        @TempDir local: Path,
+    ) {
+        assumeTrue(setsidAvailable())
+        val marker = workdir.resolve("interrupt-marker")
+        val script = "trap 'echo int > $marker; exit 0' INT; sleep 30"
+        runBlocking {
+            assertThrows<CancellationException> {
+                reapingExecutor().cmd(listOf("sh", "-c", script), local.resolve("o"), local.resolve("e"), null, emptyMap(), 1.seconds)
+            }
+        }
+        assertFalse(marker.exists(), "without a grace the group is SIGKILLed and the trap never runs")
     }
 }

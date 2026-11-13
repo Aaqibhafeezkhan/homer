@@ -1,5 +1,6 @@
 package homer.app.infra
 
+import homer.app.EnvConstants
 import homer.app.exceptions.ValidationException
 import io.ktor.http.Parameters
 import org.junit.jupiter.api.Test
@@ -112,6 +113,24 @@ class ReservedEnvNamesTest {
         // The prefixes are case-sensitive like the exact names.
         listOf("hmr_agent_name", "ld_preload", "java_home", "lc_all").forEach {
             assertFalse(ReservedEnvNames.isReserved(it), "$it must not be reserved")
+        }
+    }
+
+    @Test
+    fun `the stop-context names cannot be declared as inputs or as payload params`() {
+        // The stop context is Homer's own, appended to the stop steps' env: an input or a
+        // dispatch/continuation param bound to one of these would let a caller decide what the
+        // stop steps believe about the stop. See ADR-0108.
+        listOf(
+            EnvConstants.STOP_REASON,
+            EnvConstants.STOP_STEP_INDEX,
+            EnvConstants.STOP_STEP_LABEL,
+            EnvConstants.STOP_DEADLINE,
+            EnvConstants.STOP_SESSION_ID,
+        ).forEach {
+            assertTrue(ReservedEnvNames.isReserved(it), "$it must be reserved")
+            assertTrue(isNonControlReserved(it), "$it must not be a steerable control marker")
+            assertFailsWith<ValidationException> { validatePayloadParam(it, "answerParam", emptyMap()) }
         }
     }
 

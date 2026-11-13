@@ -47,6 +47,7 @@ class AgentCatalogTest : E2eTestBase() {
                     "lock-skip",
                     "lock-kill",
                     "cooldown-lock-skip",
+                    "cooldown-key",
                     "parallel-reject",
                     "lock-subject",
                     "lock-queue-cap",

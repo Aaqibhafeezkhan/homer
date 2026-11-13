@@ -1,15 +1,19 @@
 package homer.app.runners.external
 
 import homer.app.exceptions.OutputCapExceededException
+import homer.app.infra.KillCause
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.ShellExecutor
+import homer.app.infra.appendKillNotices
 import homer.app.models.CommandResult
-import homer.app.runners.KillCause
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
@@ -25,7 +29,9 @@ import kotlin.time.Duration.Companion.seconds
  * other runner writes, stdout through the Claude line filter when one is set, so
  * log tailing and result parsing above the session do not change. Timeout is
  * enforced by the instance (`timedOut` in the result); Homer bounds the wait for
- * that result by `timeoutMs + heartbeatTimeoutSec` (ADR-0066).
+ * that result by `timeoutMs + heartbeatTimeoutSec`, plus the interrupt grace when
+ * one is set, because the instance then stops the command gracefully before it
+ * answers (ADR-0066, ADR-0108).
  */
 class ExternalShellExecutor(
     private val session: ExternalRunnerSession,
@@ -42,6 +48,8 @@ class ExternalShellExecutor(
         data object Deadline : Outcome
     }
 
+    // ShellExecutor.cmd's override signature (fixed by the interface), as in SshShellExecutor.
+    // jscpd:ignore-start
     @OptIn(ExperimentalCoroutinesApi::class)
     @Suppress("SuspendFunSwallowedCancellation") // cancels the remote cmd under NonCancellable and rethrows
     override suspend fun cmd(
@@ -52,31 +60,25 @@ class ExternalShellExecutor(
         env: Map<String, String>,
         timeout: Duration,
         stdOutFilter: OutputLineFilter?,
+        interruptGrace: Duration?,
     ): CommandResult {
+        // jscpd:ignore-end
         // No Dispatchers.IO hop here: opening the two files is one fast syscall each, and
         // everything else below (submit/select/await) is a suspension, not blocking IO. The
         // session must stay deterministic under runTest's virtual time; the real blocking IO
         // of a cmd (chunk writes) happens in the route handlers, not here.
         val sink = openSink(stdOut, stdErr, stdOutFilter)
-        val op =
-            RunnerOp.Cmd(
-                opId = RunnerProtocol.newId(),
-                argv = command,
-                env = env,
-                stdin = stdIn,
-                timeoutMs = timeout.inWholeMilliseconds,
-                cwd = session.remoteWorkdir,
-            )
+        val op = cmdOp(command, stdIn, env, timeout, interruptGrace)
         session.registerSink(op.opId, sink)
         val kill = KillCause()
+        // With a grace the command's own timeout is a soft deadline: the instance stops it
+        // gracefully, so the wait for the result is extended by the grace rather than failing
+        // the step the moment the instance has not answered. A grace that is absent leaves the
+        // bound exactly as it was.
+        val deadline = timeout + (interruptGrace ?: Duration.ZERO) + heartbeatTimeout
         return try {
             val deferred = session.mailbox.submit(op)
-            val outcome =
-                select<Outcome> {
-                    deferred.onAwait { Outcome.Done(it) }
-                    sink.capTripped.onAwait { Outcome.CapExceeded }
-                    onTimeout((timeout + heartbeatTimeout).inWholeMilliseconds) { Outcome.Deadline }
-                }
+            val outcome = awaitOutcome(deferred, sink, op.opId, timeout, interruptGrace, deadline)
             when (outcome) {
                 Outcome.CapExceeded -> {
                     kill.byCap = true
@@ -85,7 +87,7 @@ class ExternalShellExecutor(
 
                 Outcome.Deadline -> {
                     throw ExternalRunnerException(
-                        "Runner instance '${session.instance.name}' did not report the command result within ${(timeout + heartbeatTimeout).inWholeSeconds} s",
+                        "Runner instance '${session.instance.name}' did not report the command result within ${deadline.inWholeSeconds} s",
                     )
                 }
 
@@ -100,8 +102,7 @@ class ExternalShellExecutor(
                 session.cancelCmd(op.opId)
                 session.unregisterSink(op.opId)
                 sink.close()
-                if (kill.byTimeout) stdErr.toFile().appendText("\n[HOMER] Command killed due to TTL timeout ($timeout)\n")
-                if (kill.byCap) stdErr.toFile().appendText("\n[HOMER] Output cap exceeded ($maxOutputBytes bytes)\n")
+                appendKillNotices(stdErr, kill, timeout, maxOutputBytes)
             }
             throw e
         }.also {
@@ -109,6 +110,59 @@ class ExternalShellExecutor(
             sink.close()
         }
     }
+
+    /** The `cmd` op carrying this command to the instance, with the grace the instance stops it after. */
+    private fun cmdOp(
+        command: List<String>,
+        stdIn: String?,
+        env: Map<String, String>,
+        timeout: Duration,
+        interruptGrace: Duration?,
+    ): RunnerOp.Cmd =
+        RunnerOp.Cmd(
+            opId = RunnerProtocol.newId(),
+            argv = command,
+            env = env,
+            stdin = stdIn,
+            timeoutMs = timeout.inWholeMilliseconds,
+            cwd = session.remoteWorkdir,
+            interruptGraceSeconds = interruptGrace?.inWholeSeconds,
+        )
+
+    /**
+     * Waits for the instance's result, the sink's cap trip or [deadline], whichever settles first;
+     * the interrupt Homer sends at [timeout] is best-effort and cancelled once the result settles.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private suspend fun awaitOutcome(
+        deferred: Deferred<OpResult>,
+        sink: OutputSink,
+        opId: String,
+        timeout: Duration,
+        interruptGrace: Duration?,
+        deadline: Duration,
+    ): Outcome =
+        coroutineScope {
+            // The instance stops the command at its own timeout too, but the interrupt is
+            // Homer's to send as well: it is best-effort, and a lost one still ends in the
+            // instance's kill path. Cancelled as soon as the result settles either way.
+            val softStop =
+                interruptGrace?.let {
+                    launch {
+                        delay(timeout)
+                        session.interruptCmd(opId)
+                    }
+                }
+            try {
+                select<Outcome> {
+                    deferred.onAwait { Outcome.Done(it) }
+                    sink.capTripped.onAwait { Outcome.CapExceeded }
+                    onTimeout(deadline.inWholeMilliseconds) { Outcome.Deadline }
+                }
+            } finally {
+                softStop?.cancel()
+            }
+        }
 
     /** The sink for the command's output; closes stdout again when opening stderr fails. */
     private fun openSink(

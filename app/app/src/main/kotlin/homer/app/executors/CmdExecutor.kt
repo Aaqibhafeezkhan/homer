@@ -27,7 +27,8 @@ class CmdExecutor(
                 stdErr = context.stdErr,
                 stdIn = null,
                 env = context.workspace.config.env,
-                timeout = command.timeout.seconds,
+                timeout = context.timeoutFor(command),
+                interruptGrace = context.interruptGrace,
             )
 
         span.setOutputValue(context, fileOperations, redactor)

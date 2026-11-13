@@ -217,6 +217,13 @@ class ExternalRunnerSession(
 
     fun cancelCmd(opId: String) = mailbox.post(RunnerOp.Cancel(opId))
 
+    /**
+     * Asks the instance to stop the running `cmd` [opId] gracefully (SIGINT, then SIGKILL after
+     * the grace the op carried). Best-effort: the instance answers it on a separate poll, so a
+     * lost one leaves the command to its own timeout and the normal kill path. See ADR-0108.
+     */
+    fun interruptCmd(opId: String) = mailbox.post(RunnerOp.Interrupt(opId))
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun await(
         deferred: CompletableDeferred<OpResult>,

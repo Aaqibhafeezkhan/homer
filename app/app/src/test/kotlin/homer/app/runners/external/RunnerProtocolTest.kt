@@ -24,10 +24,20 @@ class RunnerProtocolTest {
                     timeoutMs = 5_000,
                     cwd = "/r/1/workdir",
                 ),
+                RunnerOp.Cmd(
+                    "op-3b",
+                    argv = listOf("sh", "-c", "echo hi"),
+                    env = emptyMap(),
+                    stdin = null,
+                    timeoutMs = 5_000,
+                    cwd = "/r/1/workdir",
+                    interruptGraceSeconds = 15,
+                ),
                 RunnerOp.Download("op-4", remoteRelative = "artifacts", mode = DownloadMode.OVERLAY),
                 RunnerOp.CleanWorkspace("op-5"),
                 RunnerOp.Close("op-6", reason = "finished"),
                 RunnerOp.Cancel("op-3"),
+                RunnerOp.Interrupt("op-3"),
             )
         ops.forEach { op ->
             val json = apiJson.encodeToString(RunnerOp.serializer(), op)
@@ -35,6 +45,29 @@ class RunnerProtocolTest {
             assertEquals(op, apiJson.decodeFromString(RunnerOp.serializer(), json))
         }
         assertTrue(apiJson.encodeToString(RunnerOp.serializer(), ops[4]).contains("\"type\": \"cmd\""))
+    }
+
+    @Test
+    fun `an old-format cmd decodes without the interrupt grace and an unknown op type is ignored`() {
+        // An instance older than the field sends a `cmd` without it: the default must apply.
+        val older =
+            apiJson.decodeFromString(
+                RunnerOp.serializer(),
+                """{"type":"cmd","opId":"op-3","argv":["sh"],"env":{},"stdin":null,"timeoutMs":1000,"cwd":"/r"}""",
+            )
+        assertEquals(RunnerOp.Cmd("op-3", listOf("sh"), emptyMap(), null, 1_000, "/r"), older)
+        assertNull((older as RunnerOp.Cmd).interruptGraceSeconds)
+
+        // The interrupt rides its own op, so a `cmd` with no grace and a frame with an unknown
+        // key both stay decodable by either side.
+        assertEquals(
+            RunnerOp.Interrupt("op-3"),
+            apiJson.decodeFromString(RunnerOp.serializer(), """{"type":"interrupt","opId":"op-3"}"""),
+        )
+        assertEquals(
+            "op-3",
+            runnerProtocolJson.decodeFromString(RunnerOp.serializer(), """{"type":"cancel","opId":"op-3","future":1}""").opId,
+        )
     }
 
     @Test

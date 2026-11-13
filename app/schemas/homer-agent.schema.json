@@ -28,6 +28,12 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/Command" }
     },
+    "onStop": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/Command" },
+      "description": "Steps run once, in order, after the run is stopped gracefully — by a step's own `timeout` with `onTimeout: stop`, or by the runner's soft run deadline. Each receives the HMR_STOP_* environment and runs under the run's remaining deadline. The first stop step that fails or times out ends the rest. At most 10 steps. See AGENT.md → Graceful stop."
+    },
     "env": {
       "type": "object",
       "description": "Per-agent environment. Values support @SYSENV:VAR_NAME references.",
@@ -103,6 +109,19 @@
     "cooldown": { "$ref": "#/$defs/Cooldown" },
     "telemetry": { "$ref": "#/$defs/AgentTelemetry" },
     "tags": { "$ref": "#/$defs/Tags" },
+    "hooks": {
+      "type": "array",
+      "maxItems": 16,
+      "default": [],
+      "description": "Status hooks: each entry is a one-key object mapping a run status of THIS agent to the agent Homer starts when a run of this agent reaches it, from every start path (cron, HTTP, MCP, console retry, sub-run). The hook run belongs to the triggering run's owner and is bounded by server.hooks. A status may be listed more than once to fan out. The target must be a loaded agent, must not be this agent, and must not form a hook cycle. See ADR-0107.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "propertyNames": { "enum": ["CREATED", "WORKING", "FINISHED", "KILLED", "FAILED", "UNKNOWN"] },
+        "additionalProperties": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" }
+      }
+    },
     "artifactNameTemplate": {
       "type": "string",
       "minLength": 1,
@@ -153,7 +172,7 @@
     "Cooldown": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Minimum spacing between runs of this agent. At least one field must be set. Durations use the purgeAfter grammar (m/h/d/w).",
+      "description": "Minimum spacing between runs of this agent. At least one of minInterval and afterFailure must be set. Durations use the purgeAfter grammar (m/h/d/w). By default both windows are counted per agent; key narrows them to one subject.",
       "minProperties": 1,
       "properties": {
         "minInterval": {
@@ -165,6 +184,12 @@
           "type": "string",
           "pattern": "^[0-9]+[mhdw]$",
           "description": "Minimum time since the previous run ended, applied only when that run FAILED."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Optional {{VAR}} template naming the subject both windows are counted per (a merge request, a branch, a ticket), rendered at start from the run's env and resolved inputs. A placeholder that does not resolve fails the run before it starts, never as a shared literal. The rendered value must be at most 128 characters of [A-Za-z0-9._:/-] and must not reference a secret input."
         }
       }
     },
@@ -277,11 +302,19 @@
         { "$ref": "#/$defs/RunnerCmd" }
       ]
     },
+    "OnTimeout": {
+      "description": "What a step's own `timeout` does when it expires. `fail` (the default) fails the run at once; `stop` stops the run gracefully, running the agent's `onStop:` steps first. `stop` requires `onStop:` to be declared.",
+      "type": "string",
+      "enum": ["fail", "stop"],
+      "default": "fail"
+    },
     "CommandCommonProps": {
       "type": "object",
       "properties": {
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0, "default": 60 },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "continueIfFail": { "type": "boolean", "default": false },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
@@ -342,6 +375,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -361,6 +396,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -382,6 +419,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -395,7 +434,7 @@
     "LlmRetry": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Retry policy for an LLM command (claude, codex or opencode). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException). Other exceptions propagate immediately.",
+      "description": "Retry policy for an LLM command (claude, codex or opencode). Retries fire on non-zero exit OR on output validation failure (MalformedLlmOutputException); a terminal cap stop the command opted into (Claude's maxTurnsExitCode) is never retried. Other exceptions propagate immediately.",
       "properties": {
         "attempts": {
           "type": "integer",
@@ -440,6 +479,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -512,6 +553,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -560,6 +603,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -581,6 +626,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",
@@ -617,6 +664,8 @@
         "label": { "type": "string" },
         "timeout": { "type": "integer", "minimum": 0 },
         "continueIfFail": { "type": "boolean" },
+        "onTimeout": { "$ref": "#/$defs/OnTimeout" },
+        "interruptGraceSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "default": 30 },
         "finishExitCode": { "type": ["integer", "null"] },
         "resultEnvParam": {
           "type": "array",

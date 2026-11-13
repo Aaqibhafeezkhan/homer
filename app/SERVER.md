@@ -434,6 +434,7 @@ server:
 | `questions` | `QuestionsConfig` | No | `{maxWaitSec=86400, maxOpenPerProcess=10, maxTextLength=10000, maxOptions=20, maxConcurrentWaitsPerProcess=32}` | Human-in-the-loop questions asked by running commands — see [Operator questions](#operator-questions). |
 | `messages` | `RunMessagesConfig` | No | `{maxTextLength=10000, maxPerRun=100}` | Per-run inbox limits for operator messages sent to a running run — see [Run messages](#run-messages). |
 | `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32, maxGroupSize=8}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
+| `hooks` | `HookConfig` | No | `{maxPending=200, maxChainDepth=8, settledRetentionSec=604800}` | Bounds on agent-declared status hooks — see [Status hooks](#status-hooks). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
 | `localRunner` | `LocalRunnerConfig` | No | `{enabled=true, tags=[], concurrency=null}` | The built-in `local` runner: `enabled` (`false` registers none, so no run executes in the server's container), the `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). `tags` and `concurrency` are refused while `enabled` is `false`. See [Runner claim queue](#runner-claim-queue). |
@@ -727,6 +728,32 @@ is purged, or is evicted. They are cleaned up only when the dispatch is
 answered, cancelled, or TTL-swept. Starting from schema v26 the settled-row
 prune is a further cleanup path: a settled dispatch is deleted with its
 question once its `createdAt` passes `server.dispatch.settledRetentionSec`.
+
+### Status hooks
+
+`server.hooks` bounds the agent-declared status hooks (`hooks` on an agent
+definition): a run's status transition records one durable row per matching
+hook entry, and Homer starts the target agent after that write commits. See
+[AGENT.md](AGENT.md#status-hooks) for the declaration and
+[ADR-0107](../docs/adr/0107-agent-status-hooks.md) for the delivery model.
+
+```yaml
+server:
+  hooks:
+    maxPending: 200            # global cap on PENDING hook rows (default 200)
+    maxChainDepth: 8           # longest chain of hook-started runs Homer follows (default 8)
+    settledRetentionSec: 604800  # delete settled hooks this long after creation (default 7 days, floor 3600)
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `maxPending` | `Int` | No | `200` | Global cap on the number of simultaneously PENDING hook rows. A status transition that would push the table past it **drops** the excess with a log line — the transition still commits, and the triggering run's own status never changes because a hook could not be queued. Must be `> 0`. |
+| `maxChainDepth` | `Int` | No | `8` | Longest chain of hook-started runs Homer will follow. A hook run carries its own depth as `HMR_HOOK_DEPTH`, so the fire of a run that is already this deep is dropped rather than attempted — the next attempt would be refused for the same reason. This complements the load-time cycle rejection, which cannot see a hook target reloaded after the declaring agent loaded. Must be `>= 1`. |
+| `settledRetentionSec` | `Long` | No | `604800` | How long (seconds) a settled hook — any status but `PENDING` and `DISPATCHING` — is kept, measured from its `createdAt`; the continuation sweep tick then deletes it. Minimum `3600`. |
+
+Unlike `server.dispatch.maxPending`, the pending cap here does not reject the
+caller: a status transition is not a request, so there is nothing to answer
+`429` to. The surplus is shed and logged.
 
 ### LangGraph
 
@@ -1775,6 +1802,8 @@ egress note above.
 | Command (any type) | `cmd.skipped` | `true` when a `when` clause skipped the command |
 | Command (any type) | `output.env` | Captured `resultEnvParam` values, redacted |
 | Command (remote) | `runner.alias` | The runner that executed it, plus that runner session's own metadata keys |
+| `!<claude>` / `!<codex>` / `!<opencode>` (generation) | `langfuse.observation.input` | The step's compiled prompt, redacted. Langfuse reads its own observation keys before any framework fallback, so this pair — not a bare `prompt` / `output` — is what fills the generation's Input |
+| `!<claude>` / `!<codex>` / `!<opencode>` (generation) | `langfuse.observation.output` | The step's result, redacted. The pair above is what fills the generation's Output in Langfuse |
 | `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost_usd` | Cost charged for the attempt; absent when the charge is zero |
 | `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost.source` | `session` (the spend endpoint answered), `cli` (the CLI's own figure) or `none` (no cost reported, nothing charged) |
 | `!<claude>` / `!<codex>` / `!<opencode>` | `llm.cost.fallback_reason` | Why the figure is degraded; absent when it is not. A step that returned while its session lookup was still running keeps `session figure pending` here — the command span is not rewritten once it has ended; the settled figure arrives on the step's `llm_cost_settlement` child span, written when the background settlement answers **or** when its 45 s hand-off wait bound expires first — the latter reports the pending figure and marks the shed with `telemetry.llm.handoff_shed` on the child span. A `session figure pending` can therefore be final, not still settling: a hand-off shed at the concurrency bound reports inline on the still-open command span and likewise leaves `session figure pending` for good. Alert on a non-empty value other than `session figure pending` with `llm.cost.source != session` to catch `incomplete: …` and endpoint failures |
@@ -2490,7 +2519,7 @@ Artifact larger than [`server.maxArtifactBytes`](#server-fields):
 
 ### POST /api/v1/processes/{id}/retry
 
-Retry a finished process (`FINISHED`, `FAILED` or `KILLED`) by launching a new execution of the same agent with the source process's captured `inputParams`. The stored inputs are re-validated against the agent's **current** definition first, exactly as a fresh request would be. An `UNKNOWN` run (interrupted by a restart) cannot be retried — use `POST /api/v1/processes/{id}/resume` for a LangGraph run; an `UNKNOWN` run of any other agent cannot be replayed through the API.
+Retry a finished process (`FINISHED`, `FAILED` or `KILLED`) by launching a new execution of the same agent with the source process's captured `inputParams`. The stored inputs are re-validated against the agent's **current** definition first, exactly as a fresh request would be — plus one replay-specific refusal: a `cooldown.key` placeholder naming an input that was secret when the source run stored its values is refused, which no fresh request could trip over. An `UNKNOWN` run (interrupted by a restart) cannot be retried — use `POST /api/v1/processes/{id}/resume` for a LangGraph run; an `UNKNOWN` run of any other agent cannot be replayed through the API.
 
 **Authentication**: Required (when configured)
 
@@ -2529,6 +2558,11 @@ The returned `processId` identifies the newly started execution. The original so
 400 Bad Request — a stored input no longer satisfies the agent's current definition (for example a newly required input, or a value the current validation rejects):
 ```json
 { "err": 1, "msg": "Cannot retry: agent 'deploy-service' now requires input 'env' which is absent from the original run" }
+```
+
+400 Bad Request — an unusable `cooldown.key` (an unresolved placeholder, a rendered value that is empty, over 128 characters, or outside `[A-Za-z0-9._:/-]`, or a placeholder naming an input that was secret when the source run stored its values):
+```json
+{ "err": 1, "msg": "Agent 'deploy-service' has an unusable cooldown.key: placeholder {{MR}} names a secret input" }
 ```
 
 404 Not Found — unknown source process, or one the caller cannot retry (see **Authorization** below):
@@ -2732,6 +2766,7 @@ started in-process by Homer ([ADR-0030](../docs/adr/0030-runagent-in-process-dis
 | `keepPodTtlSeconds` | `Long` | No | `3600` | TTL applied to kept-for-debug pods. With `workload: Job`, the cluster removes a kept pod `jobTtlSecondsAfterFinished` after its Job ends; see [Job workload](#job-workload). |
 | `workload` | `Pod` \| `Job` | No | `Pod` | Kubernetes object each run executes in; `Job` is opt-in — see [Job workload](#job-workload). |
 | `maxRunSeconds` | `Long?` | No | `null` | Upper bound on a whole run's wall-clock time in the cluster, `>= 1`; `null` = no limit. Kubernetes stops the pod at the limit, and the run fails up to `terminationGracePeriodSeconds` (30 s by default) later, because the main container ignores SIGTERM; the run's `runner.termination` says `DeadlineExceeded`. Set on the pod in both modes — see [Job workload](#job-workload). |
+| `gracefulStopSeconds` | `Long?` | No | `null` | Opt-in soft deadline: this many seconds before the pod's `maxRunSeconds` hard deadline, Homer interrupts the step that is running so the agent's `onStop:` steps can save state before Kubernetes kills the pod. Requires `maxRunSeconds`, `>= 1` and smaller than it; `null` (default) = no soft deadline, and no extra Kubernetes read. The pod's `activeDeadlineSeconds` is unchanged, so a stop phase that overruns still ends with the pod. See [Job workload](#job-workload) and [AGENT.md → Graceful stop](AGENT.md#graceful-stop). |
 | `jobTtlSecondsAfterFinished` | `Long?` | No | `null` | Seconds a finished Job is kept before the cluster deletes it, `>= 0`; only valid with `workload: Job`; `null` = `3600` — see [Job workload](#job-workload). |
 | `homerApiUrl` | `String?` | No | `null` | Cluster-internal Homer URL; exposed in-pod as `HMR_API_URL` so the `homer-*` helpers and MCP question tools can reach Homer from inside the pod. |
 | `env` | `Map<String, String>` | No | `{}` | Per-runner environment variables, layered between `globalEnv` and agent `env` — the place for values describing *this* runner's host/image (`PATH` with `/opt/homebrew/bin` on a macOS ssh box, `JAVA_HOME`, `HOME` for a uid with no passwd entry). Values support `@SYSENV:VAR` (fail-fast at startup, and the resolved names join the telemetry redaction set exactly like `@SYSENV` in `globalEnv`); keys must not be blank or use the reserved `HMR_` prefix. Remote runners receive no `parentEnvAllowlist` host env, so this is also where a value the image must still see goes. Like agent `env`, values ride the per-exec `env K=V…` delivery — **visible in the remote process list (`ps`)** on multi-tenant hosts; forward credentials via `@SYSENV:` and prefer file delivery where possible. For a run that selected this runner via `runnerTags` rather than by alias, these keys are instead merged **above** agent `env` when the run is claimed — see [Runner claim queue](#runner-claim-queue). |
@@ -2853,6 +2888,18 @@ default `Pod` mode; only the object that owns the pod changes.
   quota or scheduling, which `podStartTimeoutSeconds` already bounds, does
   not count — see
   [ADR-0100](../docs/adr/0100-kubernetes-job-workload-and-pod-run-limit.md).
+- **`gracefulStopSeconds`** is the **soft** deadline in front of that hard
+  one: `maxRunSeconds - gracefulStopSeconds` after pod start, Homer
+  interrupts the step that is running (SIGINT to its process group, then
+  `interruptGraceSeconds` before the kill) so the agent's `onStop:` steps
+  can save state. The soft deadline is measured from the pod's
+  `status.startTime`, clamped to the earlier of it and the creation time
+  Homer recorded, so a skewed pod-reported value may shorten the deadline
+  but never extend it. It needs both bounds configured, and it is
+  deliberately **not** set on the pod: `activeDeadlineSeconds` stays the
+  bound the kubelet enforces, so a stop phase that overruns the remaining
+  seconds ends exactly as it would without the feature. See
+  [AGENT.md → Graceful stop](AGENT.md#graceful-stop).
 - **`!<runnerCmd>` steps** open their own session on the runner, so in Job
   mode each step gets its own Job, and `maxRunSeconds` applies to it.
 - **Cleanup.** At session close, and when a startup fails or Homer's
@@ -3734,11 +3781,12 @@ primitives:
 | --- | --- | --- |
 | `createWorkspace` | `{opId}` | `{opId, root}`: absolute path the instance created, with `workdir`, `artifacts` and `.homer` inside. |
 | `upload` | `{opId, remoteRelative, isDir}` | `{opId}` after the instance fetched and extracted the tar. |
-| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd}` | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
+| `cmd` | `{opId, argv, env, stdin?, timeoutMs, cwd, interruptGraceSeconds?}` — how long the command may keep running after a SIGINT before it is killed; null or absent means the immediate kill | `{opId, exitCode, timedOut, stdoutChunks?, stderrChunks?}`; output arrives through the `output` route while running. |
 | `download` | `{opId, remoteRelative, mode}` | `{opId, missing}`; the instance posts the tar first, then the result. |
 | `cleanWorkspace` | `{opId}` | `{opId}`. |
 | `close` | `{opId, reason}` | none; the session is over. |
 | `cancel` | `{opId}` of the running `cmd` | none; the instance kills the process group and then reports the `cmd` result as usual. |
+| `interrupt` | `{opId}` of the running `cmd` | none; the instance stops it gracefully — SIGINT its process group, then kill after the grace the `cmd` carried — and reports the `cmd` result as usual. Best-effort: an interrupt for a command that has already exited, or that the instance cannot stop, still ends in the normal kill path. |
 
 Every result carries `ok` (default `true`) and, when `ok` is `false`, `error`. A `cmd`
 result may also carry `stdoutChunks`/`stderrChunks`, one past the last `seq` the instance

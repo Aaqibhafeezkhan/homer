@@ -81,6 +81,14 @@ internal object Processes : Table("processes") {
     // from before v14. See ADR-0051.
     val endedAt = long("ended_at").nullable()
 
+    // The subject this run's cooldown windows are counted per: the agent's `cooldown.key`
+    // rendered at start from the run's env and resolved inputs, written in the INSERT's own
+    // transaction so it is valid the instant the row is. Null when the agent sets no key,
+    // and on every row from before v31 (no backfill — a pre-v31 run was counted per agent
+    // and cannot be attributed to a subject). A keyed cooldown ignores null rows; a keyless
+    // one counts every row of the agent, null included. See ADR-0106.
+    val cooldownKey = text("cooldown_key").nullable()
+
     // envNames of the inputs this agent declared `secret: true` AT THE TIME OF THE
     // RUN, as a JSON array. API redaction reads this rather than the agent's
     // current definition: records now outlive their workspace (ADR-0048), and an
@@ -113,6 +121,11 @@ internal object Processes : Table("processes") {
     // foreign key, like the other run links: the holder may be evicted first and the id must
     // keep reading after that. Served only to a caller who may see that run. See ADR-0058.
     val failureReasonRunId = integer("failure_reason_run_id").nullable()
+
+    // What a graceful stop did to the run — its cause, the step it interrupted and the stop
+    // steps' outcome — as a JSON blob, written once by the stop phase. Null for a run no
+    // graceful stop ended, and for rows from before v31. See ADR-0108.
+    val stop = text("stop").nullable()
 
     /**
      * The columns the record-level reads (the two purge sweeps and `costByTag`) use, and nothing else:
@@ -166,6 +179,12 @@ internal object Processes : Table("processes") {
         index("processes_legacy_record_purge", false, status, purgeAt, filterCondition = { recordPurgeAt.isNull() })
         // v24: cooldown.afterFailure's latest-failure lookup, run under the write lock at run start.
         index("processes_agent_status_ended", false, agentName, status, endedAt)
+        // v31: the same two cooldown lookups scoped to one `cooldown.key`. The first is
+        // `agent_name = ? AND cooldown_key = ?` ordered by id, which the index's own rowid
+        // order serves; the second adds `status = ?` and orders by ended_at, so it needs
+        // both columns in the key to avoid a sort — the keyless pair above, mirrored.
+        index("processes_agent_cooldown_key", false, agentName, cooldownKey)
+        index("processes_agent_cooldown_status_ended", false, agentName, cooldownKey, status, endedAt)
     }
 
     override val primaryKey = PrimaryKey(id)
@@ -433,6 +452,44 @@ internal object ContinuationWatches : Table("continuation_watches") {
     val resultTransformer = text("result_transformer").nullable()
 
     override val primaryKey = PrimaryKey(continuationId, watchedProcessId)
+}
+
+/**
+ * A durable agent-level status hook: the row that makes "a run of the declaring agent
+ * reached [triggeringStatus], so [agentName] must start" survive a restart. Written in the
+ * same transaction as the status write that caused it, claimed (PENDING→DISPATCHING) before
+ * the run starts, and settled DISPATCHED/FAILED/DROPPED. No TTL: a hook is not a promise to
+ * a caller with a deadline, so `expires_at` is always null and the settle-and-prune retention
+ * is the only bound on a row's life. See ADR-0107.
+ */
+internal object PendingHooks : Table("pending_hooks"), FiredRecordTable {
+    override val id = integer("id").autoIncrement()
+    val processId = integer("process_id")
+    val declaringAgent = varchar("declaring_agent", 255)
+    override val status = varchar("status", 16)
+    override val agentName = varchar("agent_name", 255)
+    override val owner = text("owner").nullable()
+    override val createdAt = long("created_at")
+    override val expiresAt = long("expires_at").nullable()
+
+    /** The run status whose transition recorded this row. */
+    val triggeringStatus = varchar("triggering_status", 16)
+
+    val fireAttempts = integer("fire_attempts").default(0)
+    val nextAttemptAt = long("next_attempt_at").nullable()
+    val firedProcessId = integer("fired_process_id").nullable()
+    val firedAt = long("fired_at").nullable()
+    val error = text("error").nullable()
+
+    // v31: the due-retry sweep and the settled-row prune, plus the per-run lookup the
+    // fire path and the boot replay use.
+    init {
+        index("pending_hooks_status_next_attempt", false, status, nextAttemptAt)
+        index("pending_hooks_process_id", false, processId)
+        index("pending_hooks_status_created", false, status, createdAt)
+    }
+
+    override val primaryKey = PrimaryKey(id)
 }
 
 /**

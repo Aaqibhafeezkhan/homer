@@ -58,6 +58,18 @@ internal class AgentScanner(
             errors.add("Directory scan failed: ${e.message}")
         }
 
+        // Cross-agent `hooks` checks last, so they see the whole catalog: a hook target must be
+        // a loaded agent and the hook graph must be acyclic. A rejected agent's directory is
+        // still present (its files are on disk), so it stays in presentDirNames. See ADR-0107.
+        for ((name, hookErrors) in AgentHookValidation.apply(parsed)) {
+            sourceDirs.remove(name)
+            for (error in hookErrors) {
+                val msg = "Agent '$name': $error; the agent is skipped."
+                logger.error(msg)
+                errors.add(msg)
+            }
+        }
+
         return AgentScan(parsed, sourceDirs, presentDirNames, errors)
     }
 
@@ -90,6 +102,10 @@ internal class AgentScanner(
             // directory), injected last so it wins over any author-set value.
             // The HMR_ prefix is reserved, so caller inputs cannot override it.
             val sysEnvBackedEnvNames = sysEnvResolver.secretNamesFor(agent.env)
+            // The keys half alone feeds the cooldown.key load check (Agent's init): the
+            // composite's host-variable half would refuse a placeholder that renders a
+            // non-host value. See `SysEnvResolver.secretEnvKeysFor`.
+            val sysEnvBackedEnvKeys = sysEnvResolver.secretEnvKeysFor(agent.env)
             val resolvedEnv =
                 sysEnvResolver.resolveMapValues(agent.env) +
                     (EnvConstants.AGENT_DIR to dir.toAbsolutePath().normalize().toString())
@@ -105,6 +121,7 @@ internal class AgentScanner(
                     cron = agent.cron.takeUnless { cronDisabled },
                     writable = Files.isWritable(dir),
                     sysEnvBackedEnvNames = sysEnvBackedEnvNames,
+                    sysEnvBackedEnvKeys = sysEnvBackedEnvKeys,
                 )
             sourceDirs[validatedName] = rel
             logger.info("Loaded agent: {} from {}", validatedName, rel)

@@ -26,6 +26,16 @@ enum class DownloadMode {
 }
 
 /**
+ * A run's soft and hard wall-clock deadlines in epoch seconds: at [softEpochSec] the
+ * run must stop gracefully (interrupt the running step, then run its stop steps), at
+ * [hardEpochSec] the backend kills it outright. See ADR-0108.
+ */
+data class RunDeadline(
+    val softEpochSec: Long,
+    val hardEpochSec: Long,
+)
+
+/**
  * A live execution session produced by a Runner. Owns the shell used
  * for command execution and any backing resources (pod, connection, ...)
  * that must be released when the session ends.
@@ -40,6 +50,16 @@ enum class DownloadMode {
  */
 interface RunnerSession : AutoCloseable {
     val shell: ShellExecutor
+
+    /**
+     * The wall-clock deadlines the backend imposes on this run, in epoch seconds:
+     * the soft one is when the run must stop gracefully, the hard one when the
+     * backend kills it. Null when the backend imposes none (local, ssh, external),
+     * so callers must branch on null. Only the Kubernetes runner reports one, from
+     * `gracefulStopSeconds`. See ADR-0108.
+     */
+    val runDeadline: RunDeadline?
+        get() = null
 
     /**
      * Alias of the runner that produced this session, used to annotate

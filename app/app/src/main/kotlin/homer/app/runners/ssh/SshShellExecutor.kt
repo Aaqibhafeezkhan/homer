@@ -2,11 +2,12 @@ package homer.app.runners.ssh
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.SshConnectionLostException
+import homer.app.infra.KillCause
 import homer.app.infra.LineFilteringOutputStream
 import homer.app.infra.OutputLineFilter
 import homer.app.infra.ShellExecutor
+import homer.app.infra.appendKillNotices
 import homer.app.models.CommandResult
-import homer.app.runners.KillCause
 import homer.app.runners.exceedsOutputCap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,8 @@ class SshShellExecutor(
 ) : ShellExecutor {
     private val reapCounter = AtomicLong(0)
 
+    // ShellExecutor.cmd's override signature (fixed by the interface) and IO hop, as in KubernetesShellExecutor.
+    // jscpd:ignore-start
     override suspend fun cmd(
         command: List<String>,
         stdOut: Path,
@@ -53,16 +56,13 @@ class SshShellExecutor(
         env: Map<String, String>,
         timeout: Duration,
         stdOutFilter: OutputLineFilter?,
+        interruptGrace: Duration?,
     ): CommandResult =
         withContext(Dispatchers.IO) {
+            // jscpd:ignore-end
             // Non-null exactly when the command reaps its process group.
             val pgidFile = if (reapProcessGroup && reapDir != null) "$reapDir/cmd-${reapCounter.incrementAndGet()}.pgid" else null
-            val remoteCmd =
-                if (pgidFile != null) {
-                    RemoteCommandBuilder.buildReaping(remoteWorkdir, env, command, pgidFile)
-                } else {
-                    RemoteCommandBuilder.build(remoteWorkdir, env, command)
-                }
+            val remoteCmd = remoteCommand(command, env, pgidFile)
             val channel = session.createExecChannel(remoteCmd)
             // channel.use{} closes the exec channel on every path (success, timeout,
             // cancel, exception); the forceful close(true) in the catch block below
@@ -92,27 +92,60 @@ class SshShellExecutor(
                                 // itself. When reaping is enabled the command leads its own remote
                                 // process group; kill that whole group over a control channel FIRST so a
                                 // backgrounded/detached child (which close(true) alone would leave to
-                                // orphan on the target host) dies too. See ADR-0041.
-                                if (pgidFile != null) runCatching { reapRemoteGroup(pgidFile) }
+                                // orphan on the target host) dies too. See ADR-0041. A timeout with a
+                                // configured grace interrupts the group before the kill (ADR-0108); an
+                                // output-cap kill or a caller cancellation keeps the immediate SIGKILL.
+                                reapOnStop(pgidFile, kill, interruptGrace)
                                 runCatching { channel.close(true) }
-                                if (kill.byTimeout) {
-                                    stdErr.toFile().appendText("\n[HOMER] Command killed due to TTL timeout ($timeout)\n")
-                                }
-                                if (kill.byCap) {
-                                    stdErr.toFile().appendText("\n[HOMER] Output cap exceeded ($maxOutputBytes bytes)\n")
-                                }
+                                appendKillNotices(stdErr, kill, timeout, maxOutputBytes)
                             }
                             throw e
                         }
 
-                        val exit =
-                            channel.exitStatus
-                                ?: throw SshConnectionLostException("SSH channel closed without an exit status")
-                        CommandResult(exitCode = exit, stdOut = stdOut, stdErr = stdErr)
+                        commandResult(channel, stdOut, stdErr)
                     }
                 }
             }
         }
+
+    /** The remote argv for [command]: the reaping launcher when the command reports its own group. */
+    private fun remoteCommand(
+        command: List<String>,
+        env: Map<String, String>,
+        pgidFile: String?,
+    ): String =
+        if (pgidFile != null) {
+            RemoteCommandBuilder.buildReaping(remoteWorkdir, env, command, pgidFile)
+        } else {
+            RemoteCommandBuilder.build(remoteWorkdir, env, command)
+        }
+
+    /** The channel's exit status as the result; a channel closed without one is a lost connection. */
+    private fun commandResult(
+        channel: ChannelExec,
+        stdOut: Path,
+        stdErr: Path,
+    ): CommandResult {
+        val exit =
+            channel.exitStatus
+                ?: throw SshConnectionLostException("SSH channel closed without an exit status")
+        return CommandResult(exitCode = exit, stdOut = stdOut, stdErr = stdErr)
+    }
+
+    /**
+     * Interrupts then kills the remote group the command self-reported, when it has one and reaping
+     * is on: only a timeout stop carries [interruptGrace] (ADR-0108); a cap kill or a caller
+     * cancellation keeps the immediate SIGKILL.
+     */
+    private fun reapOnStop(
+        pgidFile: String?,
+        kill: KillCause,
+        interruptGrace: Duration?,
+    ) {
+        if (pgidFile == null) return
+        val grace = if (kill.byTimeout) interruptGrace else null
+        runCatching { reapRemoteGroup(pgidFile, grace) }
+    }
 
     /**
      * Waits until [channel] closes; throws on cancellation, on [timeout], or when the output passes
@@ -170,16 +203,29 @@ class SshShellExecutor(
     /**
      * Reaps the process group the command self-reported to [pgidFile] over a
      * fresh control channel. The pgid is validated to be a plain integer > 1
-     * before `kill -KILL` runs (see [RemoteCommandBuilder.buildReapKill]), so a
-     * forged/stale/corrupt side-file can never become `kill -KILL -1`.
-     * Best-effort: an empty/missing/invalid file or a failed kill is a no-op,
-     * swallowed by the caller's `runCatching`.
+     * before any signal runs (see [RemoteCommandBuilder.buildReapKill] /
+     * [RemoteCommandBuilder.buildReapInterrupt]), so a forged/stale/corrupt
+     * side-file can never become `kill -KILL -1` or `kill -INT -1`. When
+     * [interruptGrace] is set (the command was stopped by its own timeout and a
+     * grace is configured), the group is first SIGINTed and given the grace to
+     * exit before the SIGKILL; the channel wait covers that grace so the reaper
+     * script runs to completion. Best-effort: an empty/missing/invalid file or a
+     * failed kill is a no-op, swallowed by the caller's `runCatching`.
      */
-    private fun reapRemoteGroup(pgidFile: String) {
-        val kill = session.createExecChannel(RemoteCommandBuilder.buildReapKill(pgidFile))
+    private fun reapRemoteGroup(
+        pgidFile: String,
+        interruptGrace: Duration?,
+    ) {
+        val script =
+            if (interruptGrace != null) {
+                RemoteCommandBuilder.buildReapInterrupt(pgidFile, interruptGrace.inWholeSeconds)
+            } else {
+                RemoteCommandBuilder.buildReapKill(pgidFile)
+            }
+        val kill = session.createExecChannel(script)
         kill.use {
             it.open().verify(OPEN_TIMEOUT_MS)
-            it.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), REAP_TIMEOUT_MS)
+            it.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), REAP_TIMEOUT_MS + (interruptGrace?.inWholeMilliseconds ?: 0L))
         }
     }
 

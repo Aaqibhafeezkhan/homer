@@ -329,6 +329,105 @@ class SessionWorkerTest {
         }
 
     @Test
+    fun `an interrupt for a running command stops it and the result still arrives`() =
+        live {
+            val w = worker()
+            val run = async { w.run() }
+            api.ops.send(RunnerOp.CreateWorkspace("cw"))
+            api.result()
+            val up = tmp.resolve("up")
+            api.ops.send(
+                RunnerOp.Cmd(
+                    "c1",
+                    listOf("sh", "-c", "echo up > $up; sleep 30"),
+                    mapOf("PATH" to "/usr/bin:/bin"),
+                    null,
+                    60_000,
+                    w.sessionRoot.toString(),
+                    1,
+                ),
+            )
+            // Wait for the command to be up so runCmd has registered its handle in `running`:
+            // an Interrupt dispatched before that finds nothing there and is a no-op.
+            while (!up.exists()) {
+                delay(5)
+            }
+            val started = System.nanoTime()
+            api.ops.send(RunnerOp.Interrupt("c1"))
+            val r = api.result()
+            assertEquals("c1", r.opId)
+            assertTrue((System.nanoTime() - started) < 10_000_000_000L, "the interrupt ends the command well before its 30 s sleep")
+            assertTrue(r.exitCode != 0, "the interrupted command did not run to completion")
+            api.ops.send(RunnerOp.Close("cl", "done"))
+            run.await()
+        }
+
+    @Test
+    fun `the wire interrupt grace is clamped to the runner's own bounds`() {
+        // Negative: clamped to 0 — unclamped, the negative wait throws out of the reap's
+        // Process.waitFor and takes the session down with it.
+        assertEquals(0.seconds, clampInterruptGrace(-1))
+        // Huge: clamped to the runner's own cap — unclamped, the wire value pins the reap
+        // for that long.
+        assertEquals(600.seconds, clampInterruptGrace(1_000_000_000L))
+        assertEquals(30.seconds, clampInterruptGrace(30))
+        assertNull(clampInterruptGrace(null))
+    }
+
+    @Test
+    fun `an out-of-range interrupt grace from the wire is clamped, not taken as-is`() =
+        live {
+            val w = worker()
+            val run = async { w.run() }
+            api.ops.send(RunnerOp.CreateWorkspace("cw"))
+            api.result()
+            val cwd = w.sessionRoot.toString()
+
+            // Negative: clamped to 0 — a SIGINT-ignoring command is SIGKILLed at once after its
+            // own timeout. Unclamped, the negative wait throws out of the reap and takes the
+            // session down with it.
+            api.ops.send(
+                RunnerOp.Cmd(
+                    "c1",
+                    listOf("sh", "-c", "trap '' INT; sleep 30"),
+                    mapOf("PATH" to "/usr/bin:/bin"),
+                    null,
+                    1_000,
+                    cwd,
+                    -1,
+                ),
+            )
+            val started = System.nanoTime()
+            val r = api.result()
+            assertEquals("c1", r.opId)
+            assertTrue(r.timedOut)
+            assertTrue(r.exitCode != 0, "the command is killed, not left running")
+            assertTrue((System.nanoTime() - started) < 10_000_000_000L, "a negative grace clamps to an immediate kill")
+            assertFalse(w.lost, "the session survives the out-of-range grace")
+
+            // Huge: clamped to the runner's own cap, so the reap waits the clamp at most — never
+            // the 10^9 s the wire carried. A command that dies on SIGINT is reaped inside it and
+            // the worker goes on answering.
+            api.ops.send(
+                RunnerOp.Cmd(
+                    "c2",
+                    listOf("sh", "-c", "sleep 30"),
+                    mapOf("PATH" to "/usr/bin:/bin"),
+                    null,
+                    1_000,
+                    cwd,
+                    1_000_000_000L,
+                ),
+            )
+            val r2 = api.result()
+            assertEquals("c2", r2.opId)
+            assertTrue(r2.timedOut)
+            assertFalse(w.lost)
+            api.ops.send(RunnerOp.Close("cl", "done"))
+            run.await()
+        }
+
+    @Test
     fun `a command past its timeout is killed and reported timedOut`() =
         live {
             val w = worker()

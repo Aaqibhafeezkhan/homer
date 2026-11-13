@@ -8,7 +8,8 @@
         "echoScoped": { "token": "echo-scoped-token", "grants": [{ "agents": ["echo"], "actions": ["run", "read"] }] },
         "nested": { "token": "nested-token", "grants": [{ "agents": ["parent", "orphan-parent"], "actions": ["run", "read"] }] },
         "taggedScoped": { "token": "tagged-scoped-token", "grants": [{ "agents": ["tagged-secret"], "actions": ["run", "read"] }] },
-        "skipScoped": { "token": "skip-scoped-token", "grants": [{ "agents": ["lock-skip-scoped"], "actions": ["run", "read"] }] }
+        "skipScoped": { "token": "skip-scoped-token", "grants": [{ "agents": ["lock-skip-scoped"], "actions": ["run", "read"] }] },
+        "hookScoped": { "token": "hook-scoped-token", "grants": [{ "agents": ["hook-deny-declarer"], "actions": ["run", "read"] }] }
       }
     },
     "agentGrants": {

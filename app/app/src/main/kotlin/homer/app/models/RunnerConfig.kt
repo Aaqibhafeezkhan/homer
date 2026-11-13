@@ -37,6 +37,14 @@ sealed class RunnerConfig {
         val keepPodTtlSeconds: Long = 3600,
         val workload: KubernetesWorkload = KubernetesWorkload.Pod,
         val maxRunSeconds: Long? = null,
+        /**
+         * Opt-in soft deadline: this many seconds before the pod's `maxRunSeconds`
+         * hard deadline, the run's running step is interrupted (SIGINT) so its
+         * `onStop:` steps can save state before the kubelet kills the pod. Requires
+         * `maxRunSeconds`. Null = no soft deadline, and no extra Kubernetes read.
+         * See ADR-0108.
+         */
+        val gracefulStopSeconds: Long? = null,
         val jobTtlSecondsAfterFinished: Long? = null,
         val homerApiUrl: String? = null,
         /** Per-runner env, layered between `globalEnv` and agent `env`. See SERVER.md, "Remote runners". */
@@ -61,6 +69,15 @@ sealed class RunnerConfig {
         internal fun validateWorkload(alias: String) {
             require(maxRunSeconds == null || maxRunSeconds >= 1) {
                 "kubernetes runner '$alias': maxRunSeconds must be >= 1"
+            }
+            require(gracefulStopSeconds == null || maxRunSeconds != null) {
+                "kubernetes runner '$alias': gracefulStopSeconds requires maxRunSeconds"
+            }
+            require(gracefulStopSeconds == null || gracefulStopSeconds >= 1) {
+                "kubernetes runner '$alias': gracefulStopSeconds must be >= 1"
+            }
+            require(maxRunSeconds == null || gracefulStopSeconds == null || gracefulStopSeconds < maxRunSeconds) {
+                "kubernetes runner '$alias': gracefulStopSeconds must be less than maxRunSeconds"
             }
             require(jobTtlSecondsAfterFinished == null || jobTtlSecondsAfterFinished >= 0) {
                 "kubernetes runner '$alias': jobTtlSecondsAfterFinished must be >= 0"

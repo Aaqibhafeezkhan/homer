@@ -1906,6 +1906,10 @@ class AgentsServiceTest {
         // whole-value case, and `PATH` is what covers a composite like
         // `"Bearer @SYSENV:PATH"`, where the resolved value is not the bare secret.
         assertEquals(setOf("REPO_TOKEN", "PATH"), agent.sysEnvBackedEnvNames)
+        // The keys half keeps only the env keys — the referenced host variable is
+        // redaction-only, and the cooldown.key load check must not refuse a placeholder
+        // that shares its name with a non-host value.
+        assertEquals(setOf("REPO_TOKEN"), agent.sysEnvBackedEnvKeys)
         // The recorded key must resolve against the RESOLVED env, or the redactor
         // would look up a value that is no longer there.
         assertEquals(System.getenv("PATH"), agent.env["REPO_TOKEN"])

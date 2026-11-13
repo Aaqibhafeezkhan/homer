@@ -814,6 +814,27 @@ server:    { maxProcesses: 10000, maxRetainedArtifactBytes: 16777216 }</code></p
         </article>
 
         <article class="f">
+          <h3>Graceful stop <span class="where">agent.yaml · k8s runner</span></h3>
+          <p>Opt in to letting an agent save state when a run is cut short. A step with <code>onTimeout: stop</code> has
+            its own <code>timeout</code> stop the run gracefully instead of failing it, and a Kubernetes runner with
+            <code>gracefulStopSeconds</code> stops the run that many seconds before <code>maxRunSeconds</code> — either
+            way the agent's <code>onStop:</code> steps run once, in order, under the run's remaining deadline, with
+            <code>HMR_STOP_REASON</code>, <code>HMR_STOP_STEP_INDEX</code>, <code>HMR_STOP_STEP_LABEL</code>,
+            <code>HMR_STOP_DEADLINE</code> and (for an interrupted LLM step) <code>HMR_STOP_SESSION_ID</code> telling
+            them what happened. The interrupted step gets <code>interruptGraceSeconds</code> to exit after SIGINT before
+            it is killed, and its spend is still accounted. The run ends <code>FAILED</code> with a <code>stop</code>
+            record naming the reason and how the stop steps went — no separate status.</p>
+          <pre><code>- !&lt;script&gt;
+  label: Run integration tests
+  timeout: 3600
+  onTimeout: stop          # default: fail
+  interruptGraceSeconds: 60 # default 30, 0..600
+  content: "pytest -q tests/integration"
+onStop:
+  - !&lt;script&gt; { label: Save report, content: 'cp report.xml "$HMR_ARTIFACTS_DIR/"' }</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Run ownership <span class="where">authz</span></h3>
           <p>Every run is stamped with the principal that caused it (<code>ci</code>, <code>hmac:github</code>,
             <code>session:alice</code>, <code>system:cron</code>) and inherited by sub-runs. Owners can always see and
@@ -1188,10 +1209,11 @@ cmd: "/opt/claude/bin/claude"   # default: claude / codex / opencode</code></pre
 
         <article class="f">
           <h3>Retry on transient LLM failure <span class="where">claude · codex · opencode</span></h3>
-          <p>Retries a non-zero exit or malformed event stream with exponential backoff and full jitter. Other errors
-            (timeouts, cancellation) propagate immediately. Every attempt writes to the same artifact stem unless the
-            agent's <code>artifactNameTemplate</code> carries <code>{{HMR_CMD_ATTEMPT}}</code>, which keeps a failed
-            attempt's output inspectable.</p>
+          <p>Retries a non-zero exit or malformed event stream with exponential backoff and full jitter — except a
+            terminal cap stop the command opted into (Claude's <code>maxTurnsExitCode</code>), which is never retried.
+            Other errors (timeouts, cancellation) propagate immediately. Every attempt writes to the same artifact stem
+            unless the agent's <code>artifactNameTemplate</code> carries <code>{{HMR_CMD_ATTEMPT}}</code>, which keeps a
+            failed attempt's output inspectable.</p>
           <pre><code>retry: { attempts: 3, baseDelayMs: 2000, maxDelayMs: 20000 }</code></pre>
         </article>
 
@@ -1512,7 +1534,8 @@ HMR_MCP_CONFIG     HMR_INVOCATION_CHAIN HMR_PARENT_PROCESS_ID HMR_ROOT_PROCESS_I
         <div class="kicker">07 — Concurrency</div>
         <h2>Locks, slots and recursion guards</h2>
         <p>Two independent limiters — a named lock that serializes runs sharing a key, and a per-agent slot count that
-          bounds parallelism — plus a cooldown that bounds how often an agent may start at all.</p>
+          bounds parallelism — plus a cooldown that bounds how often an agent may start at all, per agent or per
+          subject it names with <code>cooldown.key</code>.</p>
       </div>
 
       <figure class="diagram">
@@ -1664,10 +1687,14 @@ onMaxParallelRuns: WAIT     # or REJECT (the run ends FAILED at once)</code></pr
             the dispatch <code>FAILED</code> — the operator's answer is consumed, with no retry. The window is measured from
             the process table, so it survives a restart. Every start path is covered. Retry, resume and debug still honour
             <code>minInterval</code>, but ignore <code>afterFailure</code> — unblocking a failed run is the way out of that
-            backoff, not the automated repeat it exists to stop.</p>
+            backoff, not the automated repeat it exists to stop. <code>key</code> counts both windows per rendered
+            subject instead of per agent, so a reviewer started once per merge request is not held back by another
+            request's run; a key that cannot be rendered — an unresolved placeholder, an empty or over-long value —
+            fails the start with <code>400</code> rather than sharing one window across every subject.</p>
           <pre><code>cooldown:
   minInterval: 5m       # since the previous run started
-  afterFailure: 15m     # since the previous FAILED run ended</code></pre>
+  afterFailure: 15m     # since the previous FAILED run ended
+  key: "mr-{{MR}}"      # …of this merge request, not of the agent</code></pre>
         </article>
 
         <article class="f">
@@ -2056,6 +2083,21 @@ homer-inbox</code></pre>
         </article>
 
         <article class="f">
+          <h3>Status hooks <span class="where">agent.yaml</span></h3>
+          <p>An agent declares which agent to start when <em>a run of its own</em> reaches a status — any of the six,
+            including <code>KILLED</code> and <code>UNKNOWN</code>, so cleanup and restart triage stop needing a
+            command that may never run. Recorded with the status write and fired from every start path (cron, HTTP,
+            MCP, console retry, sub-run), exactly once across a restart, and owned by the triggering run's
+            owner. The target
+            is re-checked at fire time and must not form a cycle; chains are bounded by
+            <code>server.hooks.maxChainDepth</code>.</p>
+          <pre><code>hooks:
+  - FINISHED: collect_artifacts
+  - FAILED: notify_oncall
+  - KILLED: cleanup_workspace</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Parallel fan-out join <span class="where">shell</span></h3>
           <p><code>homer-join</code> starts N subs at once and resumes the parent <em>once</em>, after the last finishes,
             with every result keyed by interrupt id. Body on stdin. Validation runs before any sub starts; a failure
@@ -2228,6 +2270,17 @@ def approve(state):
           <p>Two or more fan-outs sharing a <code>group=</code> marker in one segment become a single join: all subs run
             at once and the graph resumes once. Wall clock ≈ the slowest sub.</p>
           <pre><code>homer_fanout("architect", params={"topic": t}, group="designs")</code></pre>
+        </article>
+
+        <article class="f">
+          <h3>Retry a failed fan-out <span class="where">python</span></h3>
+          <p>A failed sub arrives as a value, so a plain resume replays it forever. <code>retries=</code> re-dispatches
+            that sub from the original call's args instead, and <code>infra_retries=</code> covers infrastructure
+            outcomes (unknown or unrecognized status, an undecodable payload) on a separate budget — each capped at
+            5.</p>
+          <pre><code>payload = homer_fanout("research_worker", params={"topic": topic}, retries=2)
+if payload["status"] != "FINISHED":
+    ...  # the last attempt's failure, unchanged</code></pre>
         </article>
 
         <article class="f">
@@ -2440,7 +2493,9 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
           <h3>Kubernetes runner <span class="where">server config</span></h3>
           <p>One ephemeral pod per run with a pod-local <code>emptyDir</code> workspace; content moves as gzip'd tar over
             the exec channel. The image must ship <code>tar</code> and <code>gzip</code>. <code>maxRunSeconds</code> is a
-            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>workload: Job</code> runs
+            hard run limit Kubernetes enforces on the pod, even while Homer is down; opt-in <code>gracefulStopSeconds</code>
+            puts a soft deadline in front of it, interrupting the running step so the agent's <code>onStop:</code> steps can
+            save state before the pod goes; opt-in <code>workload: Job</code> runs
             the pod in a one-pod Job that waits out namespace quota and is removed by its TTL. A stalled API server fails
             the run after a fixed 30 s instead of holding it, while the exec and workspace streams stay open. An exec
             channel that closes while the pod still runs is reported as <code>ExecChannelLost</code> in the run's
@@ -2452,7 +2507,8 @@ sftpTransferTimeoutSeconds: 60 # per-operation SFTP deadline; null = unbounded (
     resources: { limits: { cpu: "2", memory: 2Gi } }
     homerApiUrl: http://homer.homer.svc.cluster.local:8080
     workload: Job        # default Pod
-    maxRunSeconds: 7200</code></pre>
+    maxRunSeconds: 7200
+    gracefulStopSeconds: 300  # soft deadline 300 s earlier; needs maxRunSeconds</code></pre>
         </article>
 
         <article class="f">

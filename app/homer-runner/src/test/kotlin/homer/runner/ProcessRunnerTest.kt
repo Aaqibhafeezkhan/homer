@@ -1,5 +1,6 @@
 package homer.runner
 
+import homer.app.infra.ProcessGroupSupport
 import homer.app.runners.external.RunnerProtocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -238,6 +239,110 @@ class ProcessRunnerTest {
                 assertTrue(elapsedMs < 11_000, "the kill path stays bounded; took ${elapsedMs}ms")
             }
         }
+
+    @Test
+    fun `interrupt lets a command that handles SIGINT exit inside the grace`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                assumeTrue(ProcessGroupSupport.setsidPath != null, "a process group is required to signal the command")
+                val ready = tmp.resolve("ready")
+                val marker = tmp.resolve("int-seen")
+                val handle =
+                    ProcessRunner.start(
+                        listOf("sh", "-c", "trap 'echo got > $marker; exit 7' INT; echo ready > $ready; while true; do sleep 0.1; done"),
+                        tmp,
+                        env,
+                        null,
+                    )
+                awaitFile(ready)
+                val started = System.nanoTime()
+                handle.interrupt(10.seconds)
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertFalse(handle.isAlive())
+                assertTrue(marker.toFile().exists(), "the SIGINT reached the command's group")
+                assertTrue(elapsedMs < 5_000, "an exit inside the grace returns early; took ${elapsedMs}ms")
+            }
+        }
+
+    @Test
+    fun `interrupt kills a command that ignores SIGINT after the grace`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                assumeTrue(ProcessGroupSupport.setsidPath != null, "a process group is required to signal the command")
+                val ready = tmp.resolve("ready")
+                val handle =
+                    ProcessRunner.start(
+                        listOf("sh", "-c", "trap '' INT; echo ready > $ready; while true; do sleep 1; done"),
+                        tmp,
+                        env,
+                        null,
+                    )
+                awaitFile(ready)
+                val started = System.nanoTime()
+                handle.interrupt(1.seconds)
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+                assertFalse(handle.isAlive(), "a command that ignores SIGINT is killed after the grace")
+                assertTrue(elapsedMs >= 1_000, "the grace is waited out before the kill; took ${elapsedMs}ms")
+                assertTrue(elapsedMs < 10_000, "the kill follows the grace promptly; took ${elapsedMs}ms")
+            }
+        }
+
+    @Test
+    fun `a timeout that carries a grace interrupts before it kills`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                assumeTrue(ProcessGroupSupport.setsidPath != null, "a process group is required to signal the command")
+                val ready = tmp.resolve("ready")
+                val marker = tmp.resolve("int-seen")
+                val handle =
+                    ProcessRunner.start(
+                        listOf("sh", "-c", "trap 'echo got > $marker; exit 7' INT; echo ready > $ready; while true; do sleep 0.1; done"),
+                        tmp,
+                        env,
+                        null,
+                    )
+                awaitFile(ready)
+                val exit = handle.await(1.seconds, 10.seconds) { _, _, _ -> }
+
+                assertTrue(exit.timedOut, "the op's own timeout expired")
+                assertFalse(handle.isAlive())
+                assertTrue(marker.toFile().exists(), "the timeout path sent SIGINT before killing")
+                assertEquals(7, exit.code, "the command's own trap handled the interrupt")
+            }
+        }
+
+    @Test
+    fun `a timeout with no grace still kills at once`() =
+        runBlocking(Dispatchers.Default) {
+            withTimeout(30.seconds) {
+                assumeTrue(ProcessGroupSupport.setsidPath != null, "a process group is required to signal the command")
+                val ready = tmp.resolve("ready")
+                val marker = tmp.resolve("int-seen")
+                val handle =
+                    ProcessRunner.start(
+                        listOf("sh", "-c", "trap 'echo got > $marker' INT; echo ready > $ready; while true; do sleep 0.1; done"),
+                        tmp,
+                        env,
+                        null,
+                    )
+                awaitFile(ready)
+                val exit = handle.await(1.seconds) { _, _, _ -> }
+
+                assertTrue(exit.timedOut)
+                assertFalse(handle.isAlive())
+                assertFalse(marker.toFile().exists(), "without a grace the timeout sends no SIGINT")
+                assertEquals(137, exit.code, "the kill, not a trap, ended the command")
+            }
+        }
+
+    /** Blocks until [path] exists, so a signal is only sent once the shell has installed its trap. */
+    private suspend fun awaitFile(path: Path) {
+        val deadline = System.nanoTime() + 5.seconds.inWholeNanoseconds
+        while (!path.toFile().exists() && System.nanoTime() < deadline) delay(20)
+        assertTrue(path.toFile().exists(), "the command never became ready: $path")
+    }
 
     /** The shell's backgrounded child, from the pid the shell printed for it. */
     private fun grandchildOf(output: String): ProcessHandle {

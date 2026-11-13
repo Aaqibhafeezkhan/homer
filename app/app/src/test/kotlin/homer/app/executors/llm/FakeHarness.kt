@@ -23,8 +23,15 @@ open class FakeHarness(
     private val terminalExit: Int? = null,
     override val reportsCost: Boolean = true,
     override val countsModelCalls: Boolean = true,
+    private val terminalStopConfigured: Boolean = false,
 ) : LlmHarness<Command.Claude> {
     override val id = "claude"
+
+    /** How many times [inspect] ran, so a test can assert an attempt's stream was never read. */
+    var inspectCalls = 0
+        private set
+
+    override fun terminalStopConfigured(command: Command.Claude): Boolean = terminalStopConfigured
 
     override fun argv(
         command: Command.Claude,
@@ -78,6 +85,7 @@ open class FakeHarness(
         raw: List<JsonObject>,
         command: Command.Claude,
     ): Inspection {
+        inspectCalls += 1
         val end = events.filterIsInstance<LlmEvent.TurnEnd>().firstOrNull() ?: return Inspection.Malformed("no end")
         return when (end.status) {
             TurnStatus.Success -> Inspection.Success

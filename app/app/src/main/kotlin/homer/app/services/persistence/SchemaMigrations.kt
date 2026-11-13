@@ -333,18 +333,47 @@ private fun migrateToV30(
 }
 
 /**
- * v30→v31 adds grouped ask-and-dispatch (ADR-0109): `dispatches.kind` and the
- * `dispatch_group_questions` child table. `SchemaUtils.create` above already created the table
- * (create-if-missing) but never ALTERs an existing one, so the column and the child table's
- * member-lookup index are added by hand. `SINGLE` is the truthful default: every row that
- * existed before this version is a one-question dispatch, and a database that never uses groups
- * keeps exactly the behaviour it had.
+ * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need (ADR-0106),
+ * what a graceful stop did to the run — its cause, the interrupted step and the stop steps'
+ * outcome, as one JSON blob (ADR-0108) — the indexes of the `pending_hooks` table (ADR-0107),
+ * and grouped ask-and-dispatch (ADR-0109): `dispatches.kind` and the `dispatch_group_questions`
+ * child table's member-lookup index. One step for all four: the features landed together, so a
+ * database stamped `user_version = 31` skips the whole span. Each missing table is created by
+ * `SchemaUtils.create` above.
+ *
+ * No backfill for `cooldown_key`, `stop` or `dispatches.kind`: a run that ended before this
+ * version was counted per agent and was never stopped gracefully, and a dispatch written before
+ * it asked a single question, so a guessed subject or cause is worse than none. `SINGLE` is the
+ * truthful default — every row that existed before this version is a one-question dispatch, and
+ * a database that never uses groups keeps exactly the behaviour it had. Null `cooldown_key`
+ * simply means "no key", so a keyed cooldown ignores the row and a keyless one still counts it.
+ * Names match `Tables.kt`; `SchemaUtils.create` only indexes a table it creates, so the
+ * migration creates every index by hand.
  */
 private fun migrateToV31(
     st: Statement,
     current: Int,
 ) {
     if (current in 1 until 31) {
+        addColumnIfMissing(st, "processes", "cooldown_key", "TEXT")
+        st.execute("CREATE INDEX IF NOT EXISTS processes_agent_cooldown_key ON processes (agent_name, cooldown_key)")
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS processes_agent_cooldown_status_ended " +
+                "ON processes (agent_name, cooldown_key, status, ended_at)",
+        )
+        addColumnIfMissing(st, "processes", "stop", "TEXT")
+        // v30→v31 adds the pending_hooks table (ADR-0107). SchemaUtils.create above already
+        // created it on a database that did not have it; the indexes are created here by hand
+        // because SchemaUtils.create only indexes a table it creates. Names and definitions
+        // match the PendingHooks declaration in Tables.kt.
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS pending_hooks_status_next_attempt ON pending_hooks (status, next_attempt_at)",
+        )
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_process_id ON pending_hooks (process_id)")
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_status_created ON pending_hooks (status, created_at)")
+        // Grouped ask-and-dispatch (ADR-0109). SchemaUtils.create above already created the
+        // dispatch_group_questions table (create-if-missing) but never ALTERs an existing one,
+        // so the column and the child table's member-lookup index are added by hand.
         addColumnIfMissing(st, "dispatches", "kind", "TEXT NOT NULL DEFAULT 'SINGLE'")
         st.execute(
             "CREATE INDEX IF NOT EXISTS dispatch_group_questions_question_id " +

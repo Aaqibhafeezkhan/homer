@@ -31,6 +31,20 @@ data class Execution(
     val errMsg: String? = null,
     val skipped: Boolean = false,
     val kind: String = "",
+    // Why a graceful stop interrupted this step (`step_timeout`, `run_deadline`); null when
+    // it was not interrupted.
+    val stoppedBy: String? = null,
+    // Whether this entry is one of the agent's `onStop:` steps.
+    val onStop: Boolean = false,
+)
+
+@Serializable
+data class StopInfo(
+    val reason: String,
+    val stepIndex: Int,
+    val stepLabel: String,
+    val at: Long,
+    val stopSteps: String,
 )
 
 @Serializable
@@ -62,6 +76,10 @@ data class ProcessInfo(
     // Why a run failed before any of its commands started; null otherwise. The run
     // that blocked it is named inside the text only for a caller who may see it.
     val failureReason: String? = null,
+    // Why and where this run was stopped gracefully — the cause, the step it interrupted
+    // and how its `onStop:` steps ended. Null for a run no graceful stop ended; the run's
+    // status is still `FAILED`.
+    val stop: StopInfo? = null,
 )
 
 @Serializable
