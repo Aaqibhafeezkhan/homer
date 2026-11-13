@@ -117,3 +117,16 @@ Rejected:
   fourth config to keep in step with the other three, for the one setup that
   doesn't serve the console from compose. One documented extra `-e` costs less.
 
+## Amendment (2026-11-13): the guard reads four DOCKER.md pins
+
+The slim override example in `DOCKER.md` names its own release pin — the
+`${HOMER_VERSION:-<release>}-slim` default — which the guard's literal-tag
+pattern never matched, so a release could bump every other pin and leave the
+slim default naming the previous release (issue #205). `DOCKER.md` therefore
+carries **four** pins the quick-start guard requires to equal `CHANGELOG.md`'s
+newest release: the `FROM` example, the two `imagetools inspect` examples and
+the slim override's default. This supersedes the "carries two" count in the
+Consequences above; the minimum-match count keeps every example in the shape
+the release bump updates, so a reworded or dropped one fails loudly instead of
+escaping the guard.
+
