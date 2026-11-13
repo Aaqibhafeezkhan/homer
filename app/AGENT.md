@@ -1403,9 +1403,11 @@ A run is stopped gracefully in exactly two ways:
 
 Either way the run ends **`FAILED`** — there is no separate status — carrying a `stop` record that
 says why and what happened: `{reason, stepIndex, stepLabel, at, stopSteps}`, where `reason` is
-`step_timeout` or `run_deadline` and `stopSteps` is `finished`, `failed` or `none`. The interrupted
-step's `ExecutionInfo` carries `stoppedBy` with the same value, and each stop step's carries
-`onStop: true`.
+`step_timeout` or `run_deadline` and `stopSteps` is `finished`, `failed` or `none`. The step the
+record names carries `stoppedBy` with the same value on its `ExecutionInfo`, and each stop step's
+carries `onStop: true`. A stop detected between steps — a soft run deadline passing before the next
+step starts — names the last *started* step instead: it completed, nothing was in flight to
+interrupt, and that step's row carries no `stoppedBy`.
 
 A step whose output exceeds the server's `maxOutputBytes` cap is **not** stopped gracefully, even
 when it declares `onTimeout: stop` — the cap is an ordinary failure, the run carries no `stop`
@@ -2645,10 +2647,10 @@ A run that was stopped gracefully sets five more, **only in the environment of i
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `HMR_STOP_REASON` | Why the run was stopped: `step_timeout` (a step's own `timeout` with `onTimeout: stop`) or `run_deadline` (the runner's soft deadline) | `step_timeout` |
-| `HMR_STOP_STEP_INDEX` | Zero-based index of the step the stop interrupted | `3` |
+| `HMR_STOP_STEP_INDEX` | Zero-based index of the step the stop names: the step interrupted while it ran, or — when the soft deadline passes between steps — the last step that started, which completed uninterrupted (see [Graceful stop](#graceful-stop)) | `3` |
 | `HMR_STOP_STEP_LABEL` | That step's label, with control characters stripped and cut to 256 characters | `Run integration tests` |
 | `HMR_STOP_DEADLINE` | Epoch seconds of the run's hard deadline. Set for `run_deadline` only — a step timeout has no run deadline to name | `1763000000` |
-| `HMR_STOP_SESSION_ID` | CLI session id of the interrupted `!<claude>` / `!<codex>` / `!<opencode>` step, so a stop step can resume that conversation. **Unset** when the interrupted step was not an LLM step, or exposed no id | `3f2b6c1e-8a4d-4c1b-9e2f-7d5a0b6c9e11` |
+| `HMR_STOP_SESSION_ID` | CLI session id of the step the stop names (see `HMR_STOP_STEP_INDEX`), when that is a `!<claude>` / `!<codex>` / `!<opencode>` step, so a stop step can resume that conversation. **Unset** when that step was not an LLM step, or exposed no id | `3f2b6c1e-8a4d-4c1b-9e2f-7d5a0b6c9e11` |
 
 ### Variables visible to agent commands
 

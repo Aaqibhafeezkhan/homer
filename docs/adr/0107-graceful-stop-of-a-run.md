@@ -64,7 +64,9 @@ Chosen option: **opt-in graceful stop**. Four keys, each defaulting to today's b
 A run stopped this way ends **`FAILED`**, with a `stop` record: `{reason, stepIndex, stepLabel, at,
 stopSteps}` where `reason` is `step_timeout` or `run_deadline` and `stopSteps` is `finished`,
 `failed` or `none`. The interrupted step's `ExecutionInfo` carries `stoppedBy` (the same value) and
-each stop step's carries `onStop: true`. The stop steps receive `HMR_STOP_REASON`,
+each stop step's carries `onStop: true` — except on a stop detected between steps (a soft deadline
+passing before the next step starts): the record then names the last *started* step, which
+completed, nothing was in flight to interrupt, and that step's row carries no `stoppedBy`. The stop steps receive `HMR_STOP_REASON`,
 `HMR_STOP_STEP_INDEX`, `HMR_STOP_STEP_LABEL`, `HMR_STOP_DEADLINE` (only for `run_deadline`) and
 `HMR_STOP_SESSION_ID` (only when the interrupted step was an LLM step whose CLI session id parsed
 and passed `^[A-Za-z0-9-]{1,128}$`); the label is control-stripped and capped at 256 characters, so

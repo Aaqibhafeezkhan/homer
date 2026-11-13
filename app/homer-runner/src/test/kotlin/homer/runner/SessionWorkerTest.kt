@@ -363,6 +363,18 @@ class SessionWorkerTest {
         }
 
     @Test
+    fun `the wire interrupt grace is clamped to the runner's own bounds`() {
+        // Negative: clamped to 0 — unclamped, the negative wait throws out of the reap's
+        // Process.waitFor and takes the session down with it.
+        assertEquals(0.seconds, clampInterruptGrace(-1))
+        // Huge: clamped to the runner's own cap — unclamped, the wire value pins the reap
+        // for that long.
+        assertEquals(600.seconds, clampInterruptGrace(1_000_000_000L))
+        assertEquals(30.seconds, clampInterruptGrace(30))
+        assertNull(clampInterruptGrace(null))
+    }
+
+    @Test
     fun `an out-of-range interrupt grace from the wire is clamped, not taken as-is`() =
         live {
             val w = worker()

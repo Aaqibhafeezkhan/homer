@@ -3276,6 +3276,9 @@ class AgentExecutorTest {
             val contexts = mutableListOf<ExecutionContext>()
             coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
                 if (contexts.size == 1) throw CancellationException("Timeout reached. 60s.")
+                // Long enough that the stop record's `at`, read before the stop steps run, lands
+                // a full second before the stop step's `end` on the wall clock.
+                withContext(Dispatchers.IO) { Thread.sleep(2_000) }
                 TestFixtures.mockCommandResult(exitCode = 0)
             }
 
@@ -3297,6 +3300,12 @@ class AgentExecutorTest {
             assertEquals("step_timeout", executionInfos.first().stoppedBy)
             assertTrue(executionInfos.last().onStop)
             assertEquals(null, executionInfos.last().stoppedBy)
+            // The stop is stamped when it was detected, not after the stop steps ran: the
+            // record's timeline must not place them before the stop itself.
+            assertTrue(
+                stops.single().at < executionInfos.last().end,
+                "stop.at must be read before the stop steps run",
+            )
         }
 
     @Test
@@ -3397,6 +3406,25 @@ class AgentExecutorTest {
 
             assertEquals(StopStepsOutcome.NONE, stops.single().stopSteps)
             assertEquals(StopReason.STEP_TIMEOUT, stops.single().reason)
+        }
+
+    @Test
+    fun `an output-cap trip on an onTimeout stop step is an ordinary failure, not a stop`() =
+        runTest {
+            val agent = stoppableAgent(listOf(saveReport()))
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            val contexts = mutableListOf<ExecutionContext>()
+            coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
+                throw OutputCapExceededException("Output exceeded the cap")
+            }
+
+            assertThrows<OutputCapExceededException> { stopExecutor(agent).execute() }
+
+            // The cap is an ordinary failure even on a step declaring `onTimeout: stop`: the step
+            // ran, no stop step followed it and no stop was recorded.
+            assertEquals(listOf(false), contexts.map { it.onStop })
+            coVerify(exactly = 0) { mockProcessManager.setStop(any(), any()) }
+            verify(exactly = 0) { mockWorkspace.appendToEnv(match { it.containsKey(EnvConstants.STOP_REASON) }) }
         }
 
     @Test

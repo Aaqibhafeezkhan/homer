@@ -289,10 +289,10 @@ class SessionWorker(
                 return OpResult(op.opId, ok = false, error = "failed to start: ${e.message}")
             }
         running[op.opId] = handle
-        // Peer-supplied grace (RunnerProtocol.Cmd.interruptGraceSeconds): clamped to the same
-        // 0..600 bound Homer's agent validator applies. The wire peer is a separate trust
-        // boundary (§12 rule 4) — an unclamped value would pin the reap below for that long.
-        val grace = op.interruptGraceSeconds?.coerceIn(0, MAX_INTERRUPT_GRACE_SECONDS)?.seconds
+        // Peer-supplied grace (RunnerProtocol.Cmd.interruptGraceSeconds): the wire peer is a
+        // separate trust boundary (§12 rule 4) — an unclamped value would pin the reap below
+        // for that long.
+        val grace = clampInterruptGrace(op.interruptGraceSeconds)
         grace?.let { interruptGraces[op.opId] = it }
         // A Cancel dispatched before this coroutine got to run (dispatchLoop's `launch`
         // for `cmd` doesn't wait for the process to start) lands in cancelledOps instead
@@ -360,9 +360,6 @@ class SessionWorker(
         private const val MAX_RETRIES = 5
         private const val OPS_CAPACITY = 16
         private val RETRY_DELAY = 1.seconds
-
-        /** Upper bound on a peer-supplied `Cmd.interruptGraceSeconds`, the runner-side half of Homer's `0..600` validation. */
-        private const val MAX_INTERRUPT_GRACE_SECONDS = 600L
         private val FAST_POLL_THRESHOLD = 1.seconds
         private val FAST_POLL_DELAY = 250.milliseconds
     }
@@ -447,3 +444,15 @@ internal fun pollFailureVerdict(
             PollVerdict.Retry(if (e is RunnerApiException) e.message else null)
         }
     }
+
+/** Upper bound on a peer-supplied `Cmd.interruptGraceSeconds`, the runner-side half of Homer's `0..600` validation. */
+internal const val MAX_INTERRUPT_GRACE_SECONDS = 600L
+
+/**
+ * The peer-supplied grace [seconds], clamped to the runner's own `0..[MAX_INTERRUPT_GRACE_SECONDS]`
+ * bound — the same bound Homer's agent validator applies on its side. File scope like
+ * [pollFailureVerdict] so a unit test can pin both edges of the clamp: a negative value would
+ * throw out of the reap's `Process.waitFor`, a huge one would pin the reap for that long
+ * (§12 rule 4).
+ */
+internal fun clampInterruptGrace(seconds: Long?): Duration? = seconds?.coerceIn(0, MAX_INTERRUPT_GRACE_SECONDS)?.seconds
