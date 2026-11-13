@@ -230,7 +230,7 @@ class StartupReconciliationTest {
             }
         }
 
-    // --- Grouped ask-and-dispatch crash safety (ADR-0105) ---
+    // --- Grouped ask-and-dispatch crash safety (ADR-0109) ---
 
     /** A real [DispatchService] over [db] whose target start is the only stubbed collaborator. */
     private fun groupHarness(db: DatabaseService): Triple<Harness, DispatchService, AgentRunStarter> {

@@ -333,7 +333,7 @@ private fun migrateToV30(
 }
 
 /**
- * v30→v31 adds grouped ask-and-dispatch (ADR-0105): `dispatches.kind` and the
+ * v30→v31 adds grouped ask-and-dispatch (ADR-0109): `dispatches.kind` and the
  * `dispatch_group_questions` child table. `SchemaUtils.create` above already created the table
  * (create-if-missing) but never ALTERs an existing one, so the column and the child table's
  * member-lookup index are added by hand. `SINGLE` is the truthful default: every row that

@@ -22,7 +22,7 @@ import kotlinx.serialization.json.put
 /**
  * The `ask_and_dispatch_group` tool: register N questions as one dispatch, answered
  * independently, and start [DispatchGroupService]'s target agent once — with every answer in
- * question order — after the last of them. See ADR-0105.
+ * question order — after the last of them. See ADR-0109.
  */
 internal fun askAndDispatchGroupTool(
     dispatchGroupService: DispatchGroupService,

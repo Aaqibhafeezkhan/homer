@@ -176,7 +176,7 @@ dispatch-bound rows show the target agent and a link to the dispatched run
 - [`app/SERVER.md`](../../app/SERVER.md) `server.dispatch` — config reference.
 - [`app/AGENT.md`](../../app/AGENT.md) "Ask-and-dispatch" — usage from
   agent commands.
-- [ADR-0105](0105-grouped-ask-and-dispatch.md) — grouped ask-and-dispatch: N
+- [ADR-0109](0109-grouped-ask-and-dispatch.md) — grouped ask-and-dispatch: N
   questions on one dispatch row (`kind = GROUP`), fired once after the last
   answer.
 

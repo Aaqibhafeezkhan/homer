@@ -828,7 +828,7 @@ class DatabaseMigrationTest {
      * members are read on the (dispatch_id, position) primary key, which is also the order, so no
      * sort step: the all-answered read behind the fire gate ([DispatchRepository.groupMembers])
      * and the boot re-fire ([DispatchRepository.listPendingAnswered]). Plans the statements the
-     * repository actually sends. See ADR-0105.
+     * repository actually sends. See ADR-0109.
      */
     private suspend fun assertDispatchGroupMemberPlans(
         svc: DatabaseService,

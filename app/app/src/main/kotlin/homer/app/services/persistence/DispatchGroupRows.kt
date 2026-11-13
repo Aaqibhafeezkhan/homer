@@ -15,7 +15,7 @@ import org.jetbrains.exposed.v1.core.statements.InsertStatement
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
 
-// Row-level helpers of [DispatchRepository] (ADR-0021, ADR-0105): the SINGLE/GROUP question
+// Row-level helpers of [DispatchRepository] (ADR-0021, ADR-0109): the SINGLE/GROUP question
 // teardown, the ordered member reads, and the row <-> [Dispatch] mapping. All of them run inside
 // the caller's transaction.
 

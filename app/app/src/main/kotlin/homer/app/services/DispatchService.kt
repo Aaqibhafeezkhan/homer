@@ -33,7 +33,7 @@ enum class DispatchStatus { PENDING, DISPATCHING, DISPATCHED, FAILED, CANCELLED 
  * What a dispatch is made of. A [SINGLE] dispatch is one question and one dispatch row —
  * today's ask-and-dispatch. A [GROUP] dispatch is N questions answered independently, the
  * target fired once after the last of them, with all N answers aggregated in question order.
- * See ADR-0105.
+ * See ADR-0109.
  */
 enum class DispatchKind { SINGLE, GROUP }
 
@@ -72,7 +72,7 @@ data class Dispatch(
     val secretParamNames: Set<String>? = null,
     // SINGLE or GROUP. A GROUP row's [questionId] is a synthetic sentinel naming no question —
     // [questionIds] is its real, ordered set, read from the member table. Empty on a SINGLE row,
-    // whose one question is [questionId]. See ADR-0105.
+    // whose one question is [questionId]. See ADR-0109.
     val kind: DispatchKind = DispatchKind.SINGLE,
     val questionIds: List<String> = emptyList(),
 )
@@ -420,7 +420,7 @@ internal class DispatchService(
             repository.cancelWithQuestion(id)
                 ?: throw DispatchNotPendingException(id, repository.get(id)?.status?.name ?: existing.status.name)
         // One event per question the dispatch owned, so a cancelled group's members each leave
-        // the questions inbox rather than only the sentinel. See ADR-0105.
+        // the questions inbox rather than only the sentinel. See ADR-0109.
         questionIdsOf(existing).forEach {
             broadcaster.emit(ProcessEvent.QuestionExpired(cancelled.originProcessId, it))
         }
@@ -461,7 +461,7 @@ internal class DispatchService(
     suspend fun refirePendingAnswered() {
         for ((dispatch, answer) in repository.listPendingAnswered()) {
             // A GROUP row's own `answer` is empty by construction: fire() re-resolves its sentinel
-            // and aggregates the member answers itself. See ADR-0105.
+            // and aggregates the member answers itself. See ADR-0109.
             if (dispatch.kind != DispatchKind.GROUP && answer.isBlank()) continue
             logger.info("Re-firing dispatch {} answered before restart", dispatch.id)
             fire(dispatch.questionId, answer)

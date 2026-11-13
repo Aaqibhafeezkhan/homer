@@ -4,7 +4,7 @@ date: 2026-11-12
 deciders: Lukáš Vlk
 consulted: ADR-0021, ADR-0026, ADR-0052, ADR-0101
 ---
-# ADR-0105: Grouped ask-and-dispatch — N questions, one fire
+# ADR-0109: Grouped ask-and-dispatch — N questions, one fire
 
 ## Context and Problem Statement
 

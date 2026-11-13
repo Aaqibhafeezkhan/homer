@@ -293,7 +293,7 @@ internal object Dispatches : Table("dispatches"), FiredRecordTable {
     // SINGLE (one question, today's path) or GROUP (N questions answered independently,
     // the target fired once after the last of them). A GROUP row's question_id is a
     // synthetic sentinel — it names no `questions` row — and its real, ordered question set
-    // is DispatchGroupQuestions. See ADR-0105.
+    // is DispatchGroupQuestions. See ADR-0109.
     val kind = varchar("kind", 16).default(DispatchKind.SINGLE.name)
 
     // v24: the PENDING cap, the expiry sweep and the DISPATCHING recovery at startup.
@@ -314,7 +314,7 @@ internal object Dispatches : Table("dispatches"), FiredRecordTable {
  * themselves are ordinary `questions` rows with `dispatch_bound = 1`; this table owns which
  * group they belong to. A SINGLE dispatch has no rows here (it uses `dispatches.question_id`).
  * Member rows live exactly as long as their dispatch row — the settled-row prune deletes both —
- * so a settled group still reports the question ids it was registered with. See ADR-0105.
+ * so a settled group still reports the question ids it was registered with. See ADR-0109.
  */
 internal object DispatchGroupQuestions : Table("dispatch_group_questions") {
     val dispatchId = integer("dispatch_id")

@@ -697,7 +697,7 @@ the `ask_and_dispatch_group` MCP tool): the operator answers them independently
 and Homer starts the target **once**, after the last of them, with every answer
 as a JSON array in question order under `answerParam`. A group is the unit of
 cancel, TTL and the settled-row prune. See
-[ADR-0105](../docs/adr/0105-grouped-ask-and-dispatch.md).
+[ADR-0109](../docs/adr/0109-grouped-ask-and-dispatch.md).
 
 ```yaml
 server:
@@ -719,7 +719,7 @@ server:
 | `settledRetentionSec` | `Long` | No | `604800` | How long (seconds) a settled dispatch or continuation — any status but `PENDING` and `DISPATCHING` — is kept, measured from its `createdAt`; the dispatch and continuation sweeps then delete it, with its dispatch-bound question or join watch rows. A row that settled late is therefore kept for less than this after settling. Minimum `3600`. |
 | `resultTokenTtlSec` | `Int` | No | `3600` | TTL (seconds) for read-by-reference result tokens minted when a watched sub-process's result exceeds the inline cap. Floored at `60` so a token outlives the resumed parent's first segment. See [ADR-0025](../docs/adr/0025-capability-token-result-read.md). |
 | `maxJoinSubs` | `Int` | No | `32` | Maximum sub-agents a single `POST /api/v1/callback/joins` request may fan out to. Each sub starts a process immediately, so this caps synchronous per-request fan-out; an over-limit request is rejected with `400`. |
-| `maxGroupSize` | `Int` | No | `8` | Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with `400` before any row is written. A group also counts against `maxPending` and against the origin process's open-question cap. See [ADR-0105](../docs/adr/0105-grouped-ask-and-dispatch.md). |
+| `maxGroupSize` | `Int` | No | `8` | Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with `400` before any row is written. A group also counts against `maxPending` and against the origin process's open-question cap. See [ADR-0109](../docs/adr/0109-grouped-ask-and-dispatch.md). |
 
 **Dispatch-bound questions** created via this feature are decoupled from the
 asking process's lifecycle: they are not expired when the asker goes terminal,

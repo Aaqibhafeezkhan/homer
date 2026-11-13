@@ -6,7 +6,7 @@ import homer.app.services.DispatchService
 import org.koin.core.parameter.parametersOf
 import org.koin.core.scope.Scope
 
-/** The [DispatchGroupService] (ADR-0105), wired from the dispatch and question config sections. */
+/** The [DispatchGroupService] (ADR-0109), wired from the dispatch and question config sections. */
 internal fun Scope.buildDispatchGroupService(): DispatchGroupService =
     DispatchGroupService(
         repository = get(),

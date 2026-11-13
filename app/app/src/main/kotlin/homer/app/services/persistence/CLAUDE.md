@@ -152,7 +152,7 @@ there and a row here (SQLite rule 1 in
 | 28 | `questions_agent_name` index (the read-grant arm of the paged `GET /questions`) | — |
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
-| 31 | `dispatches.kind` + `dispatch_group_questions` table | [0105](../../../../../../../../../docs/adr/0105-grouped-ask-and-dispatch.md) |
+| 31 | `dispatches.kind` + `dispatch_group_questions` table | [0109](../../../../../../../../../docs/adr/0109-grouped-ask-and-dispatch.md) |
 
 ### Schema constraints
 

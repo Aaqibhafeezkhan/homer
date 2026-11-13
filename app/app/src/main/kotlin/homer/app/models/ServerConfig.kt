@@ -331,7 +331,7 @@ data class DispatchConfig(
     /**
      * Max questions one grouped ask-and-dispatch may hold. A group registers all of its
      * questions in one call, so this is the bound on that multiplication; a request over
-     * it is rejected with 400 before any row is written. See ADR-0105.
+     * it is rejected with 400 before any row is written. See ADR-0109.
      */
     val maxGroupSize: Int = 8,
 ) {

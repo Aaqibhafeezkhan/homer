@@ -78,7 +78,7 @@ class DispatchSweepServiceTest {
             }
         }
 
-    // --- Grouped dispatches on a tick (ADR-0105) ---
+    // --- Grouped dispatches on a tick (ADR-0109) ---
 
     /** A real [DispatchService] over [db], so a tick exercises the repository and the events it emits. */
     private suspend fun TestScope.tick(

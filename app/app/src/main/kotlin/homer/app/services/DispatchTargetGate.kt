@@ -9,7 +9,7 @@ import org.slf4j.Logger
  * The registration gates a single and a grouped dispatch share, after the payload and question
  * checks: the target is authorized and opted in, its inputs are satisfiable (an inheriting
  * dispatch to the same agent counts the origin run's stored inputs as provided, ADR-0101), and
- * the TTL is positive. See ADR-0021, ADR-0105.
+ * the TTL is positive. See ADR-0021, ADR-0109.
  */
 internal class DispatchTargetGate(
     private val authorizer: Authorizer,

@@ -31,7 +31,7 @@ import org.slf4j.Logger
  * six tools (`ask_user`, `check_answer`, `ask_user_and_wait`, `ask_and_dispatch`,
  * `ask_and_dispatch_group`, `check_messages`) closed over the processId resolved from the
  * caller's `HMR_CALLBACK_TOKEN`. A fresh Server is built per POST, same stateless pattern as
- * [McpToolFactory]. See ADR-0019, ADR-0097 and ADR-0105.
+ * [McpToolFactory]. See ADR-0019, ADR-0097 and ADR-0109.
  */
 internal class QuestionsMcpToolFactory(
     private val questionsService: QuestionsService,

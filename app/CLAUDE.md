@@ -221,7 +221,7 @@ marked `Constraint:`.
 - **`DispatchGroupService`** — grouped ask-and-dispatch: N questions with one
   target that fires once after every answer (a GROUP `dispatches` row plus the
   ordered `dispatch_group_questions` members); the gate lives in
-  `DispatchService.fire`. See ADR-0105.
+  `DispatchService.fire`. See ADR-0109.
 - **`ContinuationService`** — completion continuations: a target agent fired when
   a *watched* sub-process reaches a terminal state, carrying its result.
   **SQLite-backed via `ContinuationRepository`**; dispatch's claim-CAS / fire /

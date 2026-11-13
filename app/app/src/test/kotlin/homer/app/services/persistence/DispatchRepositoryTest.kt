@@ -240,7 +240,7 @@ class DispatchRepositoryTest {
             assertEquals(QuestionStatus.OPEN, QuestionsRepository(db).get("q1")!!.status)
         }
 
-    // --- Grouped dispatches (ADR-0105) ---
+    // --- Grouped dispatches (ADR-0109) ---
 
     private fun groupDispatch(
         expiresAt: Long? = null,

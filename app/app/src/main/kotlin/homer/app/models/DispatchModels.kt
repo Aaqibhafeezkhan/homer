@@ -23,7 +23,7 @@ data class CreateDispatchResponse(
  * Body of `POST /api/v1/callback/dispatch-groups`: N questions registered as one dispatch, the
  * target started once after the last of them, carrying every answer in question order. `questions`
  * is capped by `server.dispatch.maxGroupSize`; `agent`, `answerParam`, `params` and `ttlSec` mean
- * what they mean for a single dispatch. See ADR-0105.
+ * what they mean for a single dispatch. See ADR-0109.
  */
 @Serializable
 data class CreateDispatchGroupRequest(

@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
 /**
  * The `ask_and_dispatch_group` MCP tool: its argument parsing, the call it makes into
  * [DispatchGroupService], and the refusals it turns into tool errors. The service's own gates are
- * [DispatchGroupServiceTest]'s. See ADR-0105.
+ * [DispatchGroupServiceTest]'s. See ADR-0109.
  */
 class QuestionsMcpGroupToolTest {
     private val dispatchGroupService = mockk<DispatchGroupService>(relaxed = true)

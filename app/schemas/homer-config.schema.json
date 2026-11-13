@@ -345,7 +345,7 @@
           "type": "integer",
           "minimum": 1,
           "default": 8,
-          "description": "Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with 400 before any row is written. See ADR-0105."
+          "description": "Maximum questions one grouped ask-and-dispatch may hold. A group registers all of its questions in one call, so this bounds that multiplication; an over-limit request is rejected with 400 before any row is written. See ADR-0109."
         }
       }
     },

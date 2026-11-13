@@ -207,7 +207,7 @@ private fun Route.callbackDispatchRoutes(deps: ApiDeps) {
 
 /**
  * `POST /api/v1/callback/dispatch-groups`: N questions registered as one dispatch, the target
- * started once after the last of them with every answer in question order. See ADR-0105.
+ * started once after the last of them with every answer in question order. See ADR-0109.
  */
 private fun Route.callbackDispatchGroupRoutes(deps: ApiDeps) {
     with(deps) {

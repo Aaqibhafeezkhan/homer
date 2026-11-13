@@ -1495,7 +1495,7 @@ class DispatchServiceTest {
             }
         }
 
-    // ── grouped ask-and-dispatch (ADR-0105) ──────────────────────────────────────────
+    // ── grouped ask-and-dispatch (ADR-0109) ──────────────────────────────────────────
 
     /** A PENDING GROUP row as [DispatchRepository.findByQuestionId] resolves one of its members. */
     private fun groupDispatch() =

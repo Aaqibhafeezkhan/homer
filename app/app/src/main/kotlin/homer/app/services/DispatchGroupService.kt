@@ -21,7 +21,7 @@ import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /**
- * Grouped ask-and-dispatch (ADR-0105): N questions registered as one dispatch, answered
+ * Grouped ask-and-dispatch (ADR-0109): N questions registered as one dispatch, answered
  * independently by the operator, the target started once — with all N answers aggregated in
  * question order — after the last of them.
  *
@@ -67,7 +67,7 @@ internal class DispatchGroupService(
      *
      * The group counts against the global PENDING cap and against the origin process's
      * open-question cap — the latter is the bound on this call's own multiplication, N questions
-     * at once. See ADR-0105.
+     * at once. See ADR-0109.
      */
     suspend fun create(
         originProcessId: Int,
@@ -107,7 +107,7 @@ internal class DispatchGroupService(
                 id = 0,
                 // A sentinel, not a question id: a GROUP row names no single question, and
                 // `dispatches.question_id` is uniquely indexed, so it can be neither empty nor
-                // shared with a member. The ordered set is the member table. See ADR-0105.
+                // shared with a member. The ordered set is the member table. See ADR-0109.
                 questionId = GROUP_QUESTION_ID_PREFIX + UUID.randomUUID(),
                 status = DispatchStatus.PENDING,
                 agentName = agent,
@@ -166,7 +166,7 @@ internal class DispatchGroupService(
      * [MAX_ANSWER_BYTES]: `QuestionsService.answer` bounds no answer's length, so N unbounded
      * answers are the one way a group's payload can grow past what a start should carry. The
      * caller settles the group FAILED rather than leaving it PENDING on answers that can never
-     * be delivered. See ADR-0105.
+     * be delivered. See ADR-0109.
      */
     suspend fun aggregateAnswers(dispatchId: Int): String? {
         val members = repository.groupMembers(dispatchId)

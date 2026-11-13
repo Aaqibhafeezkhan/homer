@@ -19,7 +19,7 @@ import kotlin.test.assertTrue
  * helper (the shell script itself, run through `/bin/sh`). A stub `curl` on PATH captures the
  * request body, so the tests cover what the script builds and how it reads Homer's reply: the
  * questions in `--question` order with their options, the flag-derived fields, the printed id
- * order, and the refusals that must happen before any network call. See ADR-0105.
+ * order, and the refusals that must happen before any network call. See ADR-0109.
  */
 class HomerAskScriptTest {
     private data class Run(

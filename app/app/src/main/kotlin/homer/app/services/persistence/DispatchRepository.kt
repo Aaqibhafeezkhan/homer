@@ -38,7 +38,7 @@ import org.jetbrains.exposed.v1.jdbc.update
  * the question + dispatch rows are created in one transaction so the pending cap
  * and the question insert can never race apart. See the ask-and-dispatch ADR.
  *
- * A SINGLE dispatch is one question and one dispatch row. A GROUP dispatch (ADR-0105) is one
+ * A SINGLE dispatch is one question and one dispatch row. A GROUP dispatch (ADR-0109) is one
  * dispatch row with `kind = GROUP` and a synthetic `question_id` sentinel, plus N member rows in
  * [DispatchGroupQuestions] that own which questions it is and in what order their answers are
  * aggregated. Every read that resolves a question id, and every teardown path, therefore covers
@@ -85,7 +85,7 @@ class DispatchRepository(
      *
      * Refused by the global PENDING cap, or by the asking process's open-question cap counted
      * over its dispatch-bound questions: a group adds up to `dispatch.maxGroupSize` of them in a
-     * single call, which is the multiplication this bound exists for. See ADR-0105.
+     * single call, which is the multiplication this bound exists for. See ADR-0109.
      */
     suspend fun createGroup(
         questions: List<Question>,
@@ -120,7 +120,7 @@ class DispatchRepository(
     /**
      * The dispatch a question belongs to: the row whose own `question_id` is [questionId], or —
      * for a member question of a GROUP — the group it belongs to, through
-     * `dispatch_group_questions`. See ADR-0105.
+     * `dispatch_group_questions`. See ADR-0109.
      */
     suspend fun findByQuestionId(questionId: String): Dispatch? =
         db.read {
@@ -192,7 +192,7 @@ class DispatchRepository(
      * The member questions of GROUP dispatch [dispatchId] in `position` order — the order their
      * answers are aggregated in — each with its answer, or null while it is still OPEN. Empty for
      * a SINGLE dispatch. This is the group's fire gate: the target starts only once no answer is
-     * null. See ADR-0105.
+     * null. See ADR-0109.
      */
     suspend fun groupMembers(dispatchId: Int): List<GroupMember> = db.read { groupMembersTx(listOf(dispatchId))[dispatchId].orEmpty() }
 
@@ -200,7 +200,7 @@ class DispatchRepository(
      * Deletes settled dispatches (every status but PENDING and DISPATCHING) created before
      * [cutoff], with their dispatch-bound questions and a group's member rows, in batches of at
      * most [batchSize] ([FiredRecords.pruneSettled]). Returns the number of dispatches deleted.
-     * See ADR-0021, ADR-0105.
+     * See ADR-0021, ADR-0109.
      */
     suspend fun pruneSettled(
         cutoff: Long,
@@ -289,7 +289,7 @@ class DispatchRepository(
     /**
      * Every PENDING dispatch whose answer is already in, for the boot re-fire: a SINGLE one whose
      * question is ANSWERED, and a GROUP one whose every member question is. A group's [answer] is
-     * empty — the fire path aggregates its members itself. See ADR-0021, ADR-0105.
+     * empty — the fire path aggregates its members itself. See ADR-0021, ADR-0109.
      */
     suspend fun listPendingAnswered(): List<PendingAnswered> =
         db.read {
@@ -377,7 +377,7 @@ class DispatchRepository(
      * transaction — the question lifecycle is owned by the dispatch, not the long-gone
      * asking process, and leaving these rows behind grew SQLite unbounded. A group's member
      * questions go with it; its member rows stay until the settled-row prune, so a settled
-     * group still reports the question ids it was registered with. See ADR-0021, ADR-0105.
+     * group still reports the question ids it was registered with. See ADR-0021, ADR-0109.
      */
     private suspend fun transition(
         id: Int,
