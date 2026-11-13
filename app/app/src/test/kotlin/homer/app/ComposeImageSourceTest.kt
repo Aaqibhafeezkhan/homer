@@ -174,8 +174,14 @@ class ComposeImageSourceTest {
                 ),
                 // README.md's image-verification snippet.
                 Triple("README.md", Regex("""^version=(\d+\.\d+\.\d+)\b""", RegexOption.MULTILINE), 1),
-                // DOCKER.md's `FROM …homer-app:<tag>` and `imagetools inspect …:<tag>` examples.
-                Triple("DOCKER.md", Regex("""ghcr\.io/livesport/homer/homer-app:(\d+\.\d+\.\d+)"""), 2),
+                // DOCKER.md's `FROM …homer-app:<tag>` and `imagetools inspect …:<tag>` examples, plus the
+                // slim override's `${HOMER_VERSION:-<version>}-slim` default — the `-slim` tag is a
+                // published release artifact too (ADR-0094), so its default is a pin like the literal tags.
+                Triple(
+                    "DOCKER.md",
+                    Regex("""ghcr\.io/livesport/homer/homer-app:(?:\$\{HOMER_VERSION:-)?(\d+\.\d+\.\d+)"""),
+                    4,
+                ),
             )
         for ((name, pin, minMatches) in pins) {
             val file = File(repoRoot, name)
