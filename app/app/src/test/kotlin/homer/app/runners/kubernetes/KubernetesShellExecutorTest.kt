@@ -108,7 +108,7 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
                 every { exitValue() } returns 137
                 every { destroyForcibly() } returns this
             }
@@ -1355,7 +1355,7 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
             }
         val client =
             KubernetesExecClient { _, _, argv, _ ->
@@ -1418,12 +1418,25 @@ class KubernetesShellExecutorTest {
     /** True when [argv] is the executor's own signalling exec, not the command's. */
     private fun isSignalling(argv: List<String>) = argv.getOrNull(3) == "homer-signal"
 
+    /**
+     * `waitFor` of a process that has not exited: it waits, as the real one does, then answers false. An
+     * instant false busy-spins the executor's poll loop for the step's whole timeout, and mockk records
+     * every call with its stack trace (about a million a second, held until the suite ends).
+     */
+    private fun stillRunning(
+        timeout: Long,
+        unit: TimeUnit,
+    ): Boolean {
+        Thread.sleep(unit.toMillis(timeout).coerceIn(0, STILL_RUNNING_WAIT_MS))
+        return false
+    }
+
     private fun neverFinishing(): Process =
         mockk(relaxed = true) {
             every { inputStream } returns ByteArrayInputStream(ByteArray(0))
             every { errorStream } returns ByteArrayInputStream(ByteArray(0))
             every { outputStream } returns ByteArrayOutputStream()
-            every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+            every { waitFor(any<Long>(), any<TimeUnit>()) } answers { stillRunning(firstArg(), secondArg()) }
             every { exitValue() } returns 137
             every { destroyForcibly() } returns this
         }
@@ -1444,5 +1457,8 @@ class KubernetesShellExecutorTest {
     private companion object {
         /** The pod-wide kill the channel-loss path runs, as the executor's killInsidePod starts it. */
         val KILL_ARGV = listOf("sh", "-c", "kill -KILL -1")
+
+        /** The longest a not-exited fake process waits per `waitFor`: short, so a test's timeout stays its length. */
+        const val STILL_RUNNING_WAIT_MS = 50L
     }
 }
