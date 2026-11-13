@@ -255,7 +255,11 @@ class SshShellExecutorTest {
         val openFuture = mockk<OpenFuture>()
         every { openFuture.verify(any<Long>()) } returns openFuture
         every { channel.open() } returns openFuture
-        every { channel.waitFor(any<Collection<ClientChannelEvent>>(), any<Long>()) } returns emptySet()
+        // It waits as a real open channel does: an instant empty answer busy-spins the executor's poll loop.
+        every { channel.waitFor(any<Collection<ClientChannelEvent>>(), any<Long>()) } answers {
+            Thread.sleep(secondArg<Long>().coerceIn(0, STALLED_WAIT_MS))
+            emptySet()
+        }
         val session = mockk<ClientSession>()
         every { session.createExecChannel(capture(commands)) } returns channel
         return session to commands
@@ -349,5 +353,10 @@ class SshShellExecutorTest {
             }
         }
         assertFalse(marker.exists(), "without a grace the group is SIGKILLed and the trap never runs")
+    }
+
+    private companion object {
+        /** The longest the stalled channel waits per `waitFor`: short, so a test's timeout stays its length. */
+        const val STALLED_WAIT_MS = 50L
     }
 }

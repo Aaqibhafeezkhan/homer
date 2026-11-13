@@ -173,6 +173,14 @@ This is the operational checklist; §4 is the task-level framing.
   not think of. A property failing on existing code is a bug report, not
   a test to weaken.
 
+- **A fake of a call that waits must wait.** A stub answering a timed
+  wait (`Process.waitFor(timeout, unit)`, an SSH channel's `waitFor`, a
+  poll) with "not yet" at once turns the caller's polling loop into a busy
+  spin: about a million mock calls a second, each recorded with its stack
+  trace. Let it sleep a short, capped time (≤ 50 ms) before answering.
+  `MockCallBudget` fails an `:app` test past 20,000 calls of one mock
+  method and the `mock-calls` check warns past 1,000 (ADR-0082).
+
 TDD framing for bug fixes and refactors is in §4.
 
 ## 7. Architecture decisions → ADRs

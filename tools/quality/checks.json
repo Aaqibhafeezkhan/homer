@@ -27,6 +27,7 @@
     { "name": "detekt", "title": "detekt findings", "mode": "required", "dirs": ["reports/quality/detekt"] },
     { "name": "query-plans", "title": "Full scans of growing tables", "mode": "required", "dirs": ["reports/quality/query-plans"] },
     { "name": "query-repeats", "title": "Statements repeated per row in one transaction", "mode": "required", "dirs": ["reports/quality/query-repeats"] },
+    { "name": "mock-calls", "title": "Mock methods called in a loop", "mode": "warn", "dirs": ["reports/quality/mock-calls"] },
     { "name": "mutation-console", "title": "Surviving console mutants", "mode": "warn", "optional": true, "dirs": ["console/reports/quality/mutation-console"] },
     { "name": "mutation-backend", "title": "Surviving backend mutants", "mode": "warn", "optional": true, "dirs": ["app/app/build/reports/pitest"] }
   ]
