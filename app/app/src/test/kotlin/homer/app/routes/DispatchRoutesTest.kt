@@ -10,9 +10,12 @@ import homer.app.models.AgentDispatchConfig
 import homer.app.models.CreateDispatchResponse
 import homer.app.models.DispatchListResponse
 import homer.app.models.DispatchResponse
+import homer.app.models.ErrorResponse
 import homer.app.models.QuestionsListResponse
 import homer.app.services.AgentRunStarter
 import homer.app.services.AgentsService
+import homer.app.services.Authorizer
+import homer.app.services.DispatchGroupService
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -58,14 +61,33 @@ class DispatchRoutesTest {
                 inputResolver = inputResolver,
             )
 
+        /** The group create path over the same database, wired as the callback route wires it. */
+        val groups =
+            PersistenceTestSupport.dispatchGroupService(
+                db = db,
+                questionsService = questions,
+                agentsService = agents,
+                inputResolver = inputResolver,
+            )
+
         init {
             val handler = mockk<Agent>(relaxed = true)
             every { handler.dispatch } returns AgentDispatchConfig(enabled = true)
+            every { handler.secretParamNames } returns setOf("token")
             val blocked = mockk<Agent>(relaxed = true)
             every { blocked.dispatch } returns null
             every { agents.agents } returns mapOf("handler" to handler, "blocked" to blocked)
         }
+
+        /** A GROUP dispatch of [texts] to `handler`, as the callback route registers one. */
+        suspend fun createGroup(
+            texts: List<String>,
+            params: Map<String, String> = emptyMap(),
+        ): DispatchGroupService.CreateResult =
+            groups.create(7, texts.map { DispatchGroupService.QuestionSpec(it) }, "handler", "answer", params, null)
     }
+
+    private fun expectedBody(msg: String): String = apiJson.encodeToString(ErrorResponse(msg = msg))
 
     @Test
     fun `callback dispatch is created, fired on answer, and exposed via GET`() =
@@ -221,6 +243,69 @@ class DispatchRoutesTest {
                     client.get("/api/v1/questions").bodyAsText(),
                 )
             assertNull(all.questions.firstOrNull { it.id == created.questionId })
+        }
+
+    @Test
+    fun `GET a group dispatch reports its kind, its ordered question ids and masked params`() =
+        testApplication {
+            val h = Harness()
+            runBlocking { h.questions.registerProcess(7, "asker") }
+            val group = runBlocking { h.createGroup(listOf("First?", "Second?"), params = mapOf("token" to "s3cr3t")) }
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { dispatchService } returns h.dispatches
+                every { agentsService } returns h.agents
+            }
+
+            val resp = client.get("/api/v1/dispatches/${group.dispatchId}")
+
+            assertEquals(HttpStatusCode.OK, resp.status)
+            val dispatch = apiJson.decodeFromString<DispatchResponse>(resp.bodyAsText())
+            assertEquals("GROUP", dispatch.kind)
+            assertEquals(group.questionIds, dispatch.questionIds)
+            assertEquals(mapOf("token" to "***"), dispatch.params)
+        }
+
+    @Test
+    fun `DELETE a group dispatch cancels it and deletes every member question`() =
+        testApplication {
+            val h = Harness()
+            runBlocking { h.questions.registerProcess(7, "asker") }
+            val group = runBlocking { h.createGroup(listOf("First?", "Second?")) }
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { dispatchService } returns h.dispatches
+            }
+
+            assertEquals(HttpStatusCode.NoContent, client.delete("/api/v1/dispatches/${group.dispatchId}").status)
+
+            // Every member goes with the group, not just the first.
+            val all =
+                apiJson.decodeFromString<QuestionsListResponse>(client.get("/api/v1/questions").bodyAsText())
+            group.questionIds.forEach { assertNull(all.questions.firstOrNull { q -> q.id == it }, it) }
+            // Cancelling twice is a conflict, the same as for a single dispatch.
+            assertEquals(HttpStatusCode.Conflict, client.delete("/api/v1/dispatches/${group.dispatchId}").status)
+        }
+
+    @Test
+    fun `a caller who cannot see a group dispatch gets the not-found response, not a denial`() =
+        testApplication {
+            val h = Harness()
+            runBlocking { h.questions.registerProcess(7, "asker") }
+            val group = runBlocking { h.createGroup(listOf("First?", "Second?")) }
+            val denied = mockk<Authorizer> { every { canSee(any(), any(), any()) } returns false }
+            mountApiV1Routes {
+                every { questionsService } returns h.questions
+                every { dispatchService } returns h.dispatches
+                every { authorizer } returns denied
+            }
+
+            val hidden = client.get("/api/v1/dispatches/${group.dispatchId}")
+
+            // Byte-identical to an id that does not exist: the denial names no row.
+            assertEquals(HttpStatusCode.NotFound, hidden.status)
+            assertEquals(expectedBody("Dispatch '${group.dispatchId}' not found"), hidden.bodyAsText())
+            assertEquals(expectedBody("Dispatch '999999' not found"), client.get("/api/v1/dispatches/999999").bodyAsText())
         }
 
     @Test

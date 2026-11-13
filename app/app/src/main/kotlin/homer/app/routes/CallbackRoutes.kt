@@ -10,6 +10,8 @@ import homer.app.models.Agent
 import homer.app.models.AskQuestionRequest
 import homer.app.models.AskQuestionResponse
 import homer.app.models.CommandResult
+import homer.app.models.CreateDispatchGroupRequest
+import homer.app.models.CreateDispatchGroupResponse
 import homer.app.models.CreateDispatchRequest
 import homer.app.models.CreateDispatchResponse
 import homer.app.models.CreateJoinRequest
@@ -26,6 +28,7 @@ import homer.app.models.TagValidation
 import homer.app.models.TakeRunMessagesResponse
 import homer.app.models.TakenRunMessage
 import homer.app.services.ArtifactTooLargeException
+import homer.app.services.DispatchGroupService
 import homer.app.services.HookEvent
 import homer.app.services.JoinWatch
 import homer.app.services.ProcessManager
@@ -67,6 +70,7 @@ internal fun Route.callbackRoutes(deps: ApiDeps) {
     callbackQuestionRoutes(deps)
     callbackTagRoutes(deps)
     callbackDispatchRoutes(deps)
+    callbackDispatchGroupRoutes(deps)
     callbackRunRoutes(deps)
     callbackJoinRoutes(deps)
     callbackResultRoutes(deps)
@@ -196,6 +200,34 @@ private fun Route.callbackDispatchRoutes(deps: ApiDeps) {
                         ttlSec = request.ttlSec,
                     )
                 call.respond(CreateDispatchResponse(result.dispatchId, result.questionId))
+            }
+        }
+    }
+}
+
+/**
+ * `POST /api/v1/callback/dispatch-groups`: N questions registered as one dispatch, the target
+ * started once after the last of them with every answer in question order. See ADR-0109.
+ */
+private fun Route.callbackDispatchGroupRoutes(deps: ApiDeps) {
+    with(deps) {
+        route("/api/v1/callback/dispatch-groups") {
+            post {
+                val processId = call.resolveCallbackProcess(questionsService) ?: return@post
+                val request =
+                    call.receiveOr400<CreateDispatchGroupRequest>(
+                        "Invalid JSON body: expected { questions: [{ text, options? }], agent, answerParam?, params?, ttlSec? }",
+                    )
+                val result =
+                    dispatchGroupService.create(
+                        originProcessId = processId,
+                        questions = request.questions.map { DispatchGroupService.QuestionSpec(it.text, it.options) },
+                        agent = request.agent,
+                        answerParam = request.answerParam,
+                        params = request.params,
+                        ttlSec = request.ttlSec,
+                    )
+                call.respond(CreateDispatchGroupResponse(result.dispatchId, result.questionIds))
             }
         }
     }

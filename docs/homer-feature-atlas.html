@@ -2055,6 +2055,16 @@ homer-inbox</code></pre>
         </article>
 
         <article class="f">
+          <h3>Grouped ask and dispatch <span class="where">shell · mcp</span></h3>
+          <p>Registers several questions with one target agent: it starts once, after every question is answered, with
+            the answers in question order. A group holds at most <code>maxGroupSize</code> questions (8 by default).</p>
+          <pre><code>homer-ask ask-and-dispatch-group \
+  --question "Which region?" --option us-east --option eu-west \
+  --question "Which service?" \
+  --agent deploy_handler --answer-param answers</code></pre>
+        </article>
+
+        <article class="f">
           <h3>Immediate dispatch <span class="where">shell</span></h3>
           <p><code>homer-dispatch</code> starts another agent right now, fully decoupled — fresh invocation chain, no
             question, no blocking. Prints the new process id.</p>
@@ -2124,11 +2134,13 @@ curl -X DELETE "$HOMER/api/v1/continuations/7"</code></pre>
           <h3>Dispatch limits <span class="where">server config</span></h3>
           <p><code>maxPending</code> caps pending dispatches and pending continuations, each counted separately;
             <code>defaultTtlSec</code> and <code>sweepIntervalSec</code> apply to both, joins included. Also the
-            capability-token TTL, maximum join fan-out and how long settled records are kept
+            capability-token TTL, maximum join fan-out, the maximum questions one grouped ask-and-dispatch may hold
+            (<code>maxGroupSize</code>) and how long settled records are kept
             (<code>settledRetentionSec</code>, 7 days by default).</p>
           <pre><code>server:
   dispatch: { maxPending: 100, defaultTtlSec: 86400,   # default: none
               resultTokenTtlSec: 3600, maxJoinSubs: 32,
+              maxGroupSize: 8,
               settledRetentionSec: 604800 }</code></pre>
         </article>
 
@@ -2798,7 +2810,7 @@ apk add --no-cache tar gzip curl</code></pre>
           <h3>Question tools <span class="where">mcp</span></h3>
           <p>A separate endpoint authenticated by the per-process callback token, for the command that is running right
             now.</p>
-          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch · check_messages</code></pre>
+          <pre><code>ask_user · check_answer · ask_user_and_wait · ask_and_dispatch · ask_and_dispatch_group · check_messages</code></pre>
         </article>
 
       </div>

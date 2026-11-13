@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.exceptions.AgentNotDispatchableException
 import homer.app.exceptions.DispatchAgentNotFoundException
+import homer.app.exceptions.DispatchGroupAnswersTooLargeException
 import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
@@ -14,19 +15,24 @@ import homer.app.infra.reservedControlParams
 import homer.app.infra.validatePayloadParam
 import homer.app.models.Agent
 import homer.app.models.DispatchConfig
-import homer.app.services.QuestionsService.Question
-import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DispatchRepository
 import homer.app.services.persistence.RecordPage
 import io.opentelemetry.api.common.Attributes
 import kotlinx.coroutines.CancellationException
 import org.slf4j.Logger
-import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
 /** Status names used as the `dispatches.status` column value. */
 enum class DispatchStatus { PENDING, DISPATCHING, DISPATCHED, FAILED, CANCELLED }
+
+/**
+ * What a dispatch is made of. A [SINGLE] dispatch is one question and one dispatch row —
+ * today's ask-and-dispatch. A [GROUP] dispatch is N questions answered independently, the
+ * target fired once after the last of them, with all N answers aggregated in question order.
+ * See ADR-0109.
+ */
+enum class DispatchKind { SINGLE, GROUP }
 
 /**
  * A registered ask-and-dispatch: an operator question plus the agent to start
@@ -61,6 +67,11 @@ data class Dispatch(
     // through the (possibly since-edited) current agent definition. Null for rows
     // predating the column, which fall back to the envName-only check. See ADR-0052.
     val secretParamNames: Set<String>? = null,
+    // SINGLE or GROUP. A GROUP row's [questionId] is a synthetic sentinel naming no question —
+    // [questionIds] is its real, ordered set, read from the member table. Empty on a SINGLE row,
+    // whose one question is [questionId]. See ADR-0109.
+    val kind: DispatchKind = DispatchKind.SINGLE,
+    val questionIds: List<String> = emptyList(),
 )
 
 @OptIn(ExperimentalTime::class)
@@ -73,10 +84,13 @@ internal class DispatchService(
     private val agentInputResolver: AgentInputResolver,
     private val processManager: ProcessManager,
     private val broadcaster: ProcessEventBroadcaster,
+    private val groupService: DispatchGroupService,
     private val logger: Logger,
     private val config: DispatchConfig = DispatchConfig(),
     private val nowSec: () -> Long = { Clock.System.now().epochSeconds },
 ) {
+    private val targetGate = DispatchTargetGate(authorizer, agentsService, agentInputResolver, processManager, logger)
+
     data class CreateResult(
         val dispatchId: Int,
         val questionId: String,
@@ -96,56 +110,28 @@ internal class DispatchService(
         // reservedControlParams merge was narrowed, into the target's PATH.
         validatePayloadParam(answerParam, "answerParam", params)
         questionsService.validateQuestionInput(text, options)
-        val origin = processManager.getProcessInfo(originProcessId)
-        val owner = origin?.owner
-        val target = authorizer.dispatchableTarget(agentsService, owner, registration.agentName, agent)
-        // An inheriting dispatch to the same agent counts the origin run's stored inputs
-        // as provided, so a `required: true` subject input registers. See ADR-0101.
-        val inherited = inheritedOriginInputs({ origin }, registration.agentName, owner, target, "Dispatch", logger)
-        agentInputResolver.validateSatisfiable(target, params.keys + answerParam + inherited.params.keys)
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
-        if (effectiveTtl != null && effectiveTtl <= 0) {
-            throw ValidationException("ttlSec must be > 0; got $effectiveTtl", "ttlSec")
-        }
+        val owner = targetGate.check(originProcessId, registration.agentName, agent, answerParam, params, effectiveTtl, "Dispatch")
         val now = nowSec()
-        val questionId = UUID.randomUUID().toString()
-        val question =
-            Question(
-                id = questionId,
-                processId = originProcessId,
-                agentName = registration.agentName,
-                text = text,
-                options = options,
-                status = QuestionStatus.OPEN,
-                createdAt = now,
-                dispatchBound = true,
-            )
+        val question = targetGate.questionRow(originProcessId, registration.agentName, text, options, now)
         val dispatch =
-            Dispatch(
-                id = 0,
-                questionId = questionId,
-                status = DispatchStatus.PENDING,
-                agentName = agent,
+            targetGate.dispatchRow(
+                questionId = question.id,
+                agent = agent,
                 answerParam = answerParam,
                 params = params,
                 originProcessId = originProcessId,
                 originAgentName = registration.agentName,
-                expiresAt = effectiveTtl?.let { now + it },
-                createdAt = now,
+                effectiveTtl = effectiveTtl,
+                now = now,
                 owner = owner,
-                // Captured now, read at fire: the target may be edited in between, and a
-                // value collected under `secret: true` must not become a trace tag or an
-                // unredacted API field because the flag was flipped. See ADR-0052.
-                secretInputKeys = agentsService.agents[agent]?.secretEnvNames,
-                // paramName counterpart of secretInputKeys — see Dispatch.secretParamNames.
-                secretParamNames = agentsService.agents[agent]?.secretParamNames,
             )
         val dispatchId =
             repository.create(question, dispatch, config.maxPending)
                 ?: throw TooManyPendingDispatchesException(config.maxPending)
         logger.info("Process {} registered dispatch {} -> agent '{}'", originProcessId, dispatchId, agent)
-        broadcaster.emit(ProcessEvent.QuestionAsked(originProcessId, questionId, registration.agentName))
-        return CreateResult(dispatchId, questionId)
+        broadcaster.emit(ProcessEvent.QuestionAsked(originProcessId, question.id, registration.agentName))
+        return CreateResult(dispatchId, question.id)
     }
 
     /**
@@ -167,31 +153,45 @@ internal class DispatchService(
     ): Dispatch? {
         val dispatch = repository.findByQuestionId(questionId) ?: return null
         if (dispatch.status != DispatchStatus.PENDING) return null
+        // A member question of a group resolves to the group row, so a group is fired from the
+        // same answer route as a single dispatch, with the group's own gate in front of the claim.
+        if (dispatch.kind == DispatchKind.GROUP) return fireGroup(dispatch)
+        return claimAndStart(dispatch, answer)
+    }
+
+    /** Claims [dispatch], re-checks its target, and starts it with [payload]; null if the claim was lost. */
+    private suspend fun claimAndStart(
+        dispatch: Dispatch,
+        payload: String,
+    ): Dispatch? {
         if (!repository.claim(dispatch.id)) return null
         val now = nowSec()
         val agent =
             agentsService.agents[dispatch.agentName]
                 ?: return markFailed(dispatch, "Target agent '${dispatch.agentName}' not found", now)
-        val denial = hopDenial(dispatch, agent)
+        val denial = targetGate.hopDenial(dispatch, agent)
         if (denial != null) return markFailed(dispatch, denial, now)
-        return startTarget(dispatch, agent, answer, now)
+        return startTarget(dispatch, agent, payload, now)
     }
 
-    /** Why the claimed [dispatch] may no longer start [agent], else null. */
-    private fun hopDenial(
-        dispatch: Dispatch,
-        agent: Agent,
-    ): String? {
-        if (!authorizer.canDispatchHop(dispatch.owner, dispatch.originAgentName, dispatch.agentName)) {
-            return "agent '${dispatch.originAgentName}' is not authorized to dispatch to '${dispatch.agentName}'"
-        }
-        // Re-check the opt-in at fire time: registration gated on `dispatch.enabled`, but the
-        // agent may have been reloaded to `enabled: false` or replaced since. Without this a
-        // pending dispatch created while enabled would still fire the now-disabled target.
-        if (agent.dispatch?.enabled != true) {
-            return "Target agent '${dispatch.agentName}' is no longer an allowed dispatch target"
-        }
-        return null
+    /**
+     * Fires a GROUP dispatch once every member question is ANSWERED, null while any is OPEN. The
+     * claim CAS (in [claimAndStart]) is the gate that starts the target exactly once when the
+     * last two answers land concurrently or the boot re-fire races a live answer.
+     *
+     * An aggregate over `DispatchGroupService.MAX_ANSWER_BYTES` settles the group FAILED rather
+     * than leaving it PENDING; it is caught here because [fire] also runs on the boot path,
+     * where a throw would abort startup reconciliation.
+     */
+    private suspend fun fireGroup(dispatch: Dispatch): Dispatch? {
+        val payload =
+            try {
+                groupService.aggregateAnswers(dispatch.id) ?: return null
+            } catch (e: DispatchGroupAnswersTooLargeException) {
+                if (!repository.claim(dispatch.id)) return null
+                return markFailed(dispatch, e.message ?: "Group answers exceed the payload bound", nowSec())
+            }
+        return claimAndStart(dispatch, payload)
     }
 
     private suspend fun markFailed(
@@ -397,12 +397,24 @@ internal class DispatchService(
         val cancelled =
             repository.cancelWithQuestion(id)
                 ?: throw DispatchNotPendingException(id, repository.get(id)?.status?.name ?: existing.status.name)
-        broadcaster.emit(ProcessEvent.QuestionExpired(cancelled.originProcessId, cancelled.questionId))
+        // One event per question the dispatch owned, so a cancelled group's members each leave
+        // the questions inbox rather than only the sentinel. See ADR-0109.
+        questionIdsOf(existing).forEach {
+            broadcaster.emit(ProcessEvent.QuestionExpired(cancelled.originProcessId, it))
+        }
     }
+
+    /** The questions a dispatch owns: a GROUP's ordered member set, or a SINGLE's one question. */
+    private fun questionIdsOf(dispatch: Dispatch): List<String> =
+        if (dispatch.kind == DispatchKind.GROUP) dispatch.questionIds else listOf(dispatch.questionId)
 
     suspend fun sweepExpired() {
         val cancelled = repository.expirePending(nowSec())
-        cancelled.forEach { broadcaster.emit(ProcessEvent.QuestionExpired(it.originProcessId, it.questionId)) }
+        cancelled.forEach { dispatch ->
+            questionIdsOf(dispatch).forEach {
+                broadcaster.emit(ProcessEvent.QuestionExpired(dispatch.originProcessId, it))
+            }
+        }
         if (cancelled.isNotEmpty()) {
             logger.info("Swept {} expired dispatch(es)", cancelled.size)
         }
@@ -426,7 +438,9 @@ internal class DispatchService(
 
     suspend fun refirePendingAnswered() {
         for ((dispatch, answer) in repository.listPendingAnswered()) {
-            if (answer.isBlank()) continue
+            // A GROUP row's own `answer` is empty by construction: fire() re-resolves its sentinel
+            // and aggregates the member answers itself. See ADR-0109.
+            if (dispatch.kind != DispatchKind.GROUP && answer.isBlank()) continue
             logger.info("Re-firing dispatch {} answered before restart", dispatch.id)
             fire(dispatch.questionId, answer)
         }

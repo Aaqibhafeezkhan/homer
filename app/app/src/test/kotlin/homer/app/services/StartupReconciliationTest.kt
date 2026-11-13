@@ -7,12 +7,14 @@ import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.ProcessJobRegistry
 import homer.app.models.Agent
+import homer.app.models.AgentDispatchConfig
 import homer.app.models.AgentHook
 import homer.app.models.ProcessStatus
 import homer.app.models.Retain
 import homer.app.models.RunMessagesConfig
 import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DatabaseService
+import homer.app.services.persistence.DispatchRepository
 import homer.app.services.persistence.InterruptedResult
 import homer.app.services.persistence.NewPendingHook
 import homer.app.services.persistence.ProcessRepository
@@ -235,6 +237,107 @@ class StartupReconciliationTest {
                 dispatchService.failOrphanedDispatching()
                 dispatchService.refirePendingAnswered()
             }
+        }
+
+    // --- Grouped ask-and-dispatch crash safety (ADR-0109) ---
+
+    /** A real [DispatchService] over [db] whose target start is the only stubbed collaborator. */
+    private fun groupHarness(db: DatabaseService): Triple<Harness, DispatchService, AgentRunStarter> {
+        val agent = AgentFixtures.simpleAgent(name = "handler").copy(dispatch = AgentDispatchConfig(enabled = true))
+        val agentsService = mockk<AgentsService> { every { agents } returns mapOf("handler" to agent) }
+        val runStarter = mockk<AgentRunStarter>()
+        coEvery { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 99
+        val questionsService = QuestionsService(QuestionsRepository(db), TestFixtures.mockLogger(), ProcessEventBroadcaster())
+        val dispatchService =
+            PersistenceTestSupport.dispatchService(
+                db = db,
+                questionsService = questionsService,
+                agentsService = agentsService,
+                runStarter = runStarter,
+                inputResolver = mockk(relaxed = true),
+                processManager = PersistenceTestSupport.processManager(db = db),
+            )
+        val harness = Harness(db = db, dispatchService = dispatchService, agents = mapOf("handler" to agent))
+        return Triple(harness, dispatchService, runStarter)
+    }
+
+    /** A PENDING group of two questions on origin process 1, as the callback route registers one. */
+    private suspend fun seedGroup(db: DatabaseService): Int {
+        val repo = DispatchRepository(db)
+        val members =
+            listOf("m1", "m2").map {
+                QuestionsService.Question(it, 1, "asker", "text", emptyList(), QuestionStatus.OPEN, createdAt = 1, dispatchBound = true)
+            }
+        val dispatch =
+            Dispatch(
+                0,
+                DispatchGroupService.GROUP_QUESTION_ID_PREFIX + "sentinel",
+                DispatchStatus.PENDING,
+                "handler",
+                "answer",
+                emptyMap(),
+                1,
+                "asker",
+                null,
+                1,
+                kind = DispatchKind.GROUP,
+            )
+        return (
+            repo.createGroup(
+                members,
+                dispatch,
+                maxPending = 10,
+                maxOpenPerProcess = 10,
+            ) as DispatchRepository.GroupCreateOutcome.Created
+        ).dispatchId
+    }
+
+    @Test
+    fun `reconcile re-fires a fully answered pending group exactly once`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val (h, _, runStarter) = groupHarness(db)
+            val id = seedGroup(db)
+            listOf("m1", "m2").forEach { QuestionsRepository(db).markAnswered(it, "a-$it", 9) }
+
+            h.reconciliation.reconcile()
+            // A second boot must not fire the same group again.
+            h.reconciliation.reconcile()
+
+            coVerify(exactly = 1) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertEquals(DispatchStatus.DISPATCHED, DispatchRepository(db).get(id)!!.status)
+        }
+
+    @Test
+    fun `reconcile never re-fires a partly answered group`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val (h, _, runStarter) = groupHarness(db)
+            val id = seedGroup(db)
+            QuestionsRepository(db).markAnswered("m1", "a-m1", 9)
+
+            h.reconciliation.reconcile()
+
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertEquals(DispatchStatus.PENDING, DispatchRepository(db).get(id)!!.status)
+        }
+
+    @Test
+    fun `reconcile settles a group interrupted mid-fire FAILED and never re-fires it`() =
+        runTest {
+            val db = PersistenceTestSupport.tempDatabase()
+            val (h, _, runStarter) = groupHarness(db)
+            val repo = DispatchRepository(db)
+            val id = seedGroup(db)
+            listOf("m1", "m2").forEach { QuestionsRepository(db).markAnswered(it, "a-$it", 9) }
+            // The claim committed but the process died before the start: the answers are gone from
+            // the fired run's point of view, so the group must settle FAILED, not fire twice.
+            repo.claim(id)
+
+            h.reconciliation.reconcile()
+
+            assertEquals(DispatchStatus.FAILED, repo.get(id)!!.status)
+            coVerify(exactly = 0) { runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         }
 
     @Test

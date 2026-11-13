@@ -1,9 +1,12 @@
 package homer.app.services.persistence
 
 import homer.app.services.Dispatch
+import homer.app.services.DispatchKind
 import homer.app.services.DispatchStatus
 import homer.app.services.QuestionsService.Question
 import homer.app.services.QuestionsService.QuestionStatus
+import homer.app.services.persistence.DispatchRepository.GroupCreateOutcome
+import homer.app.services.persistence.DispatchRepository.GroupMember
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -235,6 +238,202 @@ class DispatchRepositoryTest {
             assertTrue(cancelled.isEmpty())
             assertEquals(DispatchStatus.DISPATCHING, repoAtT.get(id)!!.status)
             assertEquals(QuestionStatus.OPEN, QuestionsRepository(db).get("q1")!!.status)
+        }
+
+    // --- Grouped dispatches (ADR-0109) ---
+
+    private fun groupDispatch(
+        expiresAt: Long? = null,
+        originProcessId: Int = 1,
+        sentinel: String = "group:sentinel",
+    ) = Dispatch(
+        0,
+        sentinel,
+        DispatchStatus.PENDING,
+        "handler",
+        "answer",
+        mapOf("p1" to "v1"),
+        originProcessId,
+        "asker",
+        expiresAt,
+        1,
+        kind = DispatchKind.GROUP,
+    )
+
+    private suspend fun createGroup(
+        ids: List<String>,
+        maxPending: Int = 10,
+        maxOpenPerProcess: Int = 10,
+        sentinel: String = "group:sentinel",
+    ) = repo.createGroup(
+        ids.map { question(it) },
+        groupDispatch(sentinel = sentinel),
+        maxPending,
+        maxOpenPerProcess,
+    )
+
+    private suspend fun createdGroup(ids: List<String>): Int = (createGroup(ids) as GroupCreateOutcome.Created).dispatchId
+
+    @Test
+    fun `createGroup inserts the dispatch, its questions and their ordered member rows`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2", "m3"))
+
+            val group = repo.get(id)!!
+            assertEquals(DispatchKind.GROUP, group.kind)
+            assertEquals(listOf("m1", "m2", "m3"), group.questionIds)
+            assertEquals("handler", group.agentName)
+            // The row's own question_id is a sentinel that resolves to the group; every member
+            // resolves to it too, through the member table.
+            assertEquals(id, repo.findByQuestionId("group:sentinel")!!.id)
+            assertEquals(id, repo.findByQuestionId("m2")!!.id)
+            assertEquals(listOf("m1", "m2", "m3"), repo.groupMembers(id).map { it.questionId })
+            assertTrue(repo.groupMembers(id).all { it.answer == null })
+            assertEquals(3, listOf("m1", "m2", "m3").count { QuestionsRepository(db).get(it) != null })
+        }
+
+    @Test
+    fun `a single dispatch keeps its one question and reports no members`() =
+        runTest {
+            val id = repo.create(question("q1"), dispatch("q1"), 10)!!
+
+            val single = repo.get(id)!!
+            assertEquals(DispatchKind.SINGLE, single.kind)
+            assertTrue(single.questionIds.isEmpty())
+            assertTrue(repo.groupMembers(id).isEmpty())
+            assertNull(repo.findByQuestionId("group:sentinel"))
+        }
+
+    // A refused group leaves no question and no member row behind: it is registered atomically,
+    // so it is never observably partial.
+    @Test
+    fun `createGroup refuses at the pending cap leaving nothing behind`() =
+        runTest {
+            repo.create(question("q1"), dispatch("q1"), maxPending = 1)
+
+            assertEquals(GroupCreateOutcome.PendingCapReached, createGroup(listOf("m1", "m2"), maxPending = 1))
+
+            assertNull(QuestionsRepository(db).get("m1"))
+            assertNull(QuestionsRepository(db).get("m2"))
+            assertEquals(1, repo.page(null, null, null, null, 0, 100).total)
+        }
+
+    @Test
+    fun `createGroup refuses when the origin's open-question cap would be exceeded`() =
+        runTest {
+            assertTrue(createGroup(listOf("m1", "m2"), maxOpenPerProcess = 2) is GroupCreateOutcome.Created)
+
+            // A group adds all of its questions at once, so it is counted against the cap the
+            // same way N separate asks would be.
+            assertEquals(GroupCreateOutcome.OpenQuestionCapReached, createGroup(listOf("m3"), maxOpenPerProcess = 2))
+
+            assertNull(QuestionsRepository(db).get("m3"))
+            assertEquals(1, repo.page(null, null, null, null, 0, 100).total)
+        }
+
+    @Test
+    fun `groupMembers reports each member's answer and keeps question order`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2"))
+            QuestionsRepository(db).markAnswered("m2", "two", 9)
+
+            assertEquals(
+                listOf(GroupMember("m1", null), GroupMember("m2", "two")),
+                repo.groupMembers(id),
+            )
+        }
+
+    @Test
+    fun `findByQuestionIds resolves every member to its group and leaves singles alone`() =
+        runTest {
+            val single = repo.create(question("q1"), dispatch("q1"), 10)!!
+            val group = createdGroup(listOf("m1", "m2"))
+
+            val found = repo.findByQuestionIds(listOf("q1", "m1", "m2", "unknown"))
+
+            assertEquals(setOf("q1", "m1", "m2"), found.keys)
+            assertEquals(single, found["q1"]!!.id)
+            assertEquals(group, found["m1"]!!.id)
+            assertEquals(group, found["m2"]!!.id)
+            assertEquals(listOf("m1", "m2"), found["m1"]!!.questionIds)
+            assertTrue(repo.findByQuestionIds(emptyList()).isEmpty())
+        }
+
+    @Test
+    fun `cancelWithQuestion deletes every member question of a group`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2"))
+
+            val cancelled = repo.cancelWithQuestion(id)!!
+
+            assertEquals(DispatchStatus.CANCELLED, cancelled.status)
+            assertEquals(listOf("m1", "m2"), cancelled.questionIds)
+            assertNull(QuestionsRepository(db).get("m1"))
+            assertNull(QuestionsRepository(db).get("m2"))
+        }
+
+    @Test
+    fun `markDispatched deletes a group's member questions but keeps its member rows`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2"))
+            repo.claim(id)
+
+            assertTrue(repo.markDispatched(id, processId = 42, at = 5))
+
+            assertNull(QuestionsRepository(db).get("m1"))
+            assertNull(QuestionsRepository(db).get("m2"))
+            // The settled group still reports the question ids it was registered with, so
+            // `GET /dispatches/{id}` answers the same before and after the fire.
+            assertEquals(listOf("m1", "m2"), repo.get(id)!!.questionIds)
+        }
+
+    @Test
+    fun `expirePending cancels a lapsed group and deletes every member question`() =
+        runTest {
+            val repoAtT = DispatchRepository(db, nowSec = { 1_000 })
+            val id =
+                (
+                    repoAtT.createGroup(listOf(question("m1"), question("m2")), groupDispatch(expiresAt = 500), 10, 10)
+                        as GroupCreateOutcome.Created
+                ).dispatchId
+
+            val cancelled = repoAtT.expirePending(now = 600)
+
+            assertEquals(listOf(id), cancelled.map { it.id })
+            assertEquals(DispatchStatus.CANCELLED, repoAtT.get(id)!!.status)
+            assertNull(QuestionsRepository(db).get("m1"))
+            assertNull(QuestionsRepository(db).get("m2"))
+        }
+
+    @Test
+    fun `listPendingAnswered includes a group only once every member is answered`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2"))
+
+            QuestionsRepository(db).markAnswered("m1", "one", 9)
+            assertTrue(repo.listPendingAnswered().isEmpty(), "a partly answered group must not re-fire on boot")
+
+            QuestionsRepository(db).markAnswered("m2", "two", 9)
+            val pending = repo.listPendingAnswered()
+
+            assertEquals(listOf(id), pending.map { it.dispatch.id })
+            // A group's own answer is empty: the fire path aggregates its members itself.
+            assertEquals("", pending.single().answer)
+            assertEquals(listOf("m1", "m2"), pending.single().dispatch.questionIds)
+        }
+
+    @Test
+    fun `pruneSettled deletes a settled group's member rows with the dispatch`() =
+        runTest {
+            val id = createdGroup(listOf("m1", "m2"))
+            repo.claim(id)
+            repo.markFailed(id, "boom", at = 5)
+
+            assertEquals(1, repo.pruneSettled(cutoff = 1_000))
+
+            assertNull(repo.get(id))
+            assertNull(repo.findByQuestionId("m1"))
+            assertEquals(0, repo.groupMembers(id).size)
         }
 
     // --- Settled-row retention and the paginated list ---

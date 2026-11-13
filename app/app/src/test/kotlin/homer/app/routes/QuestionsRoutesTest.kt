@@ -6,6 +6,8 @@ import homer.app.fixtures.authorizerFor
 import homer.app.fixtures.installGrantsApp
 import homer.app.fixtures.mountApiV1Routes
 import homer.app.models.Action
+import homer.app.models.Agent
+import homer.app.models.AgentDispatchConfig
 import homer.app.models.Grant
 import homer.app.models.ProcessInfo
 import homer.app.models.ProcessInfoResponse
@@ -14,7 +16,12 @@ import homer.app.models.ProcessStatus
 import homer.app.models.QuestionResponse
 import homer.app.models.QuestionsListResponse
 import homer.app.models.TokenConfig
+import homer.app.services.AgentRunStarter
+import homer.app.services.AgentsService
 import homer.app.services.Authorizer
+import homer.app.services.DispatchGroupService
+import homer.app.services.DispatchService
+import homer.app.services.DispatchStatus
 import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.ProcessManager
 import homer.app.services.QuestionsService
@@ -33,6 +40,7 @@ import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import io.ktor.utils.io.readLine
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.coroutineScope
@@ -68,6 +76,130 @@ class QuestionsRoutesTest {
         contentType(ContentType.Application.Json)
         setBody("""{"answer":"yes, go"}""")
     }
+
+    private suspend fun HttpClient.answerWith(
+        questionId: String,
+        answer: String,
+    ) = post("/api/v1/questions/$questionId/answer") {
+        contentType(ContentType.Application.Json)
+        setBody("""{"answer":"$answer"}""")
+    }
+
+    /** A two-question group on origin process 7, with the services the answer route resolves. */
+    private class GroupFixture(
+        val questions: QuestionsService,
+        val agents: AgentsService,
+        val dispatches: DispatchService,
+        val runStarter: AgentRunStarter,
+        val created: DispatchGroupService.CreateResult,
+    )
+
+    /**
+     * A group of two questions to a dispatch-enabled `handler`. The two clocks are pinned so a
+     * `ttlSec` group can be swept without waiting: the group is created at 1000 and
+     * [DispatchService.sweepExpired] reads [sweepAt].
+     */
+    private fun groupFixture(
+        ttlSec: Int? = null,
+        sweepAt: Long = 1_000L,
+    ): GroupFixture {
+        val db = PersistenceTestSupport.tempDatabase()
+        val questions = PersistenceTestSupport.questionsService(db = db)
+        val handler = mockk<Agent>(relaxed = true)
+        every { handler.dispatch } returns AgentDispatchConfig(enabled = true)
+        val agents = mockk<AgentsService> { every { this@mockk.agents } returns mapOf("handler" to handler) }
+        val runStarter = mockk<AgentRunStarter>()
+        val dispatches =
+            PersistenceTestSupport.dispatchService(
+                db = db,
+                questionsService = questions,
+                agentsService = agents,
+                runStarter = runStarter,
+                inputResolver = mockk(relaxed = true),
+                nowSec = { sweepAt },
+            )
+        val groups =
+            PersistenceTestSupport.dispatchGroupService(
+                db = db,
+                questionsService = questions,
+                agentsService = agents,
+                inputResolver = mockk(relaxed = true),
+                nowSec = { 1_000L },
+            )
+        val created =
+            runBlocking {
+                questions.registerProcess(7, "asker")
+                groups.create(
+                    7,
+                    listOf("First?", "Second?").map { DispatchGroupService.QuestionSpec(it) },
+                    "handler",
+                    "answer",
+                    emptyMap(),
+                    ttlSec,
+                )
+            }
+        return GroupFixture(questions, agents, dispatches, runStarter, created)
+    }
+
+    @Test
+    fun `each member question of a group answers independently and carries the group annotation`() =
+        testApplication {
+            val f = groupFixture()
+            coEvery { f.runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns 42
+            mountApiV1Routes {
+                every { questionsService } returns f.questions
+                every { agentsService } returns f.agents
+                every { dispatchService } returns f.dispatches
+            }
+
+            val inbox =
+                apiJson.decodeFromString<QuestionsListResponse>(client.get("/api/v1/questions").bodyAsText())
+            assertEquals(listOf("First?", "Second?"), inbox.questions.map { it.text })
+            // Each member carries the group's dispatch, which is what the console inbox annotates.
+            assertEquals(
+                listOf(f.created.dispatchId, f.created.dispatchId),
+                inbox.questions.map { it.dispatch?.id },
+            )
+
+            // One member answered: the group is still short of its gate, so nothing fires.
+            assertEquals(HttpStatusCode.OK, client.answerWith(f.created.questionIds[0], "one").status)
+            coVerify(exactly = 0) { f.runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertEquals(DispatchStatus.PENDING, runBlocking { f.dispatches.get(f.created.dispatchId) }?.status)
+
+            // The last one fires the target exactly once.
+            assertEquals(HttpStatusCode.OK, client.answerWith(f.created.questionIds[1], "two").status)
+            coVerify(exactly = 1) { f.runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            assertEquals(DispatchStatus.DISPATCHED, runBlocking { f.dispatches.get(f.created.dispatchId) }?.status)
+        }
+
+    @Test
+    fun `an answer after the group was cancelled is rejected and fires nothing`() =
+        testApplication {
+            val f = groupFixture()
+            mountApiV1Routes {
+                every { questionsService } returns f.questions
+                every { dispatchService } returns f.dispatches
+            }
+            runBlocking { f.dispatches.cancel(f.created.dispatchId) }
+
+            // The member questions went with the group, so there is nothing left to answer.
+            assertEquals(HttpStatusCode.NotFound, client.answerWith(f.created.questionIds.first(), "one").status)
+            coVerify(exactly = 0) { f.runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun `an answer after the group expired is rejected and fires nothing`() =
+        testApplication {
+            val f = groupFixture(ttlSec = 30, sweepAt = 1_031L)
+            mountApiV1Routes {
+                every { questionsService } returns f.questions
+                every { dispatchService } returns f.dispatches
+            }
+            runBlocking { f.dispatches.sweepExpired() }
+
+            assertEquals(HttpStatusCode.NotFound, client.answerWith(f.created.questionIds.first(), "one").status)
+            coVerify(exactly = 0) { f.runStarter.start(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
 
     @Test
     fun `GET questions lists all questions`() =

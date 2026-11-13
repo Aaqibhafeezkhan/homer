@@ -167,3 +167,4 @@ One of:
 | [0106](0106-cooldown-key-scopes-windows-per-subject.md) | `cooldown.key` counts the cooldown windows per rendered subject | proposed |
 | [0107](0107-agent-status-hooks.md) | Agent-declared status hooks fire a target agent on every run status | proposed |
 | [0108](0108-graceful-stop-of-a-run.md) | A run can be stopped gracefully — opt-in, SIGINT before SIGKILL, and `FAILED` plus a `stop` record | proposed |
+| [0109](0109-grouped-ask-and-dispatch.md) | Grouped ask-and-dispatch — N questions, one fire | proposed |

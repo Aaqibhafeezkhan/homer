@@ -84,6 +84,13 @@ class ServerConfigTest {
     }
 
     @Test
+    fun `dispatch maxGroupSize defaults to 8 and rejects a value below 1`() {
+        assertEquals(8, DispatchConfig().maxGroupSize)
+        val ex = assertThrows<IllegalArgumentException> { DispatchConfig(maxGroupSize = 0) }
+        assertTrue(ex.message!!.contains("server.dispatch.maxGroupSize"), ex.message)
+    }
+
+    @Test
     fun `messages defaults to 10000 characters and 100 per run`() {
         assertEquals(RunMessagesConfig(maxTextLength = 10_000, maxPerRun = 100), Server().messages)
     }

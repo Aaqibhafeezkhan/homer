@@ -397,20 +397,9 @@ val appModule =
             )
         }
 
-        single {
-            DispatchService(
-                repository = get(),
-                questionsService = get(),
-                agentsService = get(),
-                authorizer = get(),
-                agentRunStarter = get(),
-                agentInputResolver = get(),
-                processManager = get(),
-                broadcaster = get(),
-                logger = get { parametersOf("homer.app.services.DispatchService") },
-                config = get<AppConfig>().server.dispatch,
-            )
-        }
+        single { buildDispatchGroupService() }
+
+        single { buildDispatchService() }
 
         single {
             DispatchSweepService(
@@ -462,6 +451,7 @@ val appModule =
                 questionsService = get(),
                 questionsConfig = get<AppConfig>().server.questions,
                 dispatchService = get(),
+                dispatchGroupService = get(),
                 runMessagesService = get(),
                 logger = get { parametersOf("homer.app.services.QuestionsMcpToolFactory") },
             )

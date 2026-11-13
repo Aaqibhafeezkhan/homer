@@ -4,6 +4,7 @@
 
 ### Homer
 
+- **Added: grouped ask-and-dispatch** — Registers several questions as one dispatch and starts the target agent once, after every answer. See [ADR-0109](docs/adr/0109-grouped-ask-and-dispatch.md).
 - **Added: `hooks` on the agent definition** — A run status can declare an agent Homer starts when a run of that agent reaches it, from every start path, delivered exactly once across restarts and bounded by `server.hooks`. See [ADR-0107](docs/adr/0107-agent-status-hooks.md).
 - **BREAKING: LLM generation span attributes renamed to `langfuse.observation.*`** — A `!<claude>` / `!<codex>` / `!<opencode>` generation's `prompt` / `output` are now `langfuse.observation.input` / `langfuse.observation.output`, the pair Langfuse reads before any framework fallback, so its Output renders and a dashboard or filter on the old names must move.
 - **Added: `retries` and `infra_retries` on `homer_fanout`** — A LangGraph fan-out node re-dispatches a sub that failed, up to a bounded number of attempts and with a separate budget for infrastructure outcomes, instead of resuming with the same failed payload forever. See [ADR-0105](docs/adr/0105-langgraph-fanout-retries-are-client-side.md).

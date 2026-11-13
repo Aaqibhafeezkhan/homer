@@ -16,6 +16,7 @@ import homer.app.exceptions.CooldownKeyInvalidException
 import homer.app.exceptions.CostCapExceededException
 import homer.app.exceptions.CsrfValidationException
 import homer.app.exceptions.DispatchAgentNotFoundException
+import homer.app.exceptions.DispatchGroupLimitException
 import homer.app.exceptions.DispatchNotFoundException
 import homer.app.exceptions.DispatchNotPendingException
 import homer.app.exceptions.HomerException
@@ -264,6 +265,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is AgentNotDispatchableException,
         is QuestionNotFoundException,
         is DispatchAgentNotFoundException,
+        is DispatchGroupLimitException,
         is DispatchNotFoundException,
         is ContinuationNotFoundException,
         is AnotherProcessStillActive,
@@ -278,9 +280,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is InvocationCycleDetectedException,
         is RunnerRegistrationRejectedException,
         is CooldownKeyInvalidException,
-        -> {
-            requestErrorStatus(e)
-        }
+        -> requestErrorStatus(e)
 
         is RunnerTransferTimeoutException,
         is RunnerTransferTooLargeException,
@@ -311,9 +311,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is MaintenanceWaitTimeoutException,
         is ServerDrainingException,
         is UnresolvedLockKeyPlaceholderException,
-        -> {
-            transferCapacityOrServerStatus(e)
-        }
+        -> transferCapacityOrServerStatus(e)
     }
 
 /**
@@ -360,7 +358,8 @@ private fun requestErrorStatus(e: HomerException): HttpStatusCode =
             HttpStatusCode.UnprocessableEntity
         }
 
-        // BodylessBadRequestException, ValidationException.
+        // BodylessBadRequestException, ValidationException,
+        // DispatchGroupLimitException.
         else -> {
             HttpStatusCode.BadRequest
         }

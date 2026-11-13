@@ -8,6 +8,7 @@ import homer.app.services.AgentRunStarter
 import homer.app.services.AgentsService
 import homer.app.services.Authorizer
 import homer.app.services.ContinuationService
+import homer.app.services.DispatchGroupService
 import homer.app.services.DispatchService
 import homer.app.services.ProcessEventBroadcaster
 import homer.app.services.ProcessManager
@@ -92,6 +93,19 @@ object PersistenceTestSupport {
         config: DispatchConfig = DispatchConfig(),
         logger: Logger = TestFixtures.mockLogger(),
         authorizer: Authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+        groupService: DispatchGroupService =
+            DispatchGroupService(
+                DispatchRepository(db),
+                questionsService,
+                agentsService,
+                authorizer,
+                inputResolver,
+                processManager,
+                broadcaster,
+                logger,
+                config,
+            ),
+        nowSec: () -> Long = { System.currentTimeMillis() / 1000 },
     ): DispatchService =
         DispatchService(
             DispatchRepository(db),
@@ -102,8 +116,41 @@ object PersistenceTestSupport {
             inputResolver,
             processManager,
             broadcaster,
+            groupService,
             logger,
             config,
+            nowSec,
+        )
+
+    /**
+     * A [DispatchGroupService] sharing [db] with [questionsService] — the group create path and
+     * the group's fire gate, with the same caller-supplied mocks [dispatchService] takes.
+     */
+    internal fun dispatchGroupService(
+        db: DatabaseService,
+        questionsService: QuestionsService,
+        agentsService: AgentsService,
+        inputResolver: AgentInputResolver,
+        processManager: ProcessManager = processManager(db = db),
+        broadcaster: ProcessEventBroadcaster = ProcessEventBroadcaster(),
+        config: DispatchConfig = DispatchConfig(),
+        questionsConfig: QuestionsConfig = QuestionsConfig(),
+        logger: Logger = TestFixtures.mockLogger(),
+        authorizer: Authorizer = Authorizer(emptyMap(), emptyMap(), enabled = false),
+        nowSec: () -> Long = { System.currentTimeMillis() / 1000 },
+    ): DispatchGroupService =
+        DispatchGroupService(
+            DispatchRepository(db),
+            questionsService,
+            agentsService,
+            authorizer,
+            inputResolver,
+            processManager,
+            broadcaster,
+            logger,
+            config,
+            questionsConfig,
+            nowSec,
         )
 
     /**

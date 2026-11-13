@@ -158,6 +158,7 @@ there and a row here (SQLite rule 1 in
 | 29 | `run_messages` table (the per-run inbox) + `run_messages_process_status` index | [0097](../../../../../../../../../docs/adr/0097-per-run-inbox.md) |
 | 30 | `processes.failure_reason`, `processes.failure_reason_run_id` | [0098](../../../../../../../../../docs/adr/0098-pre-start-failure-reason-is-a-fixed-vocabulary.md) |
 | 31 | `processes.cooldown_key` (left NULL, no backfill) + `processes_agent_cooldown_key` and `processes_agent_cooldown_status_ended`; `processes.stop` (what a graceful stop did); `pending_hooks` table (agent-level status hooks) | [0106](../../../../../../../../../docs/adr/0106-cooldown-key-scopes-windows-per-subject.md), [0107](../../../../../../../../../docs/adr/0107-agent-status-hooks.md), [0108](../../../../../../../../../docs/adr/0108-graceful-stop-of-a-run.md) |
+| 32 | `dispatches.kind` + `dispatch_group_questions` table (grouped ask-and-dispatch; its own version — a database the cooldown release stamped 31 skips every step guarded below 32) | [0109](../../../../../../../../../docs/adr/0109-grouped-ask-and-dispatch.md) |
 
 ### Schema constraints
 
@@ -181,6 +182,7 @@ Editor-facing constraints the row's ADR does not state:
   `processes_agent_cooldown_key` and
   `processes_agent_cooldown_status_ended`, while the keyless shapes stay on
   `processes_agent_name` and `processes_agent_status_ended`. See ADR-0106.
+- A GROUP `dispatches` row's `question_id` is a synthetic `group:`-prefixed sentinel; the `dispatch_group_questions` table owns the ordered member set (v32). Readers of `dispatches.question_id` must branch on `kind`.
 - `processes.secret_input_keys` (v15) records the `envName`s the agent declared
   `secret: true` **at run time**; API redaction reads it in preference to the
   agent's current definition, so an input later flipped to `secret: false`

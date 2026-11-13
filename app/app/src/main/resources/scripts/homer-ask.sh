@@ -21,6 +21,15 @@
 #       named agent with the answer (under --answer-param, default "answer")
 #       plus any --param inputs. Prints "dispatchId\nquestionId" and exits
 #       immediately (fire-and-forget).
+#   homer-ask ask-and-dispatch-group --question TEXT [--option TEXT]...
+#       [--question TEXT]... --agent NAME [--answer-param NAME]
+#       [--param k=v]... [--ttl SEC]
+#       Registers one dispatch over several questions: the operator answers
+#       them independently, and Homer starts the named agent once — after the
+#       last of them — with every answer, in --question order, as a JSON array
+#       under --answer-param (default "answer"). Each --option attaches to the
+#       --question before it. Prints the dispatch id, then one question id per
+#       line, in the order asked, and exits immediately (fire-and-forget).
 #
 # Exit codes: 0 ok/answered, 2 usage or transport error, 3 still open /
 # TTL lapsed, 4 expired (the run reached a terminal state).
@@ -49,11 +58,18 @@ require_uint() {
 
 BASE_URL="${HMR_API_URL%/}/api/v1/callback/questions"
 DISPATCH_URL="${HMR_API_URL%/}/api/v1/callback/dispatches"
+DISPATCH_GROUP_URL="${HMR_API_URL%/}/api/v1/callback/dispatch-groups"
 
 # Appends one --option TEXT value to OPTIONS_JSON (comma-joined quoted list).
 append_option() {
     escaped="\"$(json_escape "$1")\""
     OPTIONS_JSON="${OPTIONS_JSON:+$OPTIONS_JSON,}$escaped"
+}
+
+# Appends the group question being built (CUR_TEXT/CUR_OPTIONS) to QUESTIONS_JSON.
+flush_group_question() {
+    obj="{\"text\":\"$(json_escape "$CUR_TEXT")\",\"options\":[$CUR_OPTIONS]}"
+    QUESTIONS_JSON="${QUESTIONS_JSON:+$QUESTIONS_JSON,}$obj"
 }
 
 # Escapes a value for embedding in a JSON string literal. Char-by-char to
@@ -148,6 +164,54 @@ json_num_field() {
         END { exit !found }'
 }
 
+# Prints one unescaped element per line of the JSON string array in field $2 of JSON $1.
+# Unlike json_str_field this one spans physical lines: Homer pretty-prints, so an array
+# arrives as `"field": [` / `  "a",` / `  "b"` / `]`.
+json_str_array_field() {
+    printf '%s' "$1" | awk -v field="$2" '
+        BEGIN { started = 0; done = 0 }
+        !done {
+            line = $0
+            if (!started) {
+                pat = "\"" field "\":"
+                i = index(line, pat)
+                if (i == 0) next
+                started = 1
+                line = substr(line, i + length(pat))
+            }
+            while (length(line) > 0) {
+                c = substr(line, 1, 1)
+                if (c == "[" || c == "," || c == " " || c == "\t") {
+                    line = substr(line, 2)
+                    continue
+                }
+                if (c == "]") { done = 1; break }
+                if (c == "\"") {
+                    line = substr(line, 2)
+                    out = ""
+                    while (length(line) > 0) {
+                        c = substr(line, 1, 1)
+                        if (c == "\\") {
+                            out = out substr(line, 2, 1)
+                            line = substr(line, 3)
+                            continue
+                        }
+                        if (c == "\"") {
+                            line = substr(line, 2)
+                            break
+                        }
+                        out = out c
+                        line = substr(line, 2)
+                    }
+                    print out
+                    continue
+                }
+                line = substr(line, 2)
+            }
+        }
+        END { exit !started }'
+}
+
 # POSTs a dispatch; prints "dispatchId\nquestionId".
 # $1 text  $2 options-json (comma-joined quoted)  $3 agent  $4 answer_param
 # $5 params-json-object-body (comma-joined "key":"val")  $6 ttl (optional, may be empty)
@@ -164,6 +228,24 @@ dispatch_question() {
     did=$(json_num_field "$response" "dispatchId") || die "no dispatchId in response: $response"
     qid=$(json_str_field "$response" "questionId") || die "no questionId in response: $response"
     printf '%s\n%s\n' "$did" "$qid"
+}
+
+# POSTs a dispatch group; prints the dispatch id, then one question id per line in ask order.
+# $1 questions-json array body (comma-joined {text,options} objects)  $2 agent
+# $3 answer_param  $4 params-json-object-body  $5 ttl (optional, may be empty)
+dispatch_group() {
+    ttl_field=""
+    [ -n "${5:-}" ] && ttl_field=",\"ttlSec\":$5"
+    payload="{\"questions\":[$1],\"agent\":\"$(json_escape "$2")\",\"answerParam\":\"$(json_escape "$3")\",\"params\":{$4}$ttl_field}"
+    response=$(
+        curl -sS -f --max-time "$CURL_MAX_TIME" -X POST "$DISPATCH_GROUP_URL" \
+            -H "Authorization: Bearer $HMR_CALLBACK_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$payload"
+    ) || die "registering the dispatch group failed (terminal process, unknown agent, too many questions, open-question cap, pending cap, or Homer unreachable)"
+    did=$(json_num_field "$response" "dispatchId") || die "no dispatchId in response: $response"
+    printf '%s\n' "$did"
+    json_str_array_field "$response" "questionIds" || die "no questionIds in response: $response"
 }
 
 # POSTs a question built from "$text" and $OPTIONS_JSON; prints the id.
@@ -349,7 +431,59 @@ case "$cmd" in
         [ -z "$TTL" ] || require_uint "--ttl" "$TTL"
         dispatch_question "$text" "$OPTIONS_JSON" "$AGENT" "$ANSWER_PARAM" "$PARAMS_JSON" "$TTL"
         ;;
+    ask-and-dispatch-group)
+        [ $# -ge 2 ] || die "usage: homer-ask ask-and-dispatch-group --question TEXT [--option TEXT]... --agent NAME [--answer-param NAME] [--param k=v]... [--ttl SEC]"
+        shift 1
+        QUESTIONS_JSON=""
+        CUR_TEXT=""
+        CUR_OPTIONS=""
+        PENDING=0
+        AGENT=""
+        ANSWER_PARAM="answer"
+        PARAMS_JSON=""
+        TTL=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --question)
+                    [ $# -ge 2 ] || die "--question needs a value"
+                    [ "$PENDING" -eq 0 ] || flush_group_question
+                    CUR_TEXT=$2
+                    CUR_OPTIONS=""
+                    PENDING=1
+                    shift 2 ;;
+                --option)
+                    [ $# -ge 2 ] || die "--option needs a value"
+                    [ "$PENDING" -eq 1 ] || die "--option must follow a --question"
+                    # append_option accumulates into OPTIONS_JSON, which is per-question here.
+                    OPTIONS_JSON=$CUR_OPTIONS
+                    append_option "$2"
+                    CUR_OPTIONS=$OPTIONS_JSON
+                    shift 2 ;;
+                --agent) [ $# -ge 2 ] || die "--agent needs a value"; AGENT=$2; shift 2 ;;
+                --answer-param) [ $# -ge 2 ] || die "--answer-param needs a value"; ANSWER_PARAM=$2; shift 2 ;;
+                --param)
+                    [ $# -ge 2 ] || die "--param needs a value (key=value)"
+                    case "$2" in
+                        *=*) ;;
+                        *) die "--param must be key=value (got: $2)" ;;
+                    esac
+                    pkey=${2%%=*}
+                    pval=${2#*=}
+                    [ -n "$pkey" ] || die "--param key must not be empty (got: $2)"
+                    pair="\"$(json_escape "$pkey")\":\"$(json_escape "$pval")\""
+                    PARAMS_JSON="${PARAMS_JSON:+$PARAMS_JSON,}$pair"
+                    shift 2 ;;
+                --ttl) [ $# -ge 2 ] || die "--ttl needs a value"; TTL=$2; shift 2 ;;
+                *) die "unknown argument: $1" ;;
+            esac
+        done
+        [ "$PENDING" -eq 1 ] || die "at least one --question is required"
+        flush_group_question
+        [ -n "$AGENT" ] || die "--agent is required"
+        [ -z "$TTL" ] || require_uint "--ttl" "$TTL"
+        dispatch_group "$QUESTIONS_JSON" "$AGENT" "$ANSWER_PARAM" "$PARAMS_JSON" "$TTL"
+        ;;
     *)
-        die "usage: homer-ask ask|check|ask-and-wait|ask-and-dispatch ... (see AGENT.md)"
+        die "usage: homer-ask ask|check|ask-and-wait|ask-and-dispatch|ask-and-dispatch-group ... (see AGENT.md)"
         ;;
 esac

@@ -3643,7 +3643,7 @@ commands:
 > a model may otherwise reach for Claude Code's own question tool,
 > which has no operator on the other end in headless runs.
 
-The `homer-questions` MCP server exposes five tools:
+The `homer-questions` MCP server exposes six tools:
 
 | Tool | Behavior |
 |------|----------|
@@ -3651,6 +3651,7 @@ The `homer-questions` MCP server exposes five tools:
 | `check_answer` | Checks (or briefly waits, `waitSec` up to 50) for the answer to an earlier question |
 | `ask_user_and_wait` | Asks and blocks until answered, up to `ttlSec` (default and cap: `server.questions.maxWaitSec`) |
 | `ask_and_dispatch` | Asks and registers a dispatch without blocking; returns `dispatchId` and `questionId` (see [Ask and dispatch](#ask-and-dispatch)) |
+| `ask_and_dispatch_group` | Asks several questions and registers one dispatch that fires once after all are answered; returns `dispatchId` and `questionIds` (see [Ask and dispatch](#ask-and-dispatch)) |
 | `check_messages` | Takes the messages the operator sent this run (see [Messages from the operator](#messages-from-the-operator)) |
 
 Waits are resumable: if a blocking call times out or the connection drops,
@@ -3722,7 +3723,26 @@ process's.
 The MCP equivalent is the `ask_and_dispatch` tool (args: `text`, `agent`,
 `answerParam`, `options`, `params`, `ttlSec`) exposed by the
 `homer-questions` MCP server alongside `ask_user`, `check_answer`,
-`ask_user_and_wait`, and `check_messages`.
+`ask_user_and_wait`, `check_messages`, and `ask_and_dispatch_group`.
+
+#### Grouped ask and dispatch
+
+`ask-and-dispatch-group` registers several questions with one target agent.
+The target starts **once**, after every question is answered, with the
+answers joined in question order (not arrival order) under `--answer-param`.
+Cancel and TTL expiry settle the whole group; the group size is capped by
+`maxGroupSize` (default 8).
+It prints the `dispatchId`, then one `questionId` per line.
+
+```sh
+homer-ask ask-and-dispatch-group \
+    --question "Which region?" --option us-east --option eu-west \
+    --question "Which service?" \
+    --agent deploy_handler --answer-param answers --param env=prod
+```
+
+The MCP equivalent is `ask_and_dispatch_group` (args: `questions`, `agent`,
+`answerParam`, `params`, `ttlSec`).
 
 ### Dispatching another agent
 

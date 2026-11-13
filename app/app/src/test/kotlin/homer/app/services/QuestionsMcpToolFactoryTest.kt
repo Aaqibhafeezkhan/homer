@@ -48,11 +48,13 @@ class QuestionsMcpToolFactoryTest {
         service: QuestionsService,
         config: QuestionsConfig = QuestionsConfig(),
         dispatchService: DispatchService = mockk(relaxed = true),
+        dispatchGroupService: DispatchGroupService = mockk(relaxed = true),
         runMessagesService: RunMessagesService = mockk(relaxed = true),
     ) = QuestionsMcpToolFactory(
         questionsService = service,
         questionsConfig = config,
         dispatchService = dispatchService,
+        dispatchGroupService = dispatchGroupService,
         runMessagesService = runMessagesService,
         logger = TestFixtures.mockLogger(),
     )
@@ -86,7 +88,14 @@ class QuestionsMcpToolFactoryTest {
         val server = factory(service()).buildServer(processId = 1)
 
         assertEquals(
-            setOf("ask_user", "check_answer", "ask_user_and_wait", "ask_and_dispatch", "check_messages"),
+            setOf(
+                "ask_user",
+                "check_answer",
+                "ask_user_and_wait",
+                "ask_and_dispatch",
+                "ask_and_dispatch_group",
+                "check_messages",
+            ),
             server.tools.keys,
         )
     }

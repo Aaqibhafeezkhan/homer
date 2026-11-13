@@ -25,7 +25,7 @@ auto-loads when you read files in its package (root §9 lists each as canonical 
 
 ```
 HTTP API     Application.kt + its configureXxx files + routes (Ktor + bearer auth)
-Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · ContinuationService · HookService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
+Services     AgentsService · AgentRunStarter · AgentSubRunStarter · ProcessManager · CostMeter · CooldownGate · MaintenanceModeService · StartupReconciliation · ArtifactService · LogTailService · LlmEventStreamService · ProcessEventBroadcaster · CronSchedulerService · WorkspacePurgeService · QuestionsService · RunMessagesService · DispatchService · DispatchGroupService · ContinuationService · HookService · LangGraphInspectService · LangGraphRunStatusService · Authorizer
 Execution    ProcessExecutor · AgentExecutor · CommandExecutorFactory · RunnerRegistry · RunnerClaimQueue · ExternalRunnerDomain · ExternalRunnerInstance · RunnerStatusReport · LockManager · ParallelRunsManager
 Executors    CmdExecutor · ScriptExecutor · LlmHarnessExecutor (+ ClaudeHarness · CodexHarness · OpencodeHarness) · RunAgentExecutor · LangGraphExecutor · RunnerCmdExecutor
 Infra        ShellExecutor · Workspace · FileOperations · ResultToEnvMapper · SysEnvResolver · TelemetryService · LangfuseClient
@@ -219,6 +219,10 @@ marked `Constraint:`.
   parameters, fired (via `AgentRunStarter`) after the operator answers; PENDING
   dispatches cancel and TTL-sweep. **SQLite-backed via `DispatchRepository`**;
   dispatch-bound questions carry `dispatch_bound = 1`. See ADR-0021.
+- **`DispatchGroupService`** — grouped ask-and-dispatch: N questions with one
+  target that fires once after every answer (a GROUP `dispatches` row plus the
+  ordered `dispatch_group_questions` members); the gate lives in
+  `DispatchService.fire`. See ADR-0109.
 - **`ContinuationService`** — completion continuations: a target agent fired when
   a *watched* sub-process reaches a terminal state, carrying its result.
   **SQLite-backed via `ContinuationRepository`**; dispatch's claim-CAS / fire /
