@@ -341,8 +341,8 @@ class AgentExecutor(
      * returns; the caller rethrows, so the run ends `FAILED` with its stop recorded. The remaining
      * `commands` steps are never started, because the step loop was left by the throw. A stop
      * detected between steps — the soft deadline passing before the next one starts — names the
-     * last *started* step in the record and the `HMR_STOP_STEP_*` env: that step completed, and
-     * nothing was in flight to interrupt. See ADR-0108.
+     * last step whose turn came in the record and the `HMR_STOP_STEP_*` env: it either completed
+     * or was skipped by `when:`, and nothing was in flight to interrupt. See ADR-0108.
      */
     @OptIn(ExperimentalTime::class)
     private suspend fun runStopPhase(

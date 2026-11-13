@@ -65,8 +65,9 @@ A run stopped this way ends **`FAILED`**, with a `stop` record: `{reason, stepIn
 stopSteps}` where `reason` is `step_timeout` or `run_deadline` and `stopSteps` is `finished`,
 `failed` or `none`. The interrupted step's `ExecutionInfo` carries `stoppedBy` (the same value) and
 each stop step's carries `onStop: true` — except on a stop detected between steps (a soft deadline
-passing before the next step starts): the record then names the last *started* step, which
-completed, nothing was in flight to interrupt, and that step's row carries no `stoppedBy`. The stop steps receive `HMR_STOP_REASON`,
+passing before the next step starts): the record then names the last step whose turn came, which
+either completed or was skipped by `when:`; nothing was in flight to interrupt, and that step's row
+carries no `stoppedBy` either way. The stop steps receive `HMR_STOP_REASON`,
 `HMR_STOP_STEP_INDEX`, `HMR_STOP_STEP_LABEL`, `HMR_STOP_DEADLINE` (only for `run_deadline`) and
 `HMR_STOP_SESSION_ID` (only when the interrupted step was an LLM step whose CLI session id parsed
 and passed `^[A-Za-z0-9-]{1,128}$`); the label is control-stripped and capped at 256 characters, so
@@ -97,8 +98,8 @@ no new decision: `stop` already says *why*, and says it in more detail than a st
   a caller can tell "timed out with no stop work" from "timed out and its stop steps ran".
 - Good: the stop phase is bounded twice — the count of stop steps (10) and each step's timeout
   (the remaining deadline minus a 10 s margin, and capped at 300 s) — so it cannot extend a run
-  indefinitely. A stop detected between steps names the last *started* step in the record — it
-  completed, and nothing was in flight.
+  indefinitely. A stop detected between steps names the last step whose turn came in the record —
+  it completed or was skipped by `when:`, and nothing was in flight.
 - Bad: a stopped run's spend and its stop steps' spend are on the same run record, and the run is
   `FAILED` either way, so a caller who wants to know whether the stop steps did anything must read
   `stop.stopSteps`.

@@ -3495,6 +3495,109 @@ class AgentExecutorTest {
         }
 
     @Test
+    fun `a stop between steps names the step that completed after the deadline passed`() =
+        runTest {
+            val soft = System.currentTimeMillis() / 1000 + 1
+            val hard = soft + 3600
+            every { mockSession.runDeadline } returns RunDeadline(softEpochSec = soft, hardEpochSec = hard)
+            val agent =
+                Agent(
+                    name = "stoppable",
+                    commands =
+                        listOf(
+                            Command.Cmd(cmd = listOf("run"), label = "Run tests", timeout = 60),
+                            Command.Cmd(cmd = listOf("next"), label = "Next step", timeout = 60),
+                        ),
+                    onStop = listOf(saveReport()),
+                )
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            val stops = mutableListOf<RunStop>()
+            coEvery { mockProcessManager.setStop(any(), capture(stops)) } just Runs
+            val executionInfos = mutableListOf<ExecutionInfo>()
+            coEvery { mockProcessManager.completeStep(any(), capture(executionInfos), any(), any()) } just Runs
+            val contexts = mutableListOf<ExecutionContext>()
+            coEvery { mockExecutor.execute(any(), capture(contexts), any()) } coAnswers {
+                if (contexts.size == 1) {
+                    // The deadline is read off the wall clock, so the step has to outlive it in real
+                    // time. The executor caps the step's timeout but does not wrap it in withTimeout,
+                    // so a command can finish after the cap has passed.
+                    withContext(Dispatchers.IO) { Thread.sleep(1_200) }
+                }
+                TestFixtures.mockCommandResult(exitCode = 0)
+            }
+
+            assertThrows<CancellationException> { stopExecutor(agent).execute() }
+
+            // The stop names the step whose turn came last — the one that ran to success, not the
+            // one the deadline pre-empted — and its own row was never interrupted.
+            assertEquals(StopReason.RUN_DEADLINE, stops.single().reason)
+            assertEquals(0, stops.single().stepIndex)
+            assertEquals("Run tests", stops.single().stepLabel)
+            assertEquals(false, executionInfos.first().skipped)
+            assertEquals(null, executionInfos.first().stoppedBy)
+            verify {
+                mockWorkspace.appendToEnv(
+                    match {
+                        it[EnvConstants.STOP_STEP_INDEX] == "0" && it[EnvConstants.STOP_STEP_LABEL] == "Run tests"
+                    },
+                )
+            }
+        }
+
+    @Test
+    fun `a stop between steps names a when-skipped step too, and its row carries no stoppedBy`() =
+        runTest {
+            val soft = System.currentTimeMillis() / 1000 + 1
+            val hard = soft + 3600
+            every { mockSession.runDeadline } returns RunDeadline(softEpochSec = soft, hardEpochSec = hard)
+            val agent =
+                Agent(
+                    name = "stoppable",
+                    commands =
+                        listOf(
+                            Command.Cmd(
+                                cmd = listOf("run"),
+                                label = "Run tests",
+                                timeout = 60,
+                                whenClause = When(When.Operator.ALL, listOf("false-expr")),
+                            ),
+                            Command.Cmd(cmd = listOf("next"), label = "Next step", timeout = 60),
+                        ),
+                    onStop = listOf(saveReport()),
+                )
+            every { mockExecutorFactory.getExecutor<Command>(any()) } returns mockExecutor
+            coEvery { mockExecutor.execute(any(), any(), any()) } returns TestFixtures.mockCommandResult(exitCode = 0)
+            // The `when:` predicate evaluates false through the shell — and the evaluation itself
+            // outlives the soft deadline, which is read again before the next step starts.
+            coEvery { mockShell.cmd(any(), any(), any(), any(), any(), any()) } answers {
+                Thread.sleep(1_200)
+                TestFixtures.mockCommandResult(exitCode = 1, stdOut = arg(1), stdErr = arg(2))
+            }
+            val stops = mutableListOf<RunStop>()
+            coEvery { mockProcessManager.setStop(any(), capture(stops)) } just Runs
+            val executionInfos = mutableListOf<ExecutionInfo>()
+            coEvery { mockProcessManager.completeStep(any(), capture(executionInfos), any(), any()) } just Runs
+
+            assertThrows<CancellationException> { stopExecutor(agent).execute() }
+
+            // The record names the step whose turn came last — the one `when:` skipped. It never
+            // started, so its row is a plain skip and carries no stoppedBy; the next step never ran.
+            assertEquals(StopReason.RUN_DEADLINE, stops.single().reason)
+            assertEquals(0, stops.single().stepIndex)
+            assertEquals("Run tests", stops.single().stepLabel)
+            assertEquals(true, executionInfos.first().skipped)
+            assertEquals(null, executionInfos.first().stoppedBy)
+            verify {
+                mockWorkspace.appendToEnv(
+                    match {
+                        it[EnvConstants.STOP_STEP_INDEX] == "0" && it[EnvConstants.STOP_STEP_LABEL] == "Run tests"
+                    },
+                )
+            }
+            coVerify(exactly = 1) { mockExecutor.execute(any(), any(), any()) }
+        }
+
+    @Test
     fun `a soft run deadline that passes before the first step starts no stop phase`() =
         runTest {
             every { mockSession.runDeadline } returns
