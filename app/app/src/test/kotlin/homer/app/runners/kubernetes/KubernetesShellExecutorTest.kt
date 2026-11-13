@@ -1419,9 +1419,8 @@ class KubernetesShellExecutorTest {
     private fun isSignalling(argv: List<String>) = argv.getOrNull(3) == "homer-signal"
 
     /**
-     * `waitFor` of a process that has not exited: it waits, as the real one does, then answers false. An
-     * instant false busy-spins the executor's poll loop for the step's whole timeout, and mockk records
-     * every call with its stack trace (about a million a second, held until the suite ends).
+     * `waitFor` of a not-exited process: it waits (capped at [STILL_RUNNING_WAIT_MS]), then answers false.
+     * An instant false busy-spins the executor's poll loop for the step's whole timeout.
      */
     private fun stillRunning(
         timeout: Long,
