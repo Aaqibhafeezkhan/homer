@@ -173,6 +173,15 @@ This is the operational checklist; §4 is the task-level framing.
   not think of. A property failing on existing code is a bug report, not
   a test to weaken.
 
+- **A fake of a call that waits must wait.** A stub answering a timed
+  wait (`Process.waitFor(timeout, unit)`, an SSH channel's `waitFor`, a
+  poll) with "not yet" at once turns the caller's polling loop into a busy
+  spin: about 140,000 calls of the mocked method a second, each recorded
+  with its stack trace. Let it wait first, through `waitUnfinished`
+  (`homer.app.fixtures`), which sleeps the asked timeout capped at 50 ms.
+  `MockCallBudget` fails an `:app` test from 20,000 calls of one mock
+  method, and the `mock-calls` check warns from 1,000 (ADR-0082).
+
 TDD framing for bug fixes and refactors is in §4.
 
 ## 7. Architecture decisions → ADRs

@@ -2,6 +2,7 @@ package homer.app.runners.kubernetes
 
 import homer.app.exceptions.OutputCapExceededException
 import homer.app.exceptions.PodFailedDuringExecutionException
+import homer.app.fixtures.waitUnfinished
 import homer.app.infra.OutputLineFilter
 import homer.app.models.PodTermination
 import io.kubernetes.client.openapi.ApiException
@@ -108,7 +109,10 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                    waitUnfinished(firstArg(), secondArg())
+                    false
+                }
                 every { exitValue() } returns 137
                 every { destroyForcibly() } returns this
             }
@@ -1355,7 +1359,10 @@ class KubernetesShellExecutorTest {
                 every { inputStream } returns ByteArrayInputStream(ByteArray(0))
                 every { errorStream } returns ByteArrayInputStream(ByteArray(0))
                 every { outputStream } returns ByteArrayOutputStream()
-                every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+                every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                    waitUnfinished(firstArg(), secondArg())
+                    false
+                }
             }
         val client =
             KubernetesExecClient { _, _, argv, _ ->
@@ -1423,7 +1430,10 @@ class KubernetesShellExecutorTest {
             every { inputStream } returns ByteArrayInputStream(ByteArray(0))
             every { errorStream } returns ByteArrayInputStream(ByteArray(0))
             every { outputStream } returns ByteArrayOutputStream()
-            every { waitFor(any<Long>(), any<TimeUnit>()) } returns false
+            every { waitFor(any<Long>(), any<TimeUnit>()) } answers {
+                waitUnfinished(firstArg(), secondArg())
+                false
+            }
             every { exitValue() } returns 137
             every { destroyForcibly() } returns this
         }

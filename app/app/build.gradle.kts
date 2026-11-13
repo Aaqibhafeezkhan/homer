@@ -201,6 +201,20 @@ tasks.test {
     systemProperty("homer.queryPlans.dir", queryPlansDir.get().asFile.absolutePath)
     val queryPlansCaptureDir = queryPlansDir.get().asFile
     doFirst { queryPlansCaptureDir.deleteRecursively() }
+
+    // MockCallBudget (META-INF/services) bounds the calls one mock method takes in one test and
+    // lists the tests past its warning here for the `mock-calls` check (ADR-0082). Only it is
+    // autodetected: mockk-jvm registers its own MockKExtension, which stays opt-in per class.
+    systemProperty("junit.jupiter.extensions.autodetection.enabled", "true")
+    systemProperty("junit.jupiter.extensions.autodetection.include", "homer.app.fixtures.MockCallBudget")
+    val mockCallsDir = layout.buildDirectory.dir("reports/mock-calls")
+    outputs.dir(mockCallsDir).withPropertyName("mockCallsReport")
+    systemProperty("homer.mockCalls.dir", mockCallsDir.get().asFile.absolutePath)
+    val mockCallsReportDir = mockCallsDir.get().asFile
+    doFirst {
+        mockCallsReportDir.deleteRecursively()
+        mockCallsReportDir.mkdirs()
+    }
 }
 
 // Plans every statement :app:test captured and lists full scans of growing tables (ADR-0082).
