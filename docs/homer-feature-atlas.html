@@ -2134,11 +2134,13 @@ curl -X DELETE "$HOMER/api/v1/continuations/7"</code></pre>
           <h3>Dispatch limits <span class="where">server config</span></h3>
           <p><code>maxPending</code> caps pending dispatches and pending continuations, each counted separately;
             <code>defaultTtlSec</code> and <code>sweepIntervalSec</code> apply to both, joins included. Also the
-            capability-token TTL, maximum join fan-out and how long settled records are kept
+            capability-token TTL, maximum join fan-out, the maximum questions one grouped ask-and-dispatch may hold
+            (<code>maxGroupSize</code>) and how long settled records are kept
             (<code>settledRetentionSec</code>, 7 days by default).</p>
           <pre><code>server:
   dispatch: { maxPending: 100, defaultTtlSec: 86400,   # default: none
               resultTokenTtlSec: 3600, maxJoinSubs: 32,
+              maxGroupSize: 8,
               settledRetentionSec: 604800 }</code></pre>
         </article>
 

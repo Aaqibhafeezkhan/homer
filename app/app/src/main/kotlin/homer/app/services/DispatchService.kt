@@ -15,14 +15,11 @@ import homer.app.infra.reservedControlParams
 import homer.app.infra.validatePayloadParam
 import homer.app.models.Agent
 import homer.app.models.DispatchConfig
-import homer.app.services.QuestionsService.Question
-import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DispatchRepository
 import homer.app.services.persistence.RecordPage
 import io.opentelemetry.api.common.Attributes
 import kotlinx.coroutines.CancellationException
 import org.slf4j.Logger
-import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -116,44 +113,25 @@ internal class DispatchService(
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         val owner = targetGate.check(originProcessId, registration.agentName, agent, answerParam, params, effectiveTtl, "Dispatch")
         val now = nowSec()
-        val questionId = UUID.randomUUID().toString()
-        val question =
-            Question(
-                id = questionId,
-                processId = originProcessId,
-                agentName = registration.agentName,
-                text = text,
-                options = options,
-                status = QuestionStatus.OPEN,
-                createdAt = now,
-                dispatchBound = true,
-            )
+        val question = targetGate.questionRow(originProcessId, registration.agentName, text, options, now)
         val dispatch =
-            Dispatch(
-                id = 0,
-                questionId = questionId,
-                status = DispatchStatus.PENDING,
-                agentName = agent,
+            targetGate.dispatchRow(
+                questionId = question.id,
+                agent = agent,
                 answerParam = answerParam,
                 params = params,
                 originProcessId = originProcessId,
                 originAgentName = registration.agentName,
-                expiresAt = effectiveTtl?.let { now + it },
-                createdAt = now,
+                effectiveTtl = effectiveTtl,
+                now = now,
                 owner = owner,
-                // Captured now, read at fire: the target may be edited in between, and a
-                // value collected under `secret: true` must not become a trace tag or an
-                // unredacted API field because the flag was flipped. See ADR-0052.
-                secretInputKeys = agentsService.agents[agent]?.secretEnvNames,
-                // paramName counterpart of secretInputKeys — see Dispatch.secretParamNames.
-                secretParamNames = agentsService.agents[agent]?.secretParamNames,
             )
         val dispatchId =
             repository.create(question, dispatch, config.maxPending)
                 ?: throw TooManyPendingDispatchesException(config.maxPending)
         logger.info("Process {} registered dispatch {} -> agent '{}'", originProcessId, dispatchId, agent)
-        broadcaster.emit(ProcessEvent.QuestionAsked(originProcessId, questionId, registration.agentName))
-        return CreateResult(dispatchId, questionId)
+        broadcaster.emit(ProcessEvent.QuestionAsked(originProcessId, question.id, registration.agentName))
+        return CreateResult(dispatchId, question.id)
     }
 
     /**

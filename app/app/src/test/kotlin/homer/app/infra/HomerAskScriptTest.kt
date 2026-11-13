@@ -235,6 +235,29 @@ class HomerAskScriptTest {
         )
     }
 
+    // One row per `die` arm of the group parser no other case reaches: a malformed flag is a
+    // usage error (exit 2) that never reaches the network.
+    @Test
+    fun `ask-and-dispatch-group exits 2 without a request on a malformed flag`(
+        @TempDir dir: Path,
+    ) {
+        assumeShellAvailable()
+        val cases =
+            listOf(
+                listOf("ask-and-dispatch-group", "--agent", "handler", "--question") to "--question needs a value",
+                listOf("ask-and-dispatch-group", "--question", "q1", "--agent", "handler", "--what") to "unknown argument",
+                listOf("ask-and-dispatch-group", "--question", "q1", "--agent", "handler", "--param", "x") to "key=value",
+                listOf("ask-and-dispatch-group", "--question", "q1", "--agent", "handler", "--ttl", "abc") to
+                    "--ttl must be a non-negative integer",
+            )
+        for ((argv, expected) in cases) {
+            val result = runHomerAsk(argv, dir)
+            assertEquals(2, result.exit, "argv=$argv stderr=${result.stderr}")
+            assertTrue(expected in result.stderr, "'$expected' must be reported: ${result.stderr}")
+            assertFalse(dir.resolve("capture.json").exists(), "a usage error must not reach the network")
+        }
+    }
+
     private fun assumeShellAvailable() {
         assumeFalse(System.getProperty("os.name").lowercase().contains("win"))
         assumeTrue(Paths.get("/bin/sh").exists(), "POSIX sh required")

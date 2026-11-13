@@ -10,7 +10,6 @@ import homer.app.infra.validatePayloadParam
 import homer.app.models.DispatchConfig
 import homer.app.models.QuestionsConfig
 import homer.app.services.QuestionsService.Question
-import homer.app.services.QuestionsService.QuestionStatus
 import homer.app.services.persistence.DispatchRepository
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -89,38 +88,21 @@ internal class DispatchGroupService(
         val effectiveTtl = ttlSec ?: config.defaultTtlSec
         val owner = targetGate.check(originProcessId, registration.agentName, agent, answerParam, params, effectiveTtl, "Dispatch group")
         val now = nowSec()
-        val members =
-            questions.map {
-                Question(
-                    id = UUID.randomUUID().toString(),
-                    processId = originProcessId,
-                    agentName = registration.agentName,
-                    text = it.text,
-                    options = it.options,
-                    status = QuestionStatus.OPEN,
-                    createdAt = now,
-                    dispatchBound = true,
-                )
-            }
+        val members = questions.map { targetGate.questionRow(originProcessId, registration.agentName, it.text, it.options, now) }
         val dispatch =
-            Dispatch(
-                id = 0,
+            targetGate.dispatchRow(
                 // A sentinel, not a question id: a GROUP row names no single question, and
                 // `dispatches.question_id` is uniquely indexed, so it can be neither empty nor
                 // shared with a member. The ordered set is the member table. See ADR-0109.
                 questionId = GROUP_QUESTION_ID_PREFIX + UUID.randomUUID(),
-                status = DispatchStatus.PENDING,
-                agentName = agent,
+                agent = agent,
                 answerParam = answerParam,
                 params = params,
                 originProcessId = originProcessId,
                 originAgentName = registration.agentName,
-                expiresAt = effectiveTtl?.let { now + it },
-                createdAt = now,
+                effectiveTtl = effectiveTtl,
+                now = now,
                 owner = owner,
-                // Captured now, read at fire — see Dispatch.secretInputKeys / ADR-0052.
-                secretInputKeys = agentsService.agents[agent]?.secretEnvNames,
-                secretParamNames = agentsService.agents[agent]?.secretParamNames,
                 kind = DispatchKind.GROUP,
             )
         val dispatchId = insertGroup(members, dispatch)

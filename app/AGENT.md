@@ -3643,7 +3643,7 @@ commands:
 > a model may otherwise reach for Claude Code's own question tool,
 > which has no operator on the other end in headless runs.
 
-The `homer-questions` MCP server exposes five tools:
+The `homer-questions` MCP server exposes six tools:
 
 | Tool | Behavior |
 |------|----------|
@@ -3723,7 +3723,7 @@ process's.
 The MCP equivalent is the `ask_and_dispatch` tool (args: `text`, `agent`,
 `answerParam`, `options`, `params`, `ttlSec`) exposed by the
 `homer-questions` MCP server alongside `ask_user`, `check_answer`,
-`ask_user_and_wait`, and `check_messages`.
+`ask_user_and_wait`, `check_messages`, and `ask_and_dispatch_group`.
 
 #### Grouped ask and dispatch
 

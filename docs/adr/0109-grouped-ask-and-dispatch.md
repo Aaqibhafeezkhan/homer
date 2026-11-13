@@ -94,7 +94,14 @@ where it would otherwise abort startup reconciliation.
 anything else and before any row is written, so a refused group is never
 observably partial. The group counts against the global PENDING cap and against
 the origin process's open-question cap — the latter is the bound on this call's
-own multiplication, N questions at once.
+own multiplication, N questions at once. That open-question check counts only
+the origin process's `dispatch_bound = 1` questions and only group registration
+runs it: ordinary asks count their `dispatch_bound = 0` rows against the same
+key, and a single dispatch's creation checks nothing. Counting every open
+question of the process was rejected because unrelated inbox traffic could then
+deny a group registration, and extending the check to single-dispatch creation
+was rejected because it would tighten ADR-0021's existing behavior, which this
+change leaves unchanged.
 
 ### Consequences
 
@@ -138,6 +145,14 @@ own multiplication, N questions at once.
 - Good: no server change.
 - Bad: the client would hold the "did everyone answer" state that the server
   already owns durably, and a client crash loses the group.
+
+### One multi-field question
+
+- Good: one operator interaction; no member rows to order.
+- Bad: it replaces the per-question answer surface with a payload form the
+  console inbox does not have, so the questions could no longer be answered
+  independently through the existing route — the shape this change is built
+  around.
 
 ## More Information
 

@@ -280,9 +280,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is InvocationCycleDetectedException,
         is RunnerRegistrationRejectedException,
         is CooldownKeyInvalidException,
-        -> {
-            requestErrorStatus(e)
-        }
+        -> requestErrorStatus(e)
 
         is RunnerTransferTimeoutException,
         is RunnerTransferTooLargeException,
@@ -313,9 +311,7 @@ internal fun homerExceptionStatus(e: HomerException): HttpStatusCode =
         is MaintenanceWaitTimeoutException,
         is ServerDrainingException,
         is UnresolvedLockKeyPlaceholderException,
-        -> {
-            transferCapacityOrServerStatus(e)
-        }
+        -> transferCapacityOrServerStatus(e)
     }
 
 /**

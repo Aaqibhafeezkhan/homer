@@ -21,6 +21,7 @@ internal fun upgradeSchema(
     migrateToV28(st, current)
     migrateToV30(st, current)
     migrateToV31(st, current)
+    migrateToV32(st, current)
 }
 
 /** The column names of [table], from `PRAGMA table_info`. */
@@ -335,20 +336,16 @@ private fun migrateToV30(
 /**
  * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need (ADR-0106),
  * what a graceful stop did to the run — its cause, the interrupted step and the stop steps'
- * outcome, as one JSON blob (ADR-0108) — the indexes of the `pending_hooks` table (ADR-0107),
- * and grouped ask-and-dispatch (ADR-0109): `dispatches.kind` and the `dispatch_group_questions`
- * child table's member-lookup index. One step for all four: the features landed together, so a
- * database stamped `user_version = 31` skips the whole span. Each missing table is created by
+ * outcome, as one JSON blob (ADR-0108) — and the indexes of the `pending_hooks` table
+ * (ADR-0107). One step for all three: the features landed together, so a database stamped
+ * `user_version = 31` skips the whole span. Each missing table is created by
  * `SchemaUtils.create` above.
  *
- * No backfill for `cooldown_key`, `stop` or `dispatches.kind`: a run that ended before this
- * version was counted per agent and was never stopped gracefully, and a dispatch written before
- * it asked a single question, so a guessed subject or cause is worse than none. `SINGLE` is the
- * truthful default — every row that existed before this version is a one-question dispatch, and
- * a database that never uses groups keeps exactly the behaviour it had. Null `cooldown_key`
- * simply means "no key", so a keyed cooldown ignores the row and a keyless one still counts it.
- * Names match `Tables.kt`; `SchemaUtils.create` only indexes a table it creates, so the
- * migration creates every index by hand.
+ * No backfill for `cooldown_key` or `stop`: a run that ended before this version was counted
+ * per agent and was never stopped gracefully, so a guessed subject or cause is worse than none.
+ * Null `cooldown_key` simply means "no key", so a keyed cooldown ignores the row and a keyless
+ * one still counts it. Names match `Tables.kt`; `SchemaUtils.create` only indexes a table it
+ * creates, so the migration creates every index by hand.
  */
 private fun migrateToV31(
     st: Statement,
@@ -371,6 +368,28 @@ private fun migrateToV31(
         )
         st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_process_id ON pending_hooks (process_id)")
         st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_status_created ON pending_hooks (status, created_at)")
+    }
+}
+
+/**
+ * v31→v32 adds grouped ask-and-dispatch (ADR-0109): the `dispatches.kind` column and the
+ * `dispatch_group_questions` child table's member-lookup index. Its own version, not the
+ * cooldown release's v31 (the cooldown, stop and pending-hooks step): a database that release
+ * already stamped `user_version = 31` skips every step guarded below 32 when it has no column
+ * to add, so folding into v31 would leave such a database without the column for good — the
+ * same reason v30 got its own version instead of folding into v29.
+ *
+ * No backfill for `dispatches.kind`: a dispatch written before this version asked a single
+ * question, so `SINGLE` is the truthful default — every row that existed before it is a
+ * one-question dispatch, and a database that never uses groups keeps exactly the behaviour it
+ * had. Names match `Tables.kt`; `SchemaUtils.create` only indexes a table it creates, so the
+ * migration creates the index by hand.
+ */
+private fun migrateToV32(
+    st: Statement,
+    current: Int,
+) {
+    if (current in 1 until 32) {
         // Grouped ask-and-dispatch (ADR-0109). SchemaUtils.create above already created the
         // dispatch_group_questions table (create-if-missing) but never ALTERs an existing one,
         // so the column and the child table's member-lookup index are added by hand.

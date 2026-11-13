@@ -2,6 +2,7 @@ package homer.app.services
 
 import homer.app.exceptions.DispatchAgentNotFoundException
 import homer.app.exceptions.DispatchGroupTooLargeException
+import homer.app.exceptions.ValidationException
 import homer.app.fixtures.TestFixtures.firstText
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -159,5 +160,43 @@ class QuestionsMcpGroupToolTest {
             assertEquals("ask_and_dispatch_group", tool.tool.name)
             assertTrue(tool.tool.description!!.contains("At most 3 questions per group."))
             assertEquals(listOf("questions", "agent"), tool.tool.inputSchema.required)
+        }
+
+    // The parser's malformed-input semantics, pinned so a change to them is a decision: a
+    // non-numeric `ttlSec` reads as "no TTL", a non-object `params` is ignored, and a
+    // non-primitive param value is dropped.
+    @Test
+    fun `the argument parser's malformed ttlSec and params shapes take their fallback semantics`() {
+        assertEquals(null, buildJsonObject { put("ttlSec", "abc") }.ttlSecArg())
+        assertEquals(30, buildJsonObject { put("ttlSec", 30.7) }.ttlSecArg())
+        assertEquals(-30, buildJsonObject { put("ttlSec", -30) }.ttlSecArg())
+        assertEquals(emptyMap<String, String>(), buildJsonObject { put("params", JsonPrimitive("nope")) }.stringParams())
+        assertEquals(
+            mapOf("p1" to "v1"),
+            buildJsonObject {
+                put(
+                    "params",
+                    buildJsonObject {
+                        put("p1", "v1")
+                        put("bad", buildJsonArray { add(JsonPrimitive("x")) })
+                    },
+                )
+            }.stringParams(),
+        )
+    }
+
+    // A negative `ttlSec` is not a parser error: the tool passes it through for the service's
+    // TTL gate to refuse, and the refusal reaches the agent as a tool error.
+    @Test
+    fun `ask_and_dispatch_group passes a negative ttlSec through for the service to refuse`() =
+        runTest {
+            coEvery {
+                dispatchGroupService.create(5, any(), "handler", "answer", emptyMap(), -30)
+            } throws ValidationException("ttlSec must be > 0; got -30", "ttlSec")
+
+            val result = call(args(ttlSec = -30))
+
+            assertTrue(result.isError == true)
+            assertTrue(firstText(result).contains("ttlSec must be > 0"), firstText(result))
         }
 }
