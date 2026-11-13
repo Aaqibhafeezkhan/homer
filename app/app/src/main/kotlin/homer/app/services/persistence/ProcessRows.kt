@@ -63,6 +63,41 @@ internal fun encodeRunStop(value: RunStop) = columnJson.encodeToString(RunStop.s
 
 internal fun decodeRunStop(text: String) = columnJson.decodeFromString(RunStop.serializer(), text)
 
+// The four columns a status write needs — status for its guard, history to append to, and
+// agent_name/owner for the caller's broadcast and the hook rows it records — or null when the
+// row is gone. Shared by the two transitions so the projection cannot drift; projected, not
+// `selectAll()`, because the write runs under the write lock and decoding the blobs it is
+// about to rewrite is pure cost. See ADR-0020 (2026-09-29 amendment).
+internal fun transitionRowTx(processId: Int): ResultRow? =
+    Processes
+        .select(Processes.status, Processes.history, Processes.agentName, Processes.owner)
+        .where { Processes.id eq processId }
+        .singleOrNull()
+
+// The tail both status writes share: the hook rows the transition records for [status], and the
+// result the caller gets — the run's agent name, which the caller cancels the job and broadcasts
+// on, plus what [homer.app.services.HookService] fires after the commit and what the cap shed.
+// Runs inside the caller's transaction, like the write it trails. See ADR-0107.
+internal fun settledTransitionTx(
+    processId: Int,
+    row: ResultRow,
+    status: ProcessStatus,
+    hookRecording: HookRecording?,
+    nowSec: Long,
+): ProcessRepository.TransitionResult =
+    ProcessRepository.TransitionResult(
+        updated = true,
+        agentName = row[Processes.agentName],
+        // A write that leaves the status where it was is not a second reach of it: a run's own
+        // start re-asserts CREATED right after the INSERT (ProcessExecutor's kill guard), and
+        // recording that again would fire the CREATED hooks twice for one run. See ADR-0107.
+        hooks =
+            hookRecording
+                .takeIf { row[Processes.status] != status.name }
+                ?.record(processId, row[Processes.agentName], status, row[Processes.owner], nowSec)
+                ?: RecordedHooks(),
+    )
+
 // Tags of one run, in tag order — guaranteed by this ORDER BY, served by the
 // (process_id, tag) primary key with no sort step. Callers that don't surface
 // tags (purge/sweep/reconciliation) skip this read and pass emptyList.

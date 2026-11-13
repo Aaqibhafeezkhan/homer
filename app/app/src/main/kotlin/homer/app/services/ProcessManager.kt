@@ -17,10 +17,12 @@ import homer.app.runners.kubernetes.ActiveRunIds
 import homer.app.services.persistence.DefaultProcessRecordReads
 import homer.app.services.persistence.DefaultProcessRetentionRecords
 import homer.app.services.persistence.DefaultProcessRunRecords
+import homer.app.services.persistence.HookRecording
 import homer.app.services.persistence.ProcessRecordReads
 import homer.app.services.persistence.ProcessRepository
 import homer.app.services.persistence.ProcessRetentionRecords
 import homer.app.services.persistence.ProcessRunRecords
+import homer.app.services.persistence.RecordedHooks
 import homer.app.services.persistence.SettlementSwap
 import homer.app.services.persistence.completeStep
 import homer.app.services.persistence.remove
@@ -63,6 +65,16 @@ class ProcessManager(
     // Capacity eviction skips the WorkspacePurgeService path, so per-process
     // state held elsewhere (question registrations) must be released here.
     private val onProcessEvicted: suspend (Int) -> Unit = {},
+    // The agent-level hooks a status transition records, and the cap on pending rows. Resolved
+    // per transition from the current agent catalog, so a reload between a run's start and its
+    // transition is honoured; the lookup reads no database, so it is safe inside the write
+    // transaction. Null = record none. See ADR-0107.
+    private val hookRecording: () -> HookRecording? = { null },
+    // Fires the hook rows a transition just recorded, and logs the entries the pending cap shed.
+    // Called after the write's commit, never inside it: a fire starts a run, whose own row write
+    // must not nest in this transaction, and a log line inside it would be file IO under the
+    // write lock (SQLite rule 3).
+    private val onHooksRecorded: suspend (RecordedHooks) -> Unit = {},
 ) : ProcessRecordReads by DefaultProcessRecordReads(repository),
     ProcessRetentionRecords by DefaultProcessRetentionRecords(repository),
     ProcessRunRecords by DefaultProcessRunRecords(repository),
@@ -124,13 +136,15 @@ class ProcessManager(
         reason: String,
     ) {
         val job = jobRegistry.get(processId)
-        val killedAgent = repository.killTransition(processId, Clock.System.now().epochSeconds)
+        val killed = repository.killTransition(processId, Clock.System.now().epochSeconds, hookRecording())
+        val killedAgent = killed.agentName
         if (killedAgent != null) {
             logger.info("Killing process: {}, reason: {}", processId, reason)
             job?.cancel(CancellationException(reason.ifEmpty { "Killed !" }))
             broadcaster.emit(ProcessEvent.StatusChanged(processId, ProcessStatus.KILLED, killedAgent))
             broadcaster.emit(ProcessEvent.CurrentCommandChanged(processId, null, null))
         }
+        onHooksRecorded(killed.hooks)
     }
 
     // The facade forwards ProcessRepository.obtainProcessId's optional parameters one for one.
@@ -160,6 +174,7 @@ class ProcessManager(
                     parentProcessId,
                     rootProcessId,
                     tags,
+                    hookRecording = hookRecording(),
                 )
             } catch (e: ProcessManagerAtCapacityException) {
                 logger.warn(
@@ -184,6 +199,9 @@ class ProcessManager(
             unappliedSettlements.remove(evicted.id)
             onProcessEvicted(evicted.id)
         }
+        // After the INSERT's commit: a CREATED hook fires here, and the run it starts writes
+        // its own row in its own transaction. See ADR-0107.
+        onHooksRecorded(result.hooks)
         return result.processId
     }
 
@@ -237,10 +255,20 @@ class ProcessManager(
         newStatus: ProcessStatus,
         guard: Set<ProcessStatus>?,
     ): Boolean {
-        val result = repository.transitionStatus(processId, newStatus, Clock.System.now().epochSeconds, guard)
+        val result =
+            repository.transitionStatus(
+                processId,
+                newStatus,
+                Clock.System.now().epochSeconds,
+                guard,
+                hookRecording(),
+            )
         if (result.updated) {
             result.agentName?.let { broadcaster.emit(ProcessEvent.StatusChanged(processId, newStatus, it)) }
         }
+        // After the status write's commit, and only for a write that applied: a guard-rejected
+        // CAS records no hook rows, so there is nothing to fire. See ADR-0107.
+        onHooksRecorded(result.hooks)
         return result.updated
     }
 

@@ -152,6 +152,7 @@ class DatabaseService(
                 Dispatches,
                 Continuations,
                 ContinuationWatches,
+                PendingHooks,
                 ResultTokens,
                 CostEntries,
                 ServerMeta,

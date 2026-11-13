@@ -1,0 +1,5 @@
+name: hook-echo-deny
+description: Hook target a scoped owner may not start; a grant-denied hook must never start it
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo should-never-run'"

@@ -53,6 +53,7 @@ import homer.app.services.CronSchedulerService
 import homer.app.services.DispatchService
 import homer.app.services.DispatchSweepService
 import homer.app.services.GraphInspectRunner
+import homer.app.services.HookService
 import homer.app.services.LangGraphInspectService
 import homer.app.services.LangGraphRunStatusService
 import homer.app.services.LlmEventStreamService
@@ -90,6 +91,9 @@ import kotlin.io.path.Path
 /**
  * Main Koin DI module for the application
  * Defines all service dependencies and their lifecycles
+ *
+ * The run-lifecycle core, the agent-level hook layer and the runner registry live in their own
+ * modules (`ProcessWiring`, `HookWiring`, `RunnerWiring`) — this file is at its size limit.
  */
 val appModule =
     module {
@@ -325,26 +329,13 @@ val appModule =
         }
 
         single {
-            val config = get<AppConfig>()
-            val questionsService = get<QuestionsService>()
-            ProcessManager(
-                repository = get(),
-                jobRegistry = get(),
-                logger = get { parametersOf("homer.app.services.ProcessManager") },
-                broadcaster = get(),
-                workspaceRoot = Path(get<TextCompiler>().replaceArguments(config.workspaceRootPath, config.globalEnv)),
-                onProcessEvicted = questionsService::removeForProcess,
-                maxProcesses = config.server.maxProcesses,
-            )
-        }
-
-        single {
             StartupReconciliation(
                 processRepository = get(),
                 questionsService = get(),
                 runMessagesService = get<RunMessagesService>(),
                 dispatchService = get(),
                 continuationService = get(),
+                hookService = get(),
                 agentsService = get(),
                 logger = get { parametersOf("homer.app.services.StartupReconciliation") },
             )
@@ -456,6 +447,7 @@ val appModule =
             ContinuationSweepService(
                 continuationService = get(),
                 resultTokenService = get(),
+                hookService = get(),
                 intervalSec = get<AppConfig>().server.dispatch.sweepIntervalSec,
                 logger = get { parametersOf("homer.app.services.ContinuationSweepService") },
             )

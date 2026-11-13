@@ -606,6 +606,7 @@ class WorkspacePurgeServiceTest {
                 mockk<RunMessageExpiry>(relaxed = true),
                 mockk(relaxed = true),
                 mockk(relaxed = true),
+                TestFixtures.mockHookService(),
                 agentsService,
                 TestFixtures.mockLogger(),
             ) { now - 2 * day }.reconcile()

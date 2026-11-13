@@ -426,6 +426,44 @@ internal object ContinuationWatches : Table("continuation_watches") {
 }
 
 /**
+ * A durable agent-level status hook: the row that makes "a run of the declaring agent
+ * reached [triggeringStatus], so [agentName] must start" survive a restart. Written in the
+ * same transaction as the status write that caused it, claimed (PENDING→DISPATCHING) before
+ * the run starts, and settled DISPATCHED/FAILED/DROPPED. No TTL: a hook is not a promise to
+ * a caller with a deadline, so `expires_at` is always null and the settle-and-prune retention
+ * is the only bound on a row's life. See ADR-0107.
+ */
+internal object PendingHooks : Table("pending_hooks"), FiredRecordTable {
+    override val id = integer("id").autoIncrement()
+    val processId = integer("process_id")
+    val declaringAgent = varchar("declaring_agent", 255)
+    override val status = varchar("status", 16)
+    override val agentName = varchar("agent_name", 255)
+    override val owner = text("owner").nullable()
+    override val createdAt = long("created_at")
+    override val expiresAt = long("expires_at").nullable()
+
+    /** The run status whose transition recorded this row. */
+    val triggeringStatus = varchar("triggering_status", 16)
+
+    val fireAttempts = integer("fire_attempts").default(0)
+    val nextAttemptAt = long("next_attempt_at").nullable()
+    val firedProcessId = integer("fired_process_id").nullable()
+    val firedAt = long("fired_at").nullable()
+    val error = text("error").nullable()
+
+    // v31: the due-retry sweep and the settled-row prune, plus the per-run lookup the
+    // fire path and the boot replay use.
+    init {
+        index("pending_hooks_status_next_attempt", false, status, nextAttemptAt)
+        index("pending_hooks_process_id", false, processId)
+        index("pending_hooks_status_created", false, status, createdAt)
+    }
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+/**
  * Append-only Claude spend ledger: one row per accounted Claude attempt (success,
  * failure, or shell-aborted), not only successful commands. Backs the cost-cap
  * windows and the monthly / all-time cost statistics. Rows are never pruned —

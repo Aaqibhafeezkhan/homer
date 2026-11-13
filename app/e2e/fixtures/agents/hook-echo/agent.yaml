@@ -1,0 +1,5 @@
+name: hook-echo
+description: Hook target; echoes the HMR_HOOK_* metadata and the flow ids into its stdout
+commands:
+  - !<cmd>
+    cmd: "sh -c 'echo \"hook_process=$HMR_HOOK_PROCESS_ID hook_agent=$HMR_HOOK_AGENT_NAME hook_status=$HMR_HOOK_STATUS hook_depth=$HMR_HOOK_DEPTH parent=$HMR_PARENT_PROCESS_ID root=$HMR_ROOT_PROCESS_ID\"'"

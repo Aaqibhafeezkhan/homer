@@ -68,8 +68,12 @@ internal object AgentDirs {
 
     private val logger = LoggerFactory.getLogger(AgentDirs::class.java)
 
-    /** The agent-name charset (AGENT.md § Agent Fields, `name` row): a directory or `agent.name` outside it is rejected. */
-    val AGENT_NAME_PATTERN: Regex = Regex("^[a-zA-Z0-9_-]+$")
+    /**
+     * The agent-name charset (AGENT.md § Agent Fields, `name` row): a directory or `agent.name`
+     * outside it is rejected. An alias of the kernel pattern ([homer.app.models.AGENT_NAME_PATTERN])
+     * so the scanner and the hook-target check cannot drift apart.
+     */
+    val AGENT_NAME_PATTERN: Regex = homer.app.models.AGENT_NAME_PATTERN
 
     /** The recognized definition-file names, `agent.json` first so it wins. */
     val DEFINITION_FILE_NAMES: List<String> = listOf("agent.json", "agent.yaml")

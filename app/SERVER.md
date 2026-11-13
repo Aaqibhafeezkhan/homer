@@ -434,6 +434,7 @@ server:
 | `questions` | `QuestionsConfig` | No | `{maxWaitSec=86400, maxOpenPerProcess=10, maxTextLength=10000, maxOptions=20, maxConcurrentWaitsPerProcess=32}` | Human-in-the-loop questions asked by running commands — see [Operator questions](#operator-questions). |
 | `messages` | `RunMessagesConfig` | No | `{maxTextLength=10000, maxPerRun=100}` | Per-run inbox limits for operator messages sent to a running run — see [Run messages](#run-messages). |
 | `dispatch` | `DispatchConfig` | No | `{maxPending=100, defaultTtlSec=null, sweepIntervalSec=60, settledRetentionSec=604800, resultTokenTtlSec=3600, maxJoinSubs=32}` | Ask-and-dispatch bounds and TTLs — see [Ask-and-dispatch](#ask-and-dispatch). |
+| `hooks` | `HookConfig` | No | `{maxPending=200, maxChainDepth=8, settledRetentionSec=604800}` | Bounds on agent-declared status hooks — see [Status hooks](#status-hooks). |
 | `langGraph` | `LangGraphConfig` | No | `{stateDir=null}` | LangGraph runtime settings (durable checkpoint root) — see [LangGraph](#langgraph). |
 | `agentGrants` | `Map<String, List<Grant>>` | No | `{}` | Per-agent delegation: which target agents an agent's own nested dispatches may reach, keyed by the dispatching agent's name — see [Grants and roles](#grants-and-roles). |
 | `localRunner` | `LocalRunnerConfig` | No | `{enabled=true, tags=[], concurrency=null}` | The built-in `local` runner: `enabled` (`false` registers none, so no run executes in the server's container), the `tags` it serves for `runnerTags` agents and `concurrency` (runs at once; `null` = unbounded). `tags` and `concurrency` are refused while `enabled` is `false`. See [Runner claim queue](#runner-claim-queue). |
@@ -717,6 +718,32 @@ is purged, or is evicted. They are cleaned up only when the dispatch is
 answered, cancelled, or TTL-swept. Starting from schema v26 the settled-row
 prune is a further cleanup path: a settled dispatch is deleted with its
 question once its `createdAt` passes `server.dispatch.settledRetentionSec`.
+
+### Status hooks
+
+`server.hooks` bounds the agent-declared status hooks (`hooks` on an agent
+definition): a run's status transition records one durable row per matching
+hook entry, and Homer starts the target agent after that write commits. See
+[AGENT.md](AGENT.md#status-hooks) for the declaration and
+[ADR-0107](../docs/adr/0107-agent-status-hooks.md) for the delivery model.
+
+```yaml
+server:
+  hooks:
+    maxPending: 200            # global cap on PENDING hook rows (default 200)
+    maxChainDepth: 8           # longest chain of hook-started runs Homer follows (default 8)
+    settledRetentionSec: 604800  # delete settled hooks this long after creation (default 7 days, floor 3600)
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `maxPending` | `Int` | No | `200` | Global cap on the number of simultaneously PENDING hook rows. A status transition that would push the table past it **drops** the excess with a log line — the transition still commits, and the triggering run's own status never changes because a hook could not be queued. Must be `> 0`. |
+| `maxChainDepth` | `Int` | No | `8` | Longest chain of hook-started runs Homer will follow. A hook run carries its own depth as `HMR_HOOK_DEPTH`, so the fire of a run that is already this deep is dropped rather than attempted — the next attempt would be refused for the same reason. This complements the load-time cycle rejection, which cannot see a hook target reloaded after the declaring agent loaded. Must be `>= 1`. |
+| `settledRetentionSec` | `Long` | No | `604800` | How long (seconds) a settled hook — any status but `PENDING` and `DISPATCHING` — is kept, measured from its `createdAt`; the continuation sweep tick then deletes it. Minimum `3600`. |
+
+Unlike `server.dispatch.maxPending`, the pending cap here does not reject the
+caller: a status transition is not a request, so there is nothing to answer
+`429` to. The surplus is shed and logged.
 
 ### LangGraph
 

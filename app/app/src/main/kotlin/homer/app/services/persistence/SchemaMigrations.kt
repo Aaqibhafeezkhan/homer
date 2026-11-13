@@ -334,12 +334,17 @@ private fun migrateToV30(
 
 /**
  * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need (ADR-0106),
- * and what a graceful stop did to the run: its cause, the interrupted step and the stop steps'
- * outcome, as one JSON blob (ADR-0108). No backfill for either: a run that ended before this
- * version was counted per agent and was never stopped gracefully, and a guessed subject or
- * cause is worse than none — null simply means "no key", so a keyed cooldown ignores the row
- * and a keyless one still counts it. Names match `Tables.kt`; `SchemaUtils.create` only
- * indexes a table it creates, so the migration creates both indexes by hand.
+ * what a graceful stop did to the run — its cause, the interrupted step and the stop steps'
+ * outcome, as one JSON blob (ADR-0108) — and the indexes of the `pending_hooks` table
+ * (ADR-0107). One step for all three: the features landed together, so a database stamped
+ * `user_version = 31` skips the whole span. Each missing table is created by
+ * `SchemaUtils.create` above.
+ *
+ * No backfill for `cooldown_key` or `stop`: a run that ended before this version was counted
+ * per agent and was never stopped gracefully, and a guessed subject or cause is worse than
+ * none — null simply means "no key", so a keyed cooldown ignores the row and a keyless one
+ * still counts it. Names match `Tables.kt`; `SchemaUtils.create` only indexes a table it
+ * creates, so the migration creates every index by hand.
  */
 private fun migrateToV31(
     st: Statement,
@@ -353,5 +358,14 @@ private fun migrateToV31(
                 "ON processes (agent_name, cooldown_key, status, ended_at)",
         )
         addColumnIfMissing(st, "processes", "stop", "TEXT")
+        // v30→v31 adds the pending_hooks table (ADR-0107). SchemaUtils.create above already
+        // created it on a database that did not have it; the indexes are created here by hand
+        // because SchemaUtils.create only indexes a table it creates. Names and definitions
+        // match the PendingHooks declaration in Tables.kt.
+        st.execute(
+            "CREATE INDEX IF NOT EXISTS pending_hooks_status_next_attempt ON pending_hooks (status, next_attempt_at)",
+        )
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_process_id ON pending_hooks (process_id)")
+        st.execute("CREATE INDEX IF NOT EXISTS pending_hooks_status_created ON pending_hooks (status, created_at)")
     }
 }

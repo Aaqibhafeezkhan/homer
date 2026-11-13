@@ -3,6 +3,7 @@ package homer.app.services
 import homer.app.fixtures.PersistenceTestSupport
 import homer.app.fixtures.TestFixtures
 import homer.app.infra.ProcessJobRegistry
+import homer.app.models.AgentHook
 import homer.app.models.CostSource
 import homer.app.models.ExecutionInfo
 import homer.app.models.FALLBACK_REASON_SESSION_FIGURE_PENDING
@@ -10,7 +11,10 @@ import homer.app.models.LlmAccounting
 import homer.app.models.PodPhase
 import homer.app.models.ProcessStatus
 import homer.app.models.RunnerState
+import homer.app.services.persistence.HookRecording
 import homer.app.services.persistence.ProcessRepository
+import homer.app.services.persistence.RecordedHooks
+import homer.app.services.persistence.ShedHooks
 import io.mockk.Runs
 import io.mockk.every
 import io.mockk.just
@@ -52,6 +56,8 @@ class ProcessManagerTest {
         maxProcesses: Int = ProcessManager.DEFAULT_MAX_PROCESSES,
         onProcessEvicted: suspend (Int) -> Unit = {},
         workspaceRoot: Path = Path.of("."),
+        hookRecording: () -> HookRecording? = { null },
+        onHooksRecorded: suspend (RecordedHooks) -> Unit = {},
     ): ProcessManager {
         val registry = ProcessJobRegistry()
         val repository = ProcessRepository(PersistenceTestSupport.tempDatabase(), registry)
@@ -62,6 +68,8 @@ class ProcessManagerTest {
             maxProcesses = maxProcesses,
             workspaceRoot = workspaceRoot,
             onProcessEvicted = onProcessEvicted,
+            hookRecording = hookRecording,
+            onHooksRecorded = onHooksRecorded,
         )
     }
 
@@ -1495,5 +1503,148 @@ class ProcessManagerTest {
         runTest {
             processManager.addCost(424242, 5.0, CostSource.CLI)
             // Just shouldn't throw; nothing to assert beyond that.
+        }
+
+    // ========== Status-hook wiring (ADR-0107) ==========
+
+    /** A recording that declares one hook for [status] only, so a write's own status picks it up. */
+    private fun recording(
+        status: ProcessStatus,
+        target: String = "notifier",
+    ) = HookRecording(
+        hooksFor = { _, written -> if (written == status) listOf(AgentHook(written, target)) else emptyList() },
+        maxPending = 10,
+    )
+
+    @Test
+    fun `the transitions that record a hook row hand its id to the hook service after the commit`() =
+        runTest {
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = { recording(ProcessStatus.CREATED) },
+                    onHooksRecorded = { handed += it },
+                )
+
+            val id = manager.obtainProcessId("declarer", owner = "alice")
+
+            // The CREATED write recorded exactly one row, and its id is what the callback got.
+            assertEquals(
+                1,
+                handed
+                    .single()
+                    .rows
+                    .map { it.id }
+                    .size,
+            )
+            assertTrue(
+                handed
+                    .single()
+                    .rows
+                    .map { it.id }
+                    .single() > 0,
+            )
+            assertEquals(ProcessStatus.CREATED, manager.getProcessStatus(id))
+        }
+
+    @Test
+    fun `a status write hands the rows it recorded to the hook service and a silent status hands none`() =
+        runTest {
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = { recording(ProcessStatus.FINISHED) },
+                    onHooksRecorded = { handed += it },
+                )
+            val id = manager.obtainProcessId("declarer")
+
+            manager.setProcessStatus(id, ProcessStatus.WORKING)
+            manager.setProcessStatus(id, ProcessStatus.FINISHED)
+
+            // One hand-over per transition, in order; only the FINISHED write recorded a row.
+            assertEquals(listOf(0, 0, 1), handed.map { it.rows.map { it.id }.size })
+        }
+
+    @Test
+    fun `a status write over the pending cap hands the shed entries over with no ids`() =
+        runTest {
+            // A cap-shedding transition still hands its outcome over, so the hook service can log
+            // the drop after the commit: nothing else would report it. See ADR-0107.
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = {
+                        HookRecording(
+                            hooksFor = { _, written ->
+                                if (written == ProcessStatus.CREATED) listOf(AgentHook(written, "notifier")) else emptyList()
+                            },
+                            maxPending = 0,
+                        )
+                    },
+                    onHooksRecorded = { handed += it },
+                )
+
+            manager.obtainProcessId("declarer")
+
+            assertEquals(
+                listOf(ShedHooks(count = 1, agentName = "declarer", status = ProcessStatus.CREATED)),
+                handed.single().shed,
+            )
+            assertEquals(emptyList(), handed.single().rows.map { it.id })
+        }
+
+    @Test
+    fun `killProcess hands the KILLED hook row to the hook service`() =
+        runTest {
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = { recording(ProcessStatus.KILLED) },
+                    onHooksRecorded = { handed += it },
+                )
+            val id = manager.obtainProcessId("declarer")
+            manager.setProcessStatus(id, ProcessStatus.WORKING)
+
+            manager.killProcess(id, "operator kill")
+
+            assertEquals(
+                1,
+                handed
+                    .last()
+                    .rows
+                    .map { it.id }
+                    .size,
+            )
+        }
+
+    @Test
+    fun `a guard-rejected CAS records no hook row and hands none over`() =
+        runTest {
+            val handed = mutableListOf<RecordedHooks>()
+            val manager =
+                newManager(
+                    hookRecording = { recording(ProcessStatus.FINISHED) },
+                    onHooksRecorded = { handed += it },
+                )
+            val id = manager.obtainProcessId("declarer")
+            manager.setProcessStatus(id, ProcessStatus.WORKING)
+            manager.killProcess(id, "operator kill")
+            handed.clear()
+
+            assertFalse(manager.compareAndSetStatus(id, setOf(ProcessStatus.WORKING), ProcessStatus.FINISHED))
+
+            assertEquals(listOf(RecordedHooks()), handed)
+        }
+
+    @Test
+    fun `a manager with no recording hands an empty outcome over on every transition`() =
+        runTest {
+            val handed = mutableListOf<RecordedHooks>()
+            val manager = newManager(onHooksRecorded = { handed += it })
+
+            val id = manager.obtainProcessId("declarer")
+            manager.setProcessStatus(id, ProcessStatus.FINISHED)
+
+            assertEquals(listOf(RecordedHooks(), RecordedHooks()), handed)
         }
 }
