@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-11-13
+
 ### Homer
 
 - **Added: grouped ask-and-dispatch** — Registers several questions as one dispatch and starts the target agent once, after every answer. See [ADR-0109](docs/adr/0109-grouped-ask-and-dispatch.md).
