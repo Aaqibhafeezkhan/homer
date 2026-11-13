@@ -83,7 +83,7 @@ object ProcessGroupSupport {
     /**
      * Sends SIGINT to the whole process group [pgid] (best-effort), so a command that
      * handles the signal can shut down cleanly before [killGroup] follows. Same
-     * `sh`-builtin and Long-interpolation rules as [killGroup]. See ADR-0107.
+     * `sh`-builtin and Long-interpolation rules as [killGroup]. See ADR-0108.
      */
     fun interruptGroup(pgid: Long) {
         signalGroup("INT", pgid)

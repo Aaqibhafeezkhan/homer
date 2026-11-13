@@ -122,7 +122,7 @@ class ProcessTest {
         every { mockRunner.alias } returns "local"
         // A relaxed RunnerSession would fabricate a RunDeadline with softEpochSec 0, which
         // reads as "the soft deadline has passed" and stops the run before its first step
-        // (ADR-0107). These tests run without a deadline.
+        // (ADR-0108). These tests run without a deadline.
         mockSession = mockk(relaxed = true)
         every { mockSession.runDeadline } returns null
         coEvery { mockRunner.openSession(any()) } returns mockSession

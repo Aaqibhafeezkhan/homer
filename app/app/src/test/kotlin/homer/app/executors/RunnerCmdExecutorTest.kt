@@ -179,7 +179,7 @@ class RunnerCmdExecutorTest {
         val session = FakeSession(shell)
         val workdir = tmp.resolve("workdir").also { Files.createDirectories(it) }
         // A stop step runs under the run's hard deadline and always under a grace, so the
-        // step's own `timeout` must not win here. See ADR-0107.
+        // step's own `timeout` must not win here. See ADR-0108.
         val stopContext = context(workdir).copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
 
         executor(session, backgroundScope).execute(command(), stopContext, TestFixtures.mockSpan())

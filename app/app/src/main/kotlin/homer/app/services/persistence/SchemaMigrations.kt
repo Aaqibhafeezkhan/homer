@@ -335,7 +335,7 @@ private fun migrateToV30(
 /**
  * v30→v31 adds the per-subject cooldown key and the two indexes its lookups need (ADR-0106),
  * and what a graceful stop did to the run: its cause, the interrupted step and the stop steps'
- * outcome, as one JSON blob (ADR-0107). No backfill for either: a run that ended before this
+ * outcome, as one JSON blob (ADR-0108). No backfill for either: a run that ended before this
  * version was counted per agent and was never stopped gracefully, and a guessed subject or
  * cause is worse than none — null simply means "no key", so a keyed cooldown ignores the row
  * and a keyless one still counts it. Names match `Tables.kt`; `SchemaUtils.create` only

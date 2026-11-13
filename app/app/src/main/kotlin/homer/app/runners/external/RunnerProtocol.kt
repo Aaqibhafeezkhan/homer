@@ -106,7 +106,7 @@ sealed class RunnerOp {
         /**
          * How long this command may keep running after SIGINT before SIGKILL — used on the
          * command's own [timeoutMs] and on an [Interrupt]. Null = today's immediate SIGKILL,
-         * so an instance that ignores the field behaves exactly as before. See ADR-0107.
+         * so an instance that ignores the field behaves exactly as before. See ADR-0108.
          */
         val interruptGraceSeconds: Long? = null,
     ) : RunnerOp()
@@ -143,7 +143,7 @@ sealed class RunnerOp {
      * [opId] is the running `cmd`'s id; the instance stops it gracefully — SIGINT its process
      * group, then SIGKILL after the grace its [Cmd] carried — and reports the cmd result as
      * usual. Best-effort: an instance that ignores it, or an interrupt that is lost, still
-     * ends in the normal kill path. See ADR-0107.
+     * ends in the normal kill path. See ADR-0108.
      */
     @Serializable
     @SerialName("interrupt")

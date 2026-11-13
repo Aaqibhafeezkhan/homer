@@ -42,7 +42,7 @@ sealed class RunnerConfig {
          * hard deadline, the run's running step is interrupted (SIGINT) so its
          * `onStop:` steps can save state before the kubelet kills the pod. Requires
          * `maxRunSeconds`. Null = no soft deadline, and no extra Kubernetes read.
-         * See ADR-0107.
+         * See ADR-0108.
          */
         val gracefulStopSeconds: Long? = null,
         val jobTtlSecondsAfterFinished: Long? = null,

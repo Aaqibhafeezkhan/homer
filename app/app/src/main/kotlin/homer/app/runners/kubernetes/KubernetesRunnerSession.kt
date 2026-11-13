@@ -53,7 +53,7 @@ class KubernetesRunnerSession(
     /**
      * The run's soft and hard deadlines, read once here — the session is built when the pod is
      * ready. Null unless `gracefulStopSeconds` is set, so a run without a graceful stop pays no
-     * extra Kubernetes read. See ADR-0107.
+     * extra Kubernetes read. See ADR-0108.
      */
     override val runDeadline: RunDeadline? = runDeadlineFromPod()
 

@@ -139,7 +139,7 @@ at all. A count ahead of what
 *output incomplete* rather than passing truncated output off as a clean exit; a
 count the drain gave up on matches what `OutputSink` received, so the instance's
 warning is the only trace of the missing tail. A graceful stop rides two more ops
-(ADR-0107): `cmd` carries an optional `interruptGraceSeconds`, and `interrupt`
+(ADR-0108): `cmd` carries an optional `interruptGraceSeconds`, and `interrupt`
 stops the running command — SIGINT its process group, kill after the grace its
 `cmd` carried — with the `cmd` result reported as usual; the reference instance
 clamps the grace to its own bound, so a peer-supplied value cannot pin its reap.

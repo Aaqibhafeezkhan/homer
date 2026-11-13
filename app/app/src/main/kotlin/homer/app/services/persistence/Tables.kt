@@ -123,7 +123,7 @@ internal object Processes : Table("processes") {
 
     // What a graceful stop did to the run — its cause, the step it interrupted and the stop
     // steps' outcome — as a JSON blob, written once by the stop phase. Null for a run no
-    // graceful stop ended, and for rows from before v31. See ADR-0107.
+    // graceful stop ended, and for rows from before v31. See ADR-0108.
     val stop = text("stop").nullable()
 
     /**

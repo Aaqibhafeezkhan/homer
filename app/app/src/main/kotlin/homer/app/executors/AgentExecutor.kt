@@ -84,7 +84,7 @@ class AgentExecutor(
             if (failsTheRun(e)) {
                 // The run's own graceful stop: a step that timed out with `onTimeout: stop`, or the
                 // backend's soft run deadline. A kill — API, MCP, reload, lock collision — never
-                // reaches it, and neither does an ordinary step failure. See ADR-0107.
+                // reaches it, and neither does an ordinary step failure. See ADR-0108.
                 inFlight.step?.let { runStopPhase(session, runDeadline, it, e) }
                 runCatching { session.markFailed() }
             }
@@ -177,7 +177,7 @@ class AgentExecutor(
 
         workspace.appendToEnv(mapOf(EnvConstants.AGENT_NAME to agent.name))
         // The stop context is appended for an `onStop:` step only, and only after the agent name,
-        // so a stop step sees it and no other step does. See ADR-0107.
+        // so a stop step sees it and no other step does. See ADR-0108.
         if (plan.stopEnv.isNotEmpty()) {
             workspace.appendToEnv(plan.stopEnv)
         }
@@ -295,7 +295,7 @@ class AgentExecutor(
         // block falls back to the attempt-0 stdOut/stdErr above in that case.
         var executedResult: CommandResult? = null
         // Why a graceful stop interrupted this step, decided where the step's own exception is
-        // still in hand — the row is written below, before the stop phase runs. See ADR-0107.
+        // still in hand — the row is written below, before the stop phase runs. See ADR-0108.
         var stoppedBy: StopReason? = null
 
         try {
@@ -342,7 +342,7 @@ class AgentExecutor(
      * `commands` steps are never started, because the step loop was left by the throw. A stop
      * detected between steps — the soft deadline passing before the next one starts — names the
      * last *started* step in the record and the `HMR_STOP_STEP_*` env: that step completed, and
-     * nothing was in flight to interrupt. See ADR-0107.
+     * nothing was in flight to interrupt. See ADR-0108.
      */
     @OptIn(ExperimentalTime::class)
     private suspend fun runStopPhase(
@@ -512,6 +512,6 @@ internal data class StepRun(
     val stdOut: Path,
     val stdErr: Path,
     val executionContext: ExecutionContext,
-    // Whether this row is one of the agent's `onStop:` steps. See ADR-0107.
+    // Whether this row is one of the agent's `onStop:` steps. See ADR-0108.
     val onStop: Boolean = false,
 )

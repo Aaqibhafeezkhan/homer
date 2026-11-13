@@ -77,7 +77,7 @@ object ProcessRunner {
          * without `setsid` (no known group) still gets the [kill]. Null skips the wait, not the
          * SIGINT — the group is signalled either way. The pgid
          * is the process's own group or nothing, the same guard [kill] uses, so it can never be
-         * this runner's group. See ADR-0107.
+         * this runner's group. See ADR-0108.
          */
         fun interrupt(grace: Duration?) {
             if (!process.isAlive) return
@@ -99,7 +99,7 @@ object ProcessRunner {
             val err = Pump(pumps, process.errorStream, RunnerProtocol.STREAM_STDERR, sink)
             var finished = false
             // True only when this call's own timeout expired; an outside cancel leaves it false,
-            // so a deliberate kill stays the immediate SIGKILL it is today (§12, ADR-0107).
+            // so a deliberate kill stays the immediate SIGKILL it is today (§12, ADR-0108).
             var timedOut = false
             var cut: Set<String> = emptySet()
             try {
@@ -139,7 +139,7 @@ object ProcessRunner {
             interruptGrace: Duration?,
         ): Set<String> {
             if (!finished) {
-                // A stop that carries a grace interrupts before it kills (ADR-0107); a deliberate
+                // A stop that carries a grace interrupts before it kills (ADR-0108); a deliberate
                 // cancel passes null and keeps today's immediate SIGKILL.
                 if (interruptGrace != null) interrupt(interruptGrace) else kill()
                 process.waitFor(KILL_GRACE_SEC, TimeUnit.SECONDS)

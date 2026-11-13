@@ -291,7 +291,7 @@ class LlmHarnessExecutor<C>(
      * have written its `result` before the signal landed, and `account` prices the stream
      * leniently either way — and additionally hands what it learned to [ExecutionContext.facts]:
      * the spend, so the step's own row carries it, and the CLI session id, so the stop steps
-     * receive it as `HMR_STOP_SESSION_ID`. See ADR-0107.
+     * receive it as `HMR_STOP_SESSION_ID`. See ADR-0108.
      */
     @Suppress("SuspendFunSwallowedCancellation") // NonCancellable inside; its caller rethrows the original
     private suspend fun accountAborted(

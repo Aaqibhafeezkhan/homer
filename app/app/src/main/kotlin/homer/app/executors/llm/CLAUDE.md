@@ -43,7 +43,7 @@ the attempt on its pending figure, logged. Without the endpoint, and on every ab
 output cap, run cancelled), accounting stays inline and uncancellable as before. See ADR-0089.
 
 A stop-interrupted attempt (the step's own timeout with `onTimeout: stop`, or the run's soft
-deadline; ADR-0107) is accounted like any abort, with two differences: a CLI `result` event the
+deadline; ADR-0108) is accounted like any abort, with two differences: a CLI `result` event the
 SIGINT interrupted output still produced is parsed and charged normally, and one that never arrived
 is charged through `accountAborted` — either way the interrupted step carries the spend. The
 attempt is never retried or escalated. The session id the harness parsed from that output is

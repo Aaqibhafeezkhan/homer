@@ -19,13 +19,13 @@ private const val DEADLINE_MARGIN_SECONDS = 10L
 /** The floor on a step's effective timeout: the shells count whole seconds, and zero would never wait at all. */
 private const val MIN_STEP_SECONDS = 1L
 
-/** The cap on one `onStop:` step, with or without a run deadline of its own. See ADR-0107. */
+/** The cap on one `onStop:` step, with or without a run deadline of its own. See ADR-0108. */
 private const val MAX_STOP_STEP_SECONDS = 300L
 
 /**
  * One step's plan: where its artifacts go, the timeout and interrupt grace it runs under, the run
  * deadline that applies to it, the facts its executor reports back, and — for an `onStop:` step —
- * the stop context it runs with. See ADR-0107.
+ * the stop context it runs with. See ADR-0108.
  */
 internal class StepPlan(
     val artifactIndex: Int,
@@ -85,7 +85,7 @@ internal fun stopStepPlan(
  * [command]'s own timeout, cut at the deadlines that apply to it and floored at [MIN_STEP_SECONDS]:
  * a regular step at the soft deadline — the deadline is what stops it — and at the hard one less
  * [DEADLINE_MARGIN_SECONDS]; a stop step at the hard one and at [MAX_STOP_STEP_SECONDS], whichever
- * is shorter. See ADR-0107.
+ * is shorter. See ADR-0108.
  */
 private fun cappedTimeout(
     command: Command,
@@ -106,7 +106,7 @@ private fun cappedTimeout(
 /**
  * The interrupt grace [command] runs under: none for a plain step of a run that never stops
  * gracefully — today's immediate SIGKILL — and [Command.interruptGraceSeconds] once the step opted
- * in with `onTimeout: stop` or the run has a soft deadline of its own. See ADR-0107.
+ * in with `onTimeout: stop` or the run has a soft deadline of its own. See ADR-0108.
  */
 private fun interruptGraceFor(
     command: Command,
@@ -124,7 +124,7 @@ internal fun stopDeadlinePassed(deadline: RunDeadline?): Boolean =
  * timeout short; otherwise only a step declaring `onTimeout: stop` does, and only a timeout of its
  * own: an output-cap trip ([OutputCapExceededException], a `CancellationException` subclass) is an
  * ordinary failure, and a cancelled job is the caller's kill — neither is a stop trigger. The same
- * two distinctions the run's catch draws when it decides between a failure and a kill. See ADR-0107.
+ * two distinctions the run's catch draws when it decides between a failure and a kill. See ADR-0108.
  */
 internal suspend fun stopReasonFor(
     cause: Throwable,

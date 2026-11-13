@@ -13,7 +13,7 @@ internal class KillCause {
  * Appends the note naming why [kill] stopped the command: the TTL-timeout marker, the output-cap
  * marker, or nothing when neither flag is set (a clean stop or a caller cancellation). Shared so
  * every shell executor words the note alike. [graceNote] extends the TTL marker with the stop's
- * SIGINT grace, where the backend interrupted the group before the kill (ADR-0107).
+ * SIGINT grace, where the backend interrupted the group before the kill (ADR-0108).
  */
 internal fun appendKillNotices(
     stdErr: Path,

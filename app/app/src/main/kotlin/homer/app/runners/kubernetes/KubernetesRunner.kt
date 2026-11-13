@@ -63,7 +63,7 @@ class KubernetesRunner(
             val span = openSpan(params, name, jobName)
             val openStartMs = clock()
             // The pod's creation stamp: provisioning emits it as the runner state's `createdAt`, and
-            // the session clamps a skewed `status.startTime` to it (ADR-0107). Read here, once.
+            // the session clamps a skewed `status.startTime` to it (ADR-0108). Read here, once.
             val podCreatedAtSec = clock() / 1000
             val sessionEnv = buildSessionEnv()
             try {

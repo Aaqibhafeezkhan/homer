@@ -366,7 +366,7 @@ class LocalShellExecutorTest {
             assertTrue(stderr.contains("1s"), "stderr should include the configured timeout duration")
         }
 
-    // ========== Interrupt grace (ADR-0107) ==========
+    // ========== Interrupt grace (ADR-0108) ==========
 
     @Test
     fun `timeout with an interrupt grace lets a SIGINT-trapping command exit before the kill`() =

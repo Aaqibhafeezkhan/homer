@@ -160,7 +160,7 @@ class KubernetesRunnerSessionTest {
 
     // ========== Job mode: the Job goes with its pod (ADR-0100) ==========
 
-    // ========== The run's soft/hard deadlines (ADR-0107) ==========
+    // ========== The run's soft/hard deadlines (ADR-0108) ==========
 
     @Test
     fun `runDeadline is computed from the pod startTime when a graceful stop is configured`() {

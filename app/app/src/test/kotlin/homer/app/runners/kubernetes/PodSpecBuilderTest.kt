@@ -344,7 +344,7 @@ class PodSpecBuilderTest {
         val plainPod = PodSpecBuilder("k8s-dev", plain).build(params(), "homer-1-abcdef")
         val gracedPod = PodSpecBuilder("k8s-dev", graced).build(params(), "homer-1-abcdef")
 
-        // The soft deadline is Homer-side only: maxRunSeconds stays the pod's hard bound (ADR-0107).
+        // The soft deadline is Homer-side only: maxRunSeconds stays the pod's hard bound (ADR-0108).
         assertEquals(300L, gracedPod.spec!!.activeDeadlineSeconds)
         assertEquals(
             io.kubernetes.client.openapi.JSON

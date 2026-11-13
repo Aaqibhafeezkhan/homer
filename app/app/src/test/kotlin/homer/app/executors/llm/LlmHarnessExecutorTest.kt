@@ -189,7 +189,7 @@ class LlmHarnessExecutorTest {
     fun `the step's capped timeout and interrupt grace reach the shell`() =
         runTest {
             // A stop step runs under the run's hard deadline and always under a grace, so the
-            // step's own `timeout` must not win here. See ADR-0107.
+            // step's own `timeout` must not win here. See ADR-0108.
             val stopContext = context.copy(timeoutOverrideSeconds = 5, interruptGrace = 30.seconds)
             coEvery {
                 context.shell.cmd(any(), any(), any(), any(), any(), any(), any(), any())
@@ -2641,7 +2641,7 @@ class LlmHarnessExecutorTest {
         assertThrows<IllegalArgumentException> { tier(" ", "true") }
     }
 
-    // ========== Graceful stop (ADR-0107) ==========
+    // ========== Graceful stop (ADR-0108) ==========
 
     @Test
     fun `a stop-interrupted attempt that wrote its result is accounted and its session reaches the step's facts`() =
